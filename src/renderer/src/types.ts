@@ -30,3 +30,15 @@ export interface GitCommandResult {
 export interface AppSettings {
   blacklist: string[]
 }
+
+export type NoteViewMode = 'code' | 'preview'
+
+export type PreviewRuntimeStatus = 'idle' | 'starting' | 'ready' | 'error'
+
+export interface PreviewState {
+  repo: string | null
+  port: number | null
+  status: PreviewRuntimeStatus
+  error: string | null
+  baseUrl: string | null
+}

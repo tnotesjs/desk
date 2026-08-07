@@ -1,5 +1,5 @@
 import { ref, computed } from 'vue'
-import type { GitStatus, TocNode } from '../types'
+import type { GitStatus, NoteViewMode, PreviewState, TocNode } from '../types'
 
 const workspacePath = ref<string | null>(null)
 const knowledgeList = ref<string[]>([])
@@ -15,6 +15,17 @@ const gitBusy = ref(false)
 const error = ref<string | null>(null)
 const status = ref<string | null>(null)
 
+const noteMode = ref<NoteViewMode>('code')
+const previewBusy = ref(false)
+const previewUrl = ref<string | null>(null)
+const previewState = ref<PreviewState>({
+  repo: null,
+  port: null,
+  status: 'idle',
+  error: null,
+  baseUrl: null
+})
+
 export function useWorkspace() {
   const hasWorkspace = computed(() => Boolean(workspacePath.value))
   const selectedGitStatus = computed(() =>
@@ -26,6 +37,14 @@ export function useWorkspace() {
       ...gitStatuses.value,
       [next.repo]: next
     }
+  }
+
+  function clearNoteSelection(): void {
+    selectedNoteDir.value = null
+    noteContent.value = ''
+    notePath.value = null
+    dirty.value = false
+    previewUrl.value = null
   }
 
   async function refreshGitStatuses(): Promise<void> {
@@ -51,12 +70,80 @@ export function useWorkspace() {
     await refreshGitStatuses()
   }
 
+  async function syncPreviewUrl(): Promise<void> {
+    if (!selectedRepo.value || !selectedNoteDir.value) {
+      previewUrl.value = null
+      return
+    }
+    previewUrl.value = await window.api.previewNoteUrl(selectedRepo.value, selectedNoteDir.value)
+    console.log('[desk:preview:ui] url', previewUrl.value)
+  }
+
+  async function ensurePreview(forceRestart = false): Promise<void> {
+    if (!selectedRepo.value || !selectedNoteDir.value) {
+      previewUrl.value = null
+      return
+    }
+
+    console.log('[desk:preview:ui] ensurePreview', {
+      repo: selectedRepo.value,
+      note: selectedNoteDir.value,
+      forceRestart,
+      state: { ...previewState.value }
+    })
+
+    if (
+      !forceRestart &&
+      previewState.value.repo === selectedRepo.value &&
+      previewState.value.status === 'ready'
+    ) {
+      await syncPreviewUrl()
+      return
+    }
+
+    previewBusy.value = true
+    try {
+      if (forceRestart) {
+        console.log('[desk:preview:ui] force restart → stop')
+        await window.api.previewStop()
+      }
+      const state = await window.api.previewStart(selectedRepo.value)
+      previewState.value = state
+      console.log('[desk:preview:ui] start result', { ...state })
+      if (state.status === 'error') {
+        previewUrl.value = null
+        return
+      }
+      await syncPreviewUrl()
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      console.error('[desk:preview:ui] ensurePreview failed', message)
+      previewState.value = {
+        ...previewState.value,
+        status: 'error',
+        error: message
+      }
+      previewUrl.value = null
+    } finally {
+      previewBusy.value = false
+    }
+  }
+
+  async function setNoteMode(mode: NoteViewMode): Promise<void> {
+    console.log('[desk:preview:ui] setNoteMode', mode)
+    noteMode.value = mode
+    if (mode === 'preview') {
+      await ensurePreview(false)
+    }
+  }
+
   async function init(): Promise<void> {
     loading.value = true
     error.value = null
     try {
       const state = await window.api.getWorkspace()
       workspacePath.value = state.path
+      previewState.value = await window.api.previewStatus()
       if (state.path) {
         await refreshKnowledge()
       }
@@ -71,14 +158,14 @@ export function useWorkspace() {
     loading.value = true
     error.value = null
     try {
+      await window.api.previewStop()
+      previewState.value = await window.api.previewStatus()
       const state = await window.api.chooseWorkspace()
       workspacePath.value = state.path
       selectedRepo.value = null
       toc.value = []
-      selectedNoteDir.value = null
-      noteContent.value = ''
-      notePath.value = null
-      dirty.value = false
+      clearNoteSelection()
+      noteMode.value = 'code'
       await refreshKnowledge()
       status.value = state.path ? `已选择工作区` : null
     } catch (e) {
@@ -92,12 +179,16 @@ export function useWorkspace() {
     if (dirty.value && !confirm('当前笔记未保存，确定切换知识库？')) {
       return
     }
+    const previous = selectedRepo.value
     selectedRepo.value = repo
-    selectedNoteDir.value = null
-    noteContent.value = ''
-    notePath.value = null
-    dirty.value = false
+    clearNoteSelection()
     error.value = null
+
+    if (previous && previous !== repo && noteMode.value === 'preview') {
+      await window.api.previewStop()
+      previewState.value = await window.api.previewStatus()
+    }
+
     try {
       toc.value = await window.api.readToc(repo)
       const git = await window.api.gitStatus(repo)
@@ -121,6 +212,11 @@ export function useWorkspace() {
       notePath.value = note.path
       dirty.value = false
       status.value = null
+      if (noteMode.value === 'preview') {
+        await ensurePreview(false)
+      } else {
+        previewUrl.value = null
+      }
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e)
     }
@@ -193,12 +289,18 @@ export function useWorkspace() {
     if (selectedRepo.value && !knowledgeList.value.includes(selectedRepo.value)) {
       selectedRepo.value = null
       toc.value = []
-      selectedNoteDir.value = null
-      noteContent.value = ''
-      notePath.value = null
-      dirty.value = false
+      clearNoteSelection()
+      noteMode.value = 'code'
+      await window.api.previewStop()
+      previewState.value = await window.api.previewStatus()
     }
     status.value = '配置已保存'
+  }
+
+  async function stopPreview(): Promise<void> {
+    await window.api.previewStop()
+    previewState.value = await window.api.previewStatus()
+    previewUrl.value = null
   }
 
   return {
@@ -217,6 +319,10 @@ export function useWorkspace() {
     error,
     status,
     hasWorkspace,
+    noteMode,
+    previewBusy,
+    previewUrl,
+    previewState,
     init,
     chooseWorkspace,
     selectRepo,
@@ -226,6 +332,9 @@ export function useWorkspace() {
     refreshGitStatuses,
     pullRepo,
     pushRepo,
-    applySettingsAndRefresh
+    applySettingsAndRefresh,
+    setNoteMode,
+    ensurePreview,
+    stopPreview
   }
 }

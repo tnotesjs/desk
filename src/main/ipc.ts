@@ -2,6 +2,7 @@ import { dialog, ipcMain } from 'electron'
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { getGitStatus, gitPull, gitPush, type GitStatus } from './git'
+import { buildNotePreviewUrl, previewManager } from './preview'
 import { loadSettings, saveSettings } from './settings'
 import { parseTocMarkdown, type TocNode } from './toc'
 import { loadWorkspace, saveWorkspace } from './workspace'
@@ -163,5 +164,39 @@ export function registerIpc(): void {
     const result = await gitPush(dir)
     const status = await getGitStatus(repoName, dir)
     return { ...result, status }
+  })
+
+  ipcMain.handle('preview:status', () => previewManager.getState())
+
+  ipcMain.handle('preview:start', async (_event, repoName: string) => {
+    const { path } = loadWorkspace()
+    const workspacePath = assertWorkspace(path)
+    return previewManager.ensureStarted(repoName, repoPath(workspacePath, repoName))
+  })
+
+  ipcMain.handle('preview:stop', async () => previewManager.stop())
+
+  ipcMain.handle('preview:note-url', (_event, repoName: string, noteDir: string) => {
+    const { path } = loadWorkspace()
+    const workspacePath = assertWorkspace(path)
+    // Validate repo/note exist before building URL.
+    const file = noteReadmePath(workspacePath, repoName, noteDir)
+    if (!existsSync(file)) {
+      throw new Error(`README.md 不存在: ${repoName}/notes/${noteDir}`)
+    }
+    const port = previewManager.getState().port
+    if (!port || previewManager.getState().repo !== repoName) {
+      // Fall back to config port even if server not started yet.
+      let fallbackPort = 5173
+      try {
+        const raw = readFileSync(join(repoPath(workspacePath, repoName), '.tnotes.json'), 'utf-8')
+        const data = JSON.parse(raw) as { port?: number }
+        if (typeof data.port === 'number' && data.port > 0) fallbackPort = data.port
+      } catch {
+        // ignore
+      }
+      return buildNotePreviewUrl(repoName, fallbackPort, noteDir)
+    }
+    return buildNotePreviewUrl(repoName, port, noteDir)
   })
 }

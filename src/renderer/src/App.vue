@@ -8,6 +8,7 @@ import NoteEditor from './components/NoteEditor.vue'
 import SettingsPage from './components/SettingsPage.vue'
 
 const view = ref<'workspace' | 'settings'>('workspace')
+let unsubscribeLog: (() => void) | null = null
 
 const {
   workspacePath,
@@ -25,6 +26,10 @@ const {
   error,
   status,
   hasWorkspace,
+  noteMode,
+  previewBusy,
+  previewUrl,
+  previewState,
   init,
   chooseWorkspace,
   selectRepo,
@@ -34,12 +39,15 @@ const {
   refreshGitStatuses,
   pullRepo,
   pushRepo,
-  applySettingsAndRefresh
+  applySettingsAndRefresh,
+  setNoteMode,
+  ensurePreview,
+  stopPreview
 } = useWorkspace()
 
 function onKeydown(e: KeyboardEvent): void {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
-    if (view.value !== 'workspace') return
+    if (view.value !== 'workspace' || noteMode.value !== 'code') return
     e.preventDefault()
     void saveNote()
   }
@@ -52,10 +60,15 @@ async function onSettingsSaved(): Promise<void> {
 onMounted(() => {
   void init()
   window.addEventListener('keydown', onKeydown)
+  unsubscribeLog = window.api.onLog((line) => {
+    console.log(line)
+  })
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
+  unsubscribeLog?.()
+  void stopPreview()
 })
 </script>
 
@@ -103,8 +116,14 @@ onUnmounted(() => {
           :note-dir="selectedNoteDir"
           :note-path="notePath"
           :dirty="dirty"
+          :mode="noteMode"
+          :preview-state="previewState"
+          :preview-url="previewUrl"
+          :preview-busy="previewBusy"
           @update:content="updateContent"
+          @update:mode="setNoteMode"
           @save="saveNote"
+          @retry-preview="ensurePreview(true)"
         />
       </main>
 

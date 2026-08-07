@@ -42,6 +42,16 @@ export interface AppSettings {
   blacklist: string[]
 }
 
+export type PreviewRuntimeStatus = 'idle' | 'starting' | 'ready' | 'error'
+
+export interface PreviewState {
+  repo: string | null
+  port: number | null
+  status: PreviewRuntimeStatus
+  error: string | null
+  baseUrl: string | null
+}
+
 export interface DeskApi {
   getWorkspace: () => Promise<WorkspaceState>
   chooseWorkspace: () => Promise<WorkspaceState>
@@ -61,6 +71,11 @@ export interface DeskApi {
   gitStatusAll: () => Promise<GitStatus[]>
   gitPull: (repoName: string) => Promise<GitCommandResult>
   gitPush: (repoName: string) => Promise<GitCommandResult>
+  previewStatus: () => Promise<PreviewState>
+  previewStart: (repoName: string) => Promise<PreviewState>
+  previewStop: () => Promise<PreviewState>
+  previewNoteUrl: (repoName: string, noteDir: string) => Promise<string>
+  onLog: (callback: (line: string) => void) => () => void
 }
 
 declare global {

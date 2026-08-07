@@ -3,6 +3,8 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { registerIpc } from './ipc'
+import { deskLog } from './log'
+import { previewManager } from './preview'
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -16,12 +18,18 @@ function createWindow(): void {
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false
+      sandbox: false,
+      // Guest page is a top-level origin so VitePress embeds (e.g. giscus) keep working.
+      webviewTag: true
     }
   })
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
+    if (is.dev) {
+      mainWindow.webContents.openDevTools({ mode: 'bottom' })
+      deskLog('desk', 'DevTools opened (dev mode)')
+    }
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -51,7 +59,12 @@ app.whenReady().then(() => {
   })
 })
 
+app.on('before-quit', () => {
+  void previewManager.stop()
+})
+
 app.on('window-all-closed', () => {
+  void previewManager.stop()
   if (process.platform !== 'darwin') {
     app.quit()
   }

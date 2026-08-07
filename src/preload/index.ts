@@ -43,6 +43,16 @@ export interface AppSettings {
   blacklist: string[]
 }
 
+export type PreviewRuntimeStatus = 'idle' | 'starting' | 'ready' | 'error'
+
+export interface PreviewState {
+  repo: string | null
+  port: number | null
+  status: PreviewRuntimeStatus
+  error: string | null
+  baseUrl: string | null
+}
+
 const api = {
   getWorkspace: (): Promise<WorkspaceState> => ipcRenderer.invoke('workspace:get'),
   chooseWorkspace: (): Promise<WorkspaceState> => ipcRenderer.invoke('workspace:choose'),
@@ -66,7 +76,22 @@ const api = {
   gitStatusAll: (): Promise<GitStatus[]> => ipcRenderer.invoke('git:status-all'),
   gitPull: (repoName: string): Promise<GitCommandResult> =>
     ipcRenderer.invoke('git:pull', repoName),
-  gitPush: (repoName: string): Promise<GitCommandResult> => ipcRenderer.invoke('git:push', repoName)
+  gitPush: (repoName: string): Promise<GitCommandResult> => ipcRenderer.invoke('git:push', repoName),
+  previewStatus: (): Promise<PreviewState> => ipcRenderer.invoke('preview:status'),
+  previewStart: (repoName: string): Promise<PreviewState> =>
+    ipcRenderer.invoke('preview:start', repoName),
+  previewStop: (): Promise<PreviewState> => ipcRenderer.invoke('preview:stop'),
+  previewNoteUrl: (repoName: string, noteDir: string): Promise<string> =>
+    ipcRenderer.invoke('preview:note-url', repoName, noteDir),
+  onLog: (callback: (line: string) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, line: string): void => {
+      callback(line)
+    }
+    ipcRenderer.on('desk:log', listener)
+    return () => {
+      ipcRenderer.removeListener('desk:log', listener)
+    }
+  }
 }
 
 if (process.contextIsolated) {
