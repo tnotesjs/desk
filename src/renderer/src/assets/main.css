@@ -1,0 +1,40 @@
+:root {
+  --bg: #0f141a;
+  --panel: #151b22;
+  --text: #e7eef7;
+  --muted: #8b9bb0;
+  --border: #273141;
+  --hover: #1c2430;
+  --accent: #6db3ff;
+  --accent-soft: rgba(109, 179, 255, 0.14);
+  color-scheme: dark;
+  font-family:
+    'IBM Plex Sans',
+    'Segoe UI',
+    'PingFang SC',
+    'Hiragino Sans GB',
+    'Microsoft YaHei',
+    sans-serif;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+}
+
+button,
+input {
+  font: inherit;
+}
