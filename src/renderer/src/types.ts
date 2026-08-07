@@ -1,9 +1,19 @@
 export type TocNode =
-  | { type: 'group'; title: string; children: TocNode[] }
+  | {
+      type: 'group'
+      title: string
+      tocLineIndex: number
+      nodeId: string
+      folderPath: string[]
+      children: TocNode[]
+    }
   | {
       type: 'note'
       title: string
       noteDir: string
+      noteIndex: string
+      tocLineIndex: number
+      nodeId: string
       completed: boolean
       children: TocNode[]
     }
@@ -24,6 +34,7 @@ export interface GitCommandResult {
   stdout: string
   stderr: string
   error: string | null
+  message: string | null
   status: GitStatus
 }
 

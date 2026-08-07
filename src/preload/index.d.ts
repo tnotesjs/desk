@@ -1,11 +1,21 @@
 import { ElectronAPI } from '@electron-toolkit/preload'
 
 export type TocNode =
-  | { type: 'group'; title: string; children: TocNode[] }
+  | {
+      type: 'group'
+      title: string
+      tocLineIndex: number
+      nodeId: string
+      folderPath: string[]
+      children: TocNode[]
+    }
   | {
       type: 'note'
       title: string
       noteDir: string
+      noteIndex: string
+      tocLineIndex: number
+      nodeId: string
       completed: boolean
       children: TocNode[]
     }
@@ -35,6 +45,7 @@ export interface GitCommandResult {
   stdout: string
   stderr: string
   error: string | null
+  message: string | null
   status: GitStatus
 }
 
@@ -61,6 +72,28 @@ export interface DeskApi {
   listKnowledge: () => Promise<string[]>
   scanKnowledge: () => Promise<string[]>
   readToc: (repoName: string) => Promise<TocNode[]>
+  tocCreateNotes: (
+    repoName: string,
+    options: {
+      count?: number
+      title?: string
+      parentTocLineIndex?: number
+      aroundNoteIndex?: string
+      placement?: 'before' | 'after'
+    }
+  ) => Promise<TocNode[]>
+  tocCreateFolder: (
+    repoName: string,
+    options: { title: string; parentTocLineIndex?: number }
+  ) => Promise<TocNode[]>
+  tocRenameNote: (repoName: string, noteIndex: string, newTitle: string) => Promise<TocNode[]>
+  tocRenameFolder: (repoName: string, tocLineIndex: number, newTitle: string) => Promise<TocNode[]>
+  tocDeleteNote: (repoName: string, noteIndex: string) => Promise<TocNode[]>
+  tocDeleteEntry: (repoName: string, tocLineIndex: number) => Promise<TocNode[]>
+  tocReorder: (
+    repoName: string,
+    payload: { nodeId: string; action: 'moveAfter' | 'prependChild'; targetNodeId?: string }
+  ) => Promise<TocNode[]>
   readNote: (repoName: string, noteDir: string) => Promise<NotePayload>
   writeNote: (
     repoName: string,

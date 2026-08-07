@@ -88,7 +88,15 @@ const selectedSummary = computed(() => {
         <button type="button" class="btn" :disabled="!selected || gitBusy" @click="emit('pull')">
           Pull
         </button>
-        <button type="button" class="btn" :disabled="!selected || gitBusy" @click="emit('push')">
+        <button
+          type="button"
+          class="btn"
+          :disabled="!selected || gitBusy"
+          @click="
+            console.log('[desk:git:ui] Push button clicked', { selected, gitBusy });
+            emit('push')
+          "
+        >
           Push
         </button>
       </div>

@@ -2,11 +2,21 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
 export type TocNode =
-  | { type: 'group'; title: string; children: TocNode[] }
+  | {
+      type: 'group'
+      title: string
+      tocLineIndex: number
+      nodeId: string
+      folderPath: string[]
+      children: TocNode[]
+    }
   | {
       type: 'note'
       title: string
       noteDir: string
+      noteIndex: string
+      tocLineIndex: number
+      nodeId: string
       completed: boolean
       children: TocNode[]
     }
@@ -36,6 +46,7 @@ export interface GitCommandResult {
   stdout: string
   stderr: string
   error: string | null
+  message: string | null
   status: GitStatus
 }
 
@@ -64,6 +75,32 @@ const api = {
   listKnowledge: (): Promise<string[]> => ipcRenderer.invoke('knowledge:list'),
   scanKnowledge: (): Promise<string[]> => ipcRenderer.invoke('knowledge:scan'),
   readToc: (repoName: string): Promise<TocNode[]> => ipcRenderer.invoke('toc:read', repoName),
+  tocCreateNotes: (
+    repoName: string,
+    options: {
+      count?: number
+      title?: string
+      parentTocLineIndex?: number
+      aroundNoteIndex?: string
+      placement?: 'before' | 'after'
+    }
+  ): Promise<TocNode[]> => ipcRenderer.invoke('toc:create-notes', repoName, options),
+  tocCreateFolder: (
+    repoName: string,
+    options: { title: string; parentTocLineIndex?: number }
+  ): Promise<TocNode[]> => ipcRenderer.invoke('toc:create-folder', repoName, options),
+  tocRenameNote: (repoName: string, noteIndex: string, newTitle: string): Promise<TocNode[]> =>
+    ipcRenderer.invoke('toc:rename-note', repoName, noteIndex, newTitle),
+  tocRenameFolder: (repoName: string, tocLineIndex: number, newTitle: string): Promise<TocNode[]> =>
+    ipcRenderer.invoke('toc:rename-folder', repoName, tocLineIndex, newTitle),
+  tocDeleteNote: (repoName: string, noteIndex: string): Promise<TocNode[]> =>
+    ipcRenderer.invoke('toc:delete-note', repoName, noteIndex),
+  tocDeleteEntry: (repoName: string, tocLineIndex: number): Promise<TocNode[]> =>
+    ipcRenderer.invoke('toc:delete-entry', repoName, tocLineIndex),
+  tocReorder: (
+    repoName: string,
+    payload: { nodeId: string; action: 'moveAfter' | 'prependChild'; targetNodeId?: string }
+  ): Promise<TocNode[]> => ipcRenderer.invoke('toc:reorder', repoName, payload),
   readNote: (repoName: string, noteDir: string): Promise<NotePayload> =>
     ipcRenderer.invoke('note:read', repoName, noteDir),
   writeNote: (

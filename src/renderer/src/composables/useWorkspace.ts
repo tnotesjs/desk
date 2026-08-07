@@ -253,7 +253,7 @@ export function useWorkspace() {
         error.value = result.error || 'git pull 失败'
         return
       }
-      status.value = `${target} pull 完成`
+      status.value = result.message ? `${target}：${result.message}` : `${target} pull 完成`
       if (selectedRepo.value === target) {
         toc.value = await window.api.readToc(target)
       }
@@ -266,18 +266,38 @@ export function useWorkspace() {
 
   async function pushRepo(repo?: string): Promise<void> {
     const target = repo ?? selectedRepo.value
-    if (!target) return
+    console.log('[desk:git:ui] pushRepo click', {
+      arg: repo ?? null,
+      selectedRepo: selectedRepo.value,
+      target,
+      gitBusy: gitBusy.value
+    })
+    if (!target) {
+      console.warn('[desk:git:ui] pushRepo aborted: no selected repo')
+      error.value = '请先选择一个知识库再 Push'
+      return
+    }
     gitBusy.value = true
     error.value = null
     try {
+      console.log('[desk:git:ui] invoking gitPush (tn-like)', target)
       const result = await window.api.gitPush(target)
+      console.log('[desk:git:ui] gitPush result', {
+        ok: result.ok,
+        error: result.error,
+        message: result.message,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        status: result.status
+      })
       setGitStatus(result.status)
       if (!result.ok) {
         error.value = result.error || 'git push 失败'
         return
       }
-      status.value = `${target} push 完成`
+      status.value = result.message ? `${target}：${result.message}` : `${target} push 完成`
     } catch (e) {
+      console.error('[desk:git:ui] gitPush threw', e)
       error.value = e instanceof Error ? e.message : String(e)
     } finally {
       gitBusy.value = false
@@ -301,6 +321,21 @@ export function useWorkspace() {
     await window.api.previewStop()
     previewState.value = await window.api.previewStatus()
     previewUrl.value = null
+  }
+
+  function noteExistsInToc(nodes: TocNode[], noteDir: string): boolean {
+    for (const node of nodes) {
+      if (node.type === 'note' && node.noteDir === noteDir) return true
+      if (noteExistsInToc(node.children, noteDir)) return true
+    }
+    return false
+  }
+
+  function applyToc(nodes: TocNode[]): void {
+    toc.value = nodes
+    if (selectedNoteDir.value && !noteExistsInToc(nodes, selectedNoteDir.value)) {
+      clearNoteSelection()
+    }
   }
 
   return {
@@ -335,6 +370,7 @@ export function useWorkspace() {
     applySettingsAndRefresh,
     setNoteMode,
     ensurePreview,
-    stopPreview
+    stopPreview,
+    applyToc
   }
 }

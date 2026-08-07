@@ -6,7 +6,9 @@ TNotes 多知识库桌面客户端（Electron + Vue 3 + TypeScript）。
 
 - 手动选择工作区，扫描 `TNotes.*` 知识库
 - 三栏：知识库列表 / TOC / 笔记（code 模式，Monaco）
+- TOC：对齐 core 侧栏能力（折叠、新建/重命名/删除、拖拽排序），写回 `TOC.md`，无需 `tn:dev`
 - 左栏 Git 状态（clean / 改动数 / ahead·behind）与单库 Pull、Push
+- Pull / Push 对齐 `tn:pull` / `tn:push`：Pull 为 rebase+autostash；Push 为有改动则 add+commit 再推送
 - 配置页：知识库黑名单（黑名单内不进入列表）
 - preview 模式：单库 `tn:dev` + iframe 预览当前笔记
 - 记住最近一次工作区；支持切换

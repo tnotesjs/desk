@@ -42,7 +42,8 @@ const {
   applySettingsAndRefresh,
   setNoteMode,
   ensurePreview,
-  stopPreview
+  stopPreview,
+  applyToc
 } = useWorkspace()
 
 function onKeydown(e: KeyboardEvent): void {
@@ -55,6 +56,10 @@ function onKeydown(e: KeyboardEvent): void {
 
 async function onSettingsSaved(): Promise<void> {
   await applySettingsAndRefresh()
+}
+
+function onTocError(message: string): void {
+  error.value = message
 }
 
 onMounted(() => {
@@ -106,9 +111,12 @@ onUnmounted(() => {
         />
         <TocTree
           class="col-toc"
+          :repo="selectedRepo"
           :nodes="toc"
           :selected-note-dir="selectedNoteDir"
           @select="selectNote"
+          @updated="applyToc"
+          @error="onTocError"
         />
         <NoteEditor
           class="col-editor"
