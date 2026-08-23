@@ -6,6 +6,7 @@ import { useEditorStore } from './editor'
 import type {
   AppSettings,
   AttachmentWriteLocalResult,
+  ImageUploadResult,
   DeletePreviewDto,
   DeskResult,
   DeskTocNode,
@@ -412,6 +413,32 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     )
   }
 
+  async function uploadImage(
+    knowledgeBaseId: string,
+    noteUuid: string,
+    file: File
+  ): Promise<ImageUploadResult> {
+    const data = new Uint8Array(await file.arrayBuffer())
+    const result = resultValue(
+      await window.desk.attachments.uploadImage({
+        knowledgeBaseId,
+        noteUuid,
+        fileName: file.name || `image-${Date.now()}.png`,
+        data
+      })
+    )
+    status.value =
+      result.warning ??
+      (result.target === 'github' ? '图片已上传到 GitHub 图床' : '图片已保存到本地 assets')
+    return result
+  }
+
+  async function updateSettings(next: Partial<AppSettings>): Promise<AppSettings> {
+    const updated = resultValue(await window.desk.settings.update(next))
+    settings.value = updated
+    return updated
+  }
+
   async function saveCurrentDocument(): Promise<void> {
     if (activeDocumentKey.value) await saveDocument(activeDocumentKey.value)
   }
@@ -610,6 +637,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     saveCurrentDocument,
     saveAllDocuments,
     writeLocalAttachment,
+    uploadImage,
+    updateSettings,
     reloadCurrentDocument,
     keepEditorAgainstDisk,
     acceptRecovery,

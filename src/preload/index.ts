@@ -7,6 +7,9 @@ import type {
   AttachmentWriteLocalRequest,
   AttachmentWriteLocalResult,
   AttachmentReadTextRequest,
+  ImageSettingsValidateResult,
+  ImageTokenStatus,
+  ImageUploadResult,
   BootstrapPayload,
   DeletePreviewDto,
   DeskApi,
@@ -52,7 +55,11 @@ const api: DeskApi = {
     }
   },
   settings: {
-    update: (next) => invoke<AppSettings>(IPC_CHANNELS.settingsUpdate, next)
+    update: (next) => invoke<AppSettings>(IPC_CHANNELS.settingsUpdate, next),
+    imageTokenStatus: () => invoke<ImageTokenStatus>(IPC_CHANNELS.imageTokenStatus),
+    updateImageToken: (request) => invoke<ImageTokenStatus>(IPC_CHANNELS.imageTokenUpdate, request),
+    validateImageSettings: (request) =>
+      invoke<ImageSettingsValidateResult>(IPC_CHANNELS.imageSettingsValidate, request)
   },
   knowledgeBases: {
     read: (knowledgeBaseId) =>
@@ -83,6 +90,8 @@ const api: DeskApi = {
   attachments: {
     writeLocal: (request: AttachmentWriteLocalRequest) =>
       invoke<AttachmentWriteLocalResult>(IPC_CHANNELS.attachmentWriteLocal, request),
+    uploadImage: (request) =>
+      invoke<ImageUploadResult>(IPC_CHANNELS.attachmentUploadImage, request),
     readText: (request: AttachmentReadTextRequest) =>
       invoke<string>(IPC_CHANNELS.attachmentReadText, request)
   },

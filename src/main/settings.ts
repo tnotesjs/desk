@@ -32,6 +32,40 @@ const settingsSchema = z.object({
   gitPath: z.string().trim().min(1).nullable().default(null),
   nodePath: z.string().trim().min(1).nullable().default(null),
   confirmBeforeCommit: z.boolean().default(false),
+  imageUpload: z
+    .object({
+      defaultTarget: z.enum(['local', 'github']).default('local'),
+      github: z
+        .object({
+          repository: z.string().trim().default(''),
+          branch: z.string().trim().min(1).default('main'),
+          path: z.string().trim().default('/'),
+          cdnTemplate: z
+            .string()
+            .trim()
+            .min(1)
+            .default('https://cdn.jsdelivr.net/gh/${username}/${repository}@${branch}/${filepath}'),
+          fileNameFormat: z.string().trim().min(1).default('${YY}-${MM}-${DD}-${HH}-${mm}-${ss}')
+        })
+        .default({
+          repository: '',
+          branch: 'main',
+          path: '/',
+          cdnTemplate:
+            'https://cdn.jsdelivr.net/gh/${username}/${repository}@${branch}/${filepath}',
+          fileNameFormat: '${YY}-${MM}-${DD}-${HH}-${mm}-${ss}'
+        })
+    })
+    .default({
+      defaultTarget: 'local',
+      github: {
+        repository: '',
+        branch: 'main',
+        path: '/',
+        cdnTemplate: 'https://cdn.jsdelivr.net/gh/${username}/${repository}@${branch}/${filepath}',
+        fileNameFormat: '${YY}-${MM}-${DD}-${HH}-${mm}-${ss}'
+      }
+    }),
   hiddenKnowledgeBases: z.array(z.string().min(1)).default([]),
   knowledgeBases: z.record(z.string(), knowledgeBaseSettingsSchema).default({})
 })
@@ -104,6 +138,11 @@ export function saveSettings(next: Partial<AppSettings>): AppSettings {
     ...current,
     ...next,
     autosave: { ...current.autosave, ...next.autosave },
+    imageUpload: {
+      ...current.imageUpload,
+      ...next.imageUpload,
+      github: { ...current.imageUpload.github, ...next.imageUpload?.github }
+    },
     knowledgeBases: { ...current.knowledgeBases, ...next.knowledgeBases }
   })
   const target = settingsPath()

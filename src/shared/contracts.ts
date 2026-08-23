@@ -11,7 +11,11 @@ export const IPC_CHANNELS = {
   noteRename: 'note:rename',
   noteUpdateConfig: 'note:update-config',
   attachmentWriteLocal: 'attachment:write-local',
+  attachmentUploadImage: 'attachment:upload-image',
   attachmentReadText: 'attachment:read-text',
+  imageTokenStatus: 'image:token-status',
+  imageTokenUpdate: 'image:token-update',
+  imageSettingsValidate: 'image:settings-validate',
   tocMove: 'toc:move',
   tocCreateGroup: 'toc:create-group',
   tocRenameGroup: 'toc:rename-group',
@@ -112,6 +116,20 @@ export type NoteViewMode = 'visual' | 'source'
 export type ThemeMode = 'system' | 'light' | 'dark'
 export type InterfaceDensity = 'compact' | 'comfortable'
 export type IdeKind = 'vscode' | 'cursor'
+export type ImageDefaultTarget = 'local' | 'github'
+
+export interface GitHubImageSettings {
+  repository: string
+  branch: string
+  path: string
+  cdnTemplate: string
+  fileNameFormat: string
+}
+
+export interface ImageUploadSettings {
+  defaultTarget: ImageDefaultTarget
+  github: GitHubImageSettings
+}
 
 export interface KnowledgeBaseSettings {
   hidden?: boolean
@@ -136,6 +154,7 @@ export interface AppSettings {
   gitPath: string | null
   nodePath: string | null
   confirmBeforeCommit: boolean
+  imageUpload: ImageUploadSettings
   hiddenKnowledgeBases: string[]
   knowledgeBases: Record<string, KnowledgeBaseSettings>
 }
@@ -359,6 +378,38 @@ export interface AttachmentWriteLocalResult {
   markdownPath: string
 }
 
+export interface ImageUploadRequest extends AttachmentWriteLocalRequest {}
+
+export interface ImageUploadResult {
+  markdownPath: string
+  target: ImageDefaultTarget
+  fallback: boolean
+  absolutePath?: string
+  remotePath?: string
+  warning?: string
+}
+
+export interface ImageTokenStatus {
+  configured: boolean
+  encryptionAvailable: boolean
+}
+
+export interface ImageTokenUpdateRequest {
+  token?: string
+  clear: boolean
+}
+
+export interface ImageSettingsValidateRequest {
+  github: GitHubImageSettings
+  token?: string
+}
+
+export interface ImageSettingsValidateResult {
+  repository: string
+  branch: string
+  message: string
+}
+
 export interface AttachmentReadTextRequest {
   knowledgeBaseId: string
   noteUuid: string
@@ -427,6 +478,11 @@ export interface DeskApi {
   }
   settings: {
     update(next: Partial<AppSettings>): Promise<DeskResult<AppSettings>>
+    imageTokenStatus(): Promise<DeskResult<ImageTokenStatus>>
+    updateImageToken(request: ImageTokenUpdateRequest): Promise<DeskResult<ImageTokenStatus>>
+    validateImageSettings(
+      request: ImageSettingsValidateRequest
+    ): Promise<DeskResult<ImageSettingsValidateResult>>
   }
   knowledgeBases: {
     read(knowledgeBaseId: string): Promise<DeskResult<KnowledgeBaseDetail>>
@@ -443,6 +499,7 @@ export interface DeskApi {
     writeLocal(
       request: AttachmentWriteLocalRequest
     ): Promise<DeskResult<AttachmentWriteLocalResult>>
+    uploadImage(request: ImageUploadRequest): Promise<DeskResult<ImageUploadResult>>
     readText(request: AttachmentReadTextRequest): Promise<DeskResult<string>>
   }
   toc: {

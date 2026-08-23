@@ -3,6 +3,8 @@ import { BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from 'electro
 import { z } from 'zod'
 
 import { deskLog } from './log'
+import { imageBedManager, validateGitHubImageSettings } from './imageBed'
+import { clearGitHubToken, imageTokenStatus, saveGitHubToken } from './imageSecret'
 import { previewManager } from './preview'
 import { deleteRecovery, loadRecoveries, writeRecovery } from './recovery'
 import { loadWorkspaceSession, saveWorkspaceSession } from './session'
@@ -16,6 +18,7 @@ import type {
   AppSettings,
   AttachmentWriteLocalRequest,
   AttachmentReadTextRequest,
+  ImageUploadRequest,
   DeskError,
   DeskResult,
   NoteCreateRequest,
@@ -189,6 +192,14 @@ const attachmentReadTextSchema = z.object({
   path: z.string().min(1).max(1024)
 })
 
+const githubImageSettingsSchema = z.object({
+  repository: z.string().trim().min(1).max(300),
+  branch: z.string().trim().min(1).max(240),
+  path: z.string().trim().max(1024),
+  cdnTemplate: z.string().trim().min(1).max(2048),
+  fileNameFormat: z.string().trim().min(1).max(240)
+})
+
 const tocMoveSchema = z.object({
   knowledgeBaseId: z.string().min(1),
   source: entryRefSchema,
@@ -315,6 +326,29 @@ export function registerIpc(getWindow: () => BrowserWindow | null): () => void {
     const settings = saveSettings(input as Partial<AppSettings>)
     return settings
   })
+  handle(IPC_CHANNELS.imageTokenStatus, getWindow, noInputSchema, () => imageTokenStatus())
+  handle(
+    IPC_CHANNELS.imageTokenUpdate,
+    getWindow,
+    z.object({
+      token: z.string().max(2048).optional(),
+      clear: z.boolean()
+    }),
+    ({ token, clear }) => {
+      if (clear) return clearGitHubToken()
+      if (token?.trim()) return saveGitHubToken(token)
+      return imageTokenStatus()
+    }
+  )
+  handle(
+    IPC_CHANNELS.imageSettingsValidate,
+    getWindow,
+    z.object({
+      github: githubImageSettingsSchema,
+      token: z.string().max(2048).optional()
+    }),
+    ({ github, token }) => validateGitHubImageSettings(github, token)
+  )
 
   handle(
     IPC_CHANNELS.noteRead,
@@ -339,6 +373,9 @@ export function registerIpc(getWindow: () => BrowserWindow | null): () => void {
   )
   handle(IPC_CHANNELS.attachmentWriteLocal, getWindow, attachmentWriteLocalSchema, (input) =>
     workspaceManager.writeLocalAttachment(input as AttachmentWriteLocalRequest)
+  )
+  handle(IPC_CHANNELS.attachmentUploadImage, getWindow, attachmentWriteLocalSchema, (input) =>
+    imageBedManager.upload(input as ImageUploadRequest)
   )
   handle(IPC_CHANNELS.attachmentReadText, getWindow, attachmentReadTextSchema, (input) =>
     workspaceManager.readNoteTextAsset(input as AttachmentReadTextRequest)

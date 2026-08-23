@@ -34,6 +34,39 @@
   line-height: 1.4;
 }
 
+:root[data-theme='light'] {
+  --app-bg: #f3f5f8;
+  --titlebar-bg: #f8f9fb;
+  --sidebar-bg: #f5f6f8;
+  --panel: #fff;
+  --tabs-bg: #f2f4f7;
+  --editor-bg: #fff;
+  --document-bg: #fff;
+  --raised: #fff;
+  --input-bg: #f8f9fb;
+  --text: #20242b;
+  --editor-text: #282d35;
+  --document-text: #282d35;
+  --muted: #697282;
+  --border: #dfe3e9;
+  --border-strong: #c9d0da;
+  --hover: rgba(28, 43, 65, 0.055);
+  --selected: rgba(55, 112, 230, 0.12);
+  --accent: #477be8;
+  --accent-strong: #285fcf;
+  --success: #2c8a4b;
+  --success-soft: rgba(44, 138, 75, 0.1);
+  --warning: #996d1f;
+  --warning-soft: rgba(153, 109, 31, 0.1);
+  --danger: #c44747;
+  --danger-soft: rgba(196, 71, 71, 0.1);
+  color-scheme: light;
+}
+
+:root[data-density='compact'] {
+  font-size: 13px;
+}
+
 * {
   box-sizing: border-box;
 }

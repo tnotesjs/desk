@@ -4,6 +4,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import EditorPane from './components/EditorPane.vue'
 import KnowledgeSidebar from './components/KnowledgeSidebar.vue'
 import NavigatorSidebar from './components/NavigatorSidebar.vue'
+import SettingsPanel from './components/SettingsPanel.vue'
 import { useEditorStore } from './stores/editor'
 import { useWorkspaceStore } from './stores/workspace'
 
@@ -12,11 +13,13 @@ import type { DeletePreviewDto, DeskTocNode } from '../../shared/contracts'
 const store = useWorkspaceStore()
 const editor = useEditorStore()
 const createDialogOpen = ref(false)
+const settingsOpen = ref(false)
 const createTitle = ref('')
 const deletePreview = ref<DeletePreviewDto | null>(null)
 const recoveryCandidate = computed(() => store.pendingRecoveries[0] ?? null)
 const dialogBusy = ref(false)
 let sessionTimer: ReturnType<typeof setTimeout> | null = null
+let systemTheme: MediaQueryList | null = null
 
 const workspaceColumns = computed(() => {
   const knowledgeWidth = editor.knowledgeSidebarCollapsed ? 48 : editor.knowledgeSidebarWidth
@@ -34,6 +37,13 @@ function onKeydown(event: KeyboardEvent): void {
     event.preventDefault()
     void store.saveCurrentDocument().catch(() => undefined)
   }
+}
+
+function applyAppearance(): void {
+  const selected = store.settings?.theme ?? 'system'
+  const theme = selected === 'system' ? (systemTheme?.matches ? 'dark' : 'light') : selected
+  document.documentElement.dataset.theme = theme
+  document.documentElement.dataset.density = store.settings?.density ?? 'comfortable'
 }
 
 function openCreateDialog(): void {
@@ -101,7 +111,11 @@ watch(
 )
 
 watch(
-  () => createDialogOpen.value || Boolean(deletePreview.value) || Boolean(recoveryCandidate.value),
+  () =>
+    createDialogOpen.value ||
+    settingsOpen.value ||
+    Boolean(deletePreview.value) ||
+    Boolean(recoveryCandidate.value),
   (modalOpen) => {
     if (modalOpen) {
       void window.desk.web.hideAll()
@@ -111,14 +125,21 @@ watch(
   }
 )
 
+watch(() => store.settings, applyAppearance, { deep: true })
+
 onMounted(async () => {
   window.addEventListener('keydown', onKeydown)
+  systemTheme = window.matchMedia('(prefers-color-scheme: dark)')
+  systemTheme.addEventListener('change', applyAppearance)
   await store.initialize()
+  applyAppearance()
   await persistSession()
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
+  systemTheme?.removeEventListener('change', applyAppearance)
+  systemTheme = null
   if (sessionTimer) clearTimeout(sessionTimer)
   if (store.hasWorkspace) {
     void persistSession()
@@ -141,7 +162,9 @@ onUnmounted(() => {
       <div class="titlebar-actions">
         <span v-if="store.saving" class="sync-state">正在保存</span>
         <span v-else-if="store.dirty" class="sync-state dirty">未保存</span>
-        <button type="button" title="设置（后续阶段）">⚙</button>
+        <button type="button" title="设置" aria-label="打开设置" @click="settingsOpen = true">
+          ⚙
+        </button>
       </div>
     </header>
 
@@ -258,6 +281,8 @@ onUnmounted(() => {
         </footer>
       </section>
     </div>
+
+    <SettingsPanel v-if="settingsOpen" @close="settingsOpen = false" />
   </div>
 </template>
 
@@ -351,6 +376,7 @@ onUnmounted(() => {
 .titlebar-actions button {
   width: 28px;
   height: 28px;
+  -webkit-app-region: no-drag;
   border: 0;
   border-radius: 6px;
   background: transparent;

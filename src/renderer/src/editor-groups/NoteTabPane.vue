@@ -38,7 +38,7 @@ function insertTemplate(text: string): void {
 
 async function pasteImage(file: File, insertAt: number): Promise<void> {
   try {
-    const attachment = await workspace.writeLocalAttachment(
+    const attachment = await workspace.uploadImage(
       props.tab.knowledgeBaseId,
       props.tab.noteUuid,
       file
