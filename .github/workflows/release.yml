@@ -1,0 +1,108 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Package ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macOS
+            runner: macos-15
+            command: build:mac
+            args: --arm64
+          - platform: macOS-Intel
+            runner: macos-15-intel
+            command: build:mac
+            args: --x64
+          - platform: Windows
+            runner: windows-latest
+            command: build:win
+            args: --x64
+          - platform: Linux
+            runner: ubuntu-latest
+            command: build:linux
+            args: --x64
+
+    steps:
+      - name: Check out Desk
+        uses: actions/checkout@v4
+        with:
+          path: desk
+
+      # Kept for pre-release builds while package.json still uses link:../core.
+      - name: Check out TNotes Core
+        uses: actions/checkout@v4
+        with:
+          repository: tnotesjs/core
+          ref: codex/desk-workspace-api
+          path: core
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.10.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: desk/pnpm-lock.yaml
+
+      - name: Install TNotes Core dependencies
+        working-directory: core
+        run: pnpm install --frozen-lockfile
+
+      - name: Build TNotes Core
+        working-directory: core
+        run: pnpm build
+
+      - name: Install dependencies
+        working-directory: desk
+        run: pnpm install --frozen-lockfile
+
+      - name: Build package
+        working-directory: desk
+        run: pnpm run ${{ matrix.command }} -- ${{ matrix.args }}
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: desk-${{ matrix.platform }}
+          if-no-files-found: error
+          path: |
+            desk/dist/*.dmg
+            desk/dist/*.zip
+            desk/dist/*.exe
+            desk/dist/*.AppImage
+            desk/dist/*.deb
+            desk/dist/*.blockmap
+            desk/dist/latest*.yml
+
+  publish:
+    name: Publish GitHub Release
+    needs: package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" artifacts/* --generate-notes --title "TNotes Desk $GITHUB_REF_NAME"

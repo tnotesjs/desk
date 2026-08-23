@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out Desk
+        uses: actions/checkout@v4
+        with:
+          path: desk
+
+      # Desk uses link:../core until the accompanying Core release is published.
+      - name: Check out TNotes Core
+        uses: actions/checkout@v4
+        with:
+          repository: tnotesjs/core
+          ref: codex/desk-workspace-api
+          path: core
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.10.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: desk/pnpm-lock.yaml
+
+      - name: Install TNotes Core dependencies
+        working-directory: core
+        run: pnpm install --frozen-lockfile
+
+      - name: Build TNotes Core
+        working-directory: core
+        run: pnpm build
+
+      - name: Install dependencies
+        working-directory: desk
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        working-directory: desk
+        run: pnpm lint
+
+      - name: Test
+        working-directory: desk
+        run: pnpm test
+
+      - name: Type-check
+        working-directory: desk
+        run: pnpm typecheck
+
+      - name: Build
+        working-directory: desk
+        run: pnpm build
