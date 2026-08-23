@@ -1,71 +1,116 @@
-import { app, shell, BrowserWindow } from 'electron'
-import { join } from 'path'
-import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import { join } from 'node:path'
+import { app, BrowserWindow, shell } from 'electron'
+import { electronApp, is, optimizer } from '@electron-toolkit/utils'
+
 import icon from '../../resources/icon.png?asset'
 import { registerIpc } from './ipc'
 import { deskLog } from './log'
 import { previewManager } from './preview'
+import { workspaceManager } from './workspaceManager'
 
-function createWindow(): void {
-  const mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 800,
-    minWidth: 900,
-    minHeight: 600,
+let mainWindow: BrowserWindow | null = null
+let unregisterIpc: (() => void) | null = null
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'http:' || url.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+function createWindow(): BrowserWindow {
+  const window = new BrowserWindow({
+    width: 1360,
+    height: 860,
+    minWidth: 960,
+    minHeight: 640,
     show: false,
     autoHideMenuBar: true,
     title: 'TNotes Desk',
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false,
-      // Guest page is a top-level origin so VitePress embeds (e.g. giscus) keep working.
-      webviewTag: true
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      webviewTag: false
     }
   })
 
-  mainWindow.on('ready-to-show', () => {
-    mainWindow.show()
+  window.once('ready-to-show', () => {
+    window.show()
     if (is.dev) {
-      mainWindow.webContents.openDevTools({ mode: 'bottom' })
+      window.webContents.openDevTools({ mode: 'bottom' })
       deskLog('desk', 'DevTools opened (dev mode)')
     }
   })
+  window.on('closed', () => {
+    if (mainWindow === window) mainWindow = null
+  })
 
-  mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+  window.webContents.on('will-navigate', (event, url) => {
+    const current = window.webContents.getURL()
+    if (url === current) return
+    event.preventDefault()
+    if (isHttpUrl(url)) void shell.openExternal(url)
+  })
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (isHttpUrl(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
+  window.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) =>
+    callback(false)
+  )
 
-  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+  if (is.dev && process.env.ELECTRON_RENDERER_URL) {
+    void window.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    void window.loadFile(join(__dirname, '../renderer/index.html'))
   }
+  return window
 }
 
-app.whenReady().then(() => {
-  electronApp.setAppUserModelId('com.tnotesjs.desk')
-
-  app.on('browser-window-created', (_, window) => {
-    optimizer.watchWindowShortcuts(window)
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
+if (!hasSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
   })
 
-  registerIpc()
-  createWindow()
+  void app.whenReady().then(async () => {
+    electronApp.setAppUserModelId('com.tnotesjs.desk')
+    app.on('browser-window-created', (_, window) => {
+      optimizer.watchWindowShortcuts(window)
+    })
 
-  app.on('activate', function () {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    await workspaceManager.initialize()
+    unregisterIpc = registerIpc(() => mainWindow)
+    mainWindow = createWindow()
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        mainWindow = createWindow()
+      }
+    })
   })
-})
+}
 
 app.on('before-quit', () => {
   void previewManager.stop()
 })
 
+app.on('will-quit', () => {
+  unregisterIpc?.()
+  unregisterIpc = null
+  void workspaceManager.dispose()
+})
+
 app.on('window-all-closed', () => {
-  void previewManager.stop()
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
+  if (process.platform !== 'darwin') app.quit()
 })

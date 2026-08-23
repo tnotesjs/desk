@@ -1,146 +1,94 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { electronAPI } from '@electron-toolkit/preload'
 
-export type TocNode =
-  | {
-      type: 'group'
-      title: string
-      tocLineIndex: number
-      nodeId: string
-      folderPath: string[]
-      children: TocNode[]
+import { IPC_CHANNELS } from '../shared/contracts'
+
+import type {
+  AppSettings,
+  BootstrapPayload,
+  DeletePreviewDto,
+  DeskApi,
+  DeskResult,
+  ExternalNoteChangeEvent,
+  KnowledgeBaseDetail,
+  NoteCreateRequest,
+  NoteDocumentDto,
+  NoteMutationDto,
+  NoteRenameRequest,
+  NoteSaveRequest,
+  NoteUpdateConfigRequest,
+  TocCreateGroupRequest,
+  TocDeleteRequest,
+  TocEntryRefDto,
+  TocMoveRequest,
+  TocRenameGroupRequest,
+  WorkspaceOverview
+} from '../shared/contracts'
+
+function invoke<T>(channel: string, input?: unknown): Promise<DeskResult<T>> {
+  return ipcRenderer.invoke(channel, input) as Promise<DeskResult<T>>
+}
+
+const api: DeskApi = {
+  bootstrap: () => invoke<BootstrapPayload>(IPC_CHANNELS.bootstrap),
+  workspace: {
+    choose: () => invoke<WorkspaceOverview>(IPC_CHANNELS.workspaceChoose),
+    set: (path) => invoke<WorkspaceOverview>(IPC_CHANNELS.workspaceSet, path),
+    refresh: () => invoke<WorkspaceOverview>(IPC_CHANNELS.workspaceRefresh),
+    onChanged: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, overview: WorkspaceOverview): void =>
+        callback(overview)
+      ipcRenderer.on(IPC_CHANNELS.workspaceChanged, listener)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.workspaceChanged, listener)
     }
-  | {
-      type: 'note'
-      title: string
-      noteDir: string
-      noteIndex: string
-      tocLineIndex: number
-      nodeId: string
-      completed: boolean
-      children: TocNode[]
+  },
+  settings: {
+    update: (next) => invoke<AppSettings>(IPC_CHANNELS.settingsUpdate, next)
+  },
+  knowledgeBases: {
+    read: (knowledgeBaseId) =>
+      invoke<KnowledgeBaseDetail>(IPC_CHANNELS.knowledgeBaseRead, knowledgeBaseId)
+  },
+  notes: {
+    read: (knowledgeBaseId, noteUuid) =>
+      invoke<NoteDocumentDto>(IPC_CHANNELS.noteRead, {
+        knowledgeBaseId,
+        noteUuid
+      }),
+    save: (request: NoteSaveRequest) => invoke<NoteMutationDto>(IPC_CHANNELS.noteSave, request),
+    create: (request: NoteCreateRequest) =>
+      invoke<NoteMutationDto>(IPC_CHANNELS.noteCreate, request),
+    rename: (request: NoteRenameRequest) =>
+      invoke<NoteMutationDto>(IPC_CHANNELS.noteRename, request),
+    updateConfig: (request: NoteUpdateConfigRequest) =>
+      invoke<NoteMutationDto>(IPC_CHANNELS.noteUpdateConfig, request),
+    onExternalChanged: (callback) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        payload: ExternalNoteChangeEvent
+      ): void => callback(payload)
+      ipcRenderer.on(IPC_CHANNELS.noteExternalChanged, listener)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.noteExternalChanged, listener)
     }
-
-export interface WorkspaceState {
-  path: string | null
-}
-
-export interface NotePayload {
-  path: string
-  content: string
-}
-
-export interface GitStatus {
-  repo: string
-  isRepo: boolean
-  branch: string | null
-  clean: boolean
-  changed: number
-  ahead: number
-  behind: number
-  error: string | null
-}
-
-export interface GitCommandResult {
-  ok: boolean
-  stdout: string
-  stderr: string
-  error: string | null
-  message: string | null
-  status: GitStatus
-}
-
-export interface AppSettings {
-  blacklist: string[]
-}
-
-export type PreviewRuntimeStatus = 'idle' | 'starting' | 'ready' | 'error'
-
-export interface PreviewState {
-  repo: string | null
-  port: number | null
-  status: PreviewRuntimeStatus
-  error: string | null
-  baseUrl: string | null
-}
-
-const api = {
-  getWorkspace: (): Promise<WorkspaceState> => ipcRenderer.invoke('workspace:get'),
-  chooseWorkspace: (): Promise<WorkspaceState> => ipcRenderer.invoke('workspace:choose'),
-  setWorkspace: (path: string | null): Promise<WorkspaceState> =>
-    ipcRenderer.invoke('workspace:set', path),
-  getSettings: (): Promise<AppSettings> => ipcRenderer.invoke('settings:get'),
-  setSettings: (next: Partial<AppSettings>): Promise<AppSettings> =>
-    ipcRenderer.invoke('settings:set', next),
-  listKnowledge: (): Promise<string[]> => ipcRenderer.invoke('knowledge:list'),
-  scanKnowledge: (): Promise<string[]> => ipcRenderer.invoke('knowledge:scan'),
-  readToc: (repoName: string): Promise<TocNode[]> => ipcRenderer.invoke('toc:read', repoName),
-  tocCreateNotes: (
-    repoName: string,
-    options: {
-      count?: number
-      title?: string
-      parentTocLineIndex?: number
-      aroundNoteIndex?: string
-      placement?: 'before' | 'after'
-    }
-  ): Promise<TocNode[]> => ipcRenderer.invoke('toc:create-notes', repoName, options),
-  tocCreateFolder: (
-    repoName: string,
-    options: { title: string; parentTocLineIndex?: number }
-  ): Promise<TocNode[]> => ipcRenderer.invoke('toc:create-folder', repoName, options),
-  tocRenameNote: (repoName: string, noteIndex: string, newTitle: string): Promise<TocNode[]> =>
-    ipcRenderer.invoke('toc:rename-note', repoName, noteIndex, newTitle),
-  tocRenameFolder: (repoName: string, tocLineIndex: number, newTitle: string): Promise<TocNode[]> =>
-    ipcRenderer.invoke('toc:rename-folder', repoName, tocLineIndex, newTitle),
-  tocDeleteNote: (repoName: string, noteIndex: string): Promise<TocNode[]> =>
-    ipcRenderer.invoke('toc:delete-note', repoName, noteIndex),
-  tocDeleteEntry: (repoName: string, tocLineIndex: number): Promise<TocNode[]> =>
-    ipcRenderer.invoke('toc:delete-entry', repoName, tocLineIndex),
-  tocReorder: (
-    repoName: string,
-    payload: { nodeId: string; action: 'moveAfter' | 'prependChild'; targetNodeId?: string }
-  ): Promise<TocNode[]> => ipcRenderer.invoke('toc:reorder', repoName, payload),
-  readNote: (repoName: string, noteDir: string): Promise<NotePayload> =>
-    ipcRenderer.invoke('note:read', repoName, noteDir),
-  writeNote: (
-    repoName: string,
-    noteDir: string,
-    content: string
-  ): Promise<{ path: string; ok: boolean }> =>
-    ipcRenderer.invoke('note:write', repoName, noteDir, content),
-  gitStatus: (repoName: string): Promise<GitStatus> => ipcRenderer.invoke('git:status', repoName),
-  gitStatusAll: (): Promise<GitStatus[]> => ipcRenderer.invoke('git:status-all'),
-  gitPull: (repoName: string): Promise<GitCommandResult> =>
-    ipcRenderer.invoke('git:pull', repoName),
-  gitPush: (repoName: string): Promise<GitCommandResult> => ipcRenderer.invoke('git:push', repoName),
-  previewStatus: (): Promise<PreviewState> => ipcRenderer.invoke('preview:status'),
-  previewStart: (repoName: string): Promise<PreviewState> =>
-    ipcRenderer.invoke('preview:start', repoName),
-  previewStop: (): Promise<PreviewState> => ipcRenderer.invoke('preview:stop'),
-  previewNoteUrl: (repoName: string, noteDir: string): Promise<string> =>
-    ipcRenderer.invoke('preview:note-url', repoName, noteDir),
-  onLog: (callback: (line: string) => void): (() => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, line: string): void => {
-      callback(line)
-    }
-    ipcRenderer.on('desk:log', listener)
-    return () => {
-      ipcRenderer.removeListener('desk:log', listener)
-    }
+  },
+  toc: {
+    move: (request: TocMoveRequest) => invoke<KnowledgeBaseDetail>(IPC_CHANNELS.tocMove, request),
+    createGroup: (request: TocCreateGroupRequest) =>
+      invoke<KnowledgeBaseDetail>(IPC_CHANNELS.tocCreateGroup, request),
+    renameGroup: (request: TocRenameGroupRequest) =>
+      invoke<KnowledgeBaseDetail>(IPC_CHANNELS.tocRenameGroup, request),
+    previewDelete: (knowledgeBaseId, entry: TocEntryRefDto) =>
+      invoke<DeletePreviewDto>(IPC_CHANNELS.tocPreviewDelete, {
+        knowledgeBaseId,
+        entry
+      }),
+    delete: (request: TocDeleteRequest) =>
+      invoke<KnowledgeBaseDetail>(IPC_CHANNELS.tocDelete, request)
+  },
+  onLog: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, line: string): void => callback(line)
+    ipcRenderer.on(IPC_CHANNELS.log, listener)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.log, listener)
   }
 }
 
-if (process.contextIsolated) {
-  try {
-    contextBridge.exposeInMainWorld('electron', electronAPI)
-    contextBridge.exposeInMainWorld('api', api)
-  } catch (error) {
-    console.error(error)
-  }
-} else {
-  // @ts-expect-error fallback without context isolation
-  window.electron = electronAPI
-  // @ts-expect-error fallback without context isolation
-  window.api = api
-}
+contextBridge.exposeInMainWorld('desk', api)

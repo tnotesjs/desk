@@ -11,26 +11,6 @@ export default defineConfig({
         '@renderer': resolve('src/renderer/src')
       }
     },
-    plugins: [
-      vue({
-        template: {
-          compilerOptions: {
-            isCustomElement: (tag) => tag === 'webview'
-          }
-        }
-      })
-    ],
-    optimizeDeps: {
-      include: ['monaco-editor']
-    },
-    build: {
-      rollupOptions: {
-        output: {
-          manualChunks: {
-            monaco: ['monaco-editor']
-          }
-        }
-      }
-    }
+    plugins: [vue()]
   }
 })

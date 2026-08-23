@@ -67,9 +67,7 @@ export function generateCommitMessage(): string {
   return `📝 Update notes - ${date} ${time}`
 }
 
-async function countAheadBehind(
-  repoDir: string
-): Promise<{ ahead: number; behind: number }> {
+async function countAheadBehind(repoDir: string): Promise<{ ahead: number; behind: number }> {
   try {
     const { stdout } = await runGit(repoDir, [
       'rev-list',
@@ -143,14 +141,9 @@ export async function gitPull(repoDir: string): Promise<GitCommandResult> {
   deskLog('git:pull', 'start (tn-like)', { repoDir })
   try {
     const before = (await runGit(repoDir, ['rev-parse', 'HEAD'])).stdout.trim()
-    const { stdout, stderr } = await runGit(
-      repoDir,
-      ['pull', '--rebase', '--autostash'],
-      180_000
-    )
+    const { stdout, stderr } = await runGit(repoDir, ['pull', '--rebase', '--autostash'], 180_000)
     const after = (await runGit(repoDir, ['rev-parse', 'HEAD'])).stdout.trim()
-    const message =
-      before === after ? '已是最新，没有需要拉取的更新' : '拉取完成'
+    const message = before === after ? '已是最新，没有需要拉取的更新' : '拉取完成'
     deskLog('git:pull', 'ok', { message, before, after })
     return { ok: true, stdout, stderr, error: null, message }
   } catch (e) {
