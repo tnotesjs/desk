@@ -10,6 +10,8 @@ export const IPC_CHANNELS = {
   noteCreate: 'note:create',
   noteRename: 'note:rename',
   noteUpdateConfig: 'note:update-config',
+  attachmentWriteLocal: 'attachment:write-local',
+  attachmentReadText: 'attachment:read-text',
   tocMove: 'toc:move',
   tocCreateGroup: 'toc:create-group',
   tocRenameGroup: 'toc:rename-group',
@@ -17,6 +19,8 @@ export const IPC_CHANNELS = {
   tocDelete: 'toc:delete',
   sessionRead: 'session:read',
   sessionSave: 'session:save',
+  recoveryWrite: 'recovery:write',
+  recoveryDelete: 'recovery:delete',
   webCreate: 'web:create',
   webLayout: 'web:layout',
   webHideAll: 'web:hide-all',
@@ -140,6 +144,30 @@ export interface BootstrapPayload {
   workspace: WorkspaceOverview
   settings: AppSettings
   session: WorkspaceSession | null
+  recoveries: RecoveryRecord[]
+}
+
+export interface RecoveryRecord {
+  version: 1
+  knowledgeBaseId: string
+  noteUuid: string
+  title: string
+  content: string
+  revision: string
+  updatedAt: string
+}
+
+export interface RecoveryWriteRequest {
+  knowledgeBaseId: string
+  noteUuid: string
+  title: string
+  content: string
+  revision: string
+}
+
+export interface RecoveryDeleteRequest {
+  knowledgeBaseId: string
+  noteUuid: string
 }
 
 export interface NoteEditorTab {
@@ -319,6 +347,24 @@ export interface NoteUpdateConfigRequest {
   }
 }
 
+export interface AttachmentWriteLocalRequest {
+  knowledgeBaseId: string
+  noteUuid: string
+  fileName: string
+  data: Uint8Array
+}
+
+export interface AttachmentWriteLocalResult {
+  absolutePath: string
+  markdownPath: string
+}
+
+export interface AttachmentReadTextRequest {
+  knowledgeBaseId: string
+  noteUuid: string
+  path: string
+}
+
 export type TocEntryRefDto =
   | { type: 'note'; noteUuid: string }
   | { type: 'folder'; folderPath: string[] }
@@ -393,6 +439,12 @@ export interface DeskApi {
     updateConfig(request: NoteUpdateConfigRequest): Promise<DeskResult<NoteMutationDto>>
     onExternalChanged(callback: (event: ExternalNoteChangeEvent) => void): () => void
   }
+  attachments: {
+    writeLocal(
+      request: AttachmentWriteLocalRequest
+    ): Promise<DeskResult<AttachmentWriteLocalResult>>
+    readText(request: AttachmentReadTextRequest): Promise<DeskResult<string>>
+  }
   toc: {
     move(request: TocMoveRequest): Promise<DeskResult<KnowledgeBaseDetail>>
     createGroup(request: TocCreateGroupRequest): Promise<DeskResult<KnowledgeBaseDetail>>
@@ -406,6 +458,10 @@ export interface DeskApi {
   session: {
     read(): Promise<DeskResult<WorkspaceSession | null>>
     save(session: WorkspaceSession): Promise<DeskResult<void>>
+  }
+  recovery: {
+    write(request: RecoveryWriteRequest): Promise<DeskResult<void>>
+    delete(request: RecoveryDeleteRequest): Promise<DeskResult<void>>
   }
   web: {
     create(request: WebCreateRequest): Promise<DeskResult<WebTabState>>

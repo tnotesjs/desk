@@ -14,6 +14,7 @@ const editor = useEditorStore()
 const createDialogOpen = ref(false)
 const createTitle = ref('')
 const deletePreview = ref<DeletePreviewDto | null>(null)
+const recoveryCandidate = computed(() => store.pendingRecoveries[0] ?? null)
 const dialogBusy = ref(false)
 let sessionTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -100,7 +101,7 @@ watch(
 )
 
 watch(
-  () => createDialogOpen.value || Boolean(deletePreview.value),
+  () => createDialogOpen.value || Boolean(deletePreview.value) || Boolean(recoveryCandidate.value),
   (modalOpen) => {
     if (modalOpen) {
       void window.desk.web.hideAll()
@@ -231,6 +232,32 @@ onUnmounted(() => {
         </footer>
       </section>
     </div>
+
+    <div v-if="recoveryCandidate" class="dialog-backdrop">
+      <section class="dialog recovery-dialog">
+        <header>
+          <div>
+            <span>发现未保存的编辑</span>
+            <strong>{{ recoveryCandidate.title }}</strong>
+          </div>
+        </header>
+        <p>
+          Desk 在上次异常结束前保存了恢复快照，时间为
+          {{
+            new Date(recoveryCandidate.updatedAt).toLocaleString()
+          }}。它不是历史版本；处理后只会保留正常的 Git 历史。
+        </p>
+        <div class="recovery-preview">{{ recoveryCandidate.content.slice(0, 480) }}</div>
+        <footer>
+          <button type="button" class="secondary" @click="store.discardRecovery(recoveryCandidate)">
+            丢弃快照
+          </button>
+          <button type="button" class="primary" @click="store.acceptRecovery(recoveryCandidate)">
+            恢复到编辑器
+          </button>
+        </footer>
+      </section>
+    </div>
   </div>
 </template>
 
@@ -242,6 +269,20 @@ onUnmounted(() => {
   flex-direction: column;
   background: var(--app-bg);
   color: var(--text);
+}
+
+.recovery-preview {
+  max-height: 180px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--input-bg);
+  padding: 10px;
+  white-space: pre-wrap;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.55;
 }
 
 .titlebar {

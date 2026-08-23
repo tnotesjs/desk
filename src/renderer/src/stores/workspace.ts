@@ -5,11 +5,13 @@ import { useEditorStore } from './editor'
 
 import type {
   AppSettings,
+  AttachmentWriteLocalResult,
   DeletePreviewDto,
   DeskResult,
   DeskTocNode,
   KnowledgeBaseDetail,
   NoteDocumentDto,
+  RecoveryRecord,
   WorkspaceOverview
 } from '../../../shared/contracts'
 import type { SplitPlacement } from '../editor-groups/layoutModel'
@@ -55,10 +57,12 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const selectedKnowledgeBaseId = ref<string | null>(null)
   const knowledgeBase = ref<KnowledgeBaseDetail | null>(null)
   const documents = ref<Record<string, DocumentSession>>({})
+  const pendingRecoveries = ref<RecoveryRecord[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
   const status = ref<string | null>(null)
   const autosaveTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  const recoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
   let unsubscribeWorkspace: (() => void) | null = null
   let unsubscribeExternal: (() => void) | null = null
 
@@ -93,6 +97,45 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     const timer = autosaveTimers.get(key)
     if (timer) clearTimeout(timer)
     autosaveTimers.delete(key)
+    const recoveryTimer = recoveryTimers.get(key)
+    if (recoveryTimer) clearTimeout(recoveryTimer)
+    recoveryTimers.delete(key)
+  }
+
+  function deleteRecovery(knowledgeBaseId: string, noteUuid: string): void {
+    void window.desk.recovery.delete({ knowledgeBaseId, noteUuid })
+  }
+
+  async function persistRecovery(key: string): Promise<void> {
+    const session = documents.value[key]
+    if (!session?.dirty) return
+    const result = await window.desk.recovery.write({
+      knowledgeBaseId: session.document.knowledgeBaseId,
+      noteUuid: session.document.uuid,
+      title: session.document.title,
+      content: session.content,
+      revision: session.document.revision
+    })
+    if (!result.ok) error.value = `无法保存恢复快照：${result.error.message}`
+  }
+
+  async function prepareRecoveries(records: RecoveryRecord[]): Promise<void> {
+    const candidates: RecoveryRecord[] = []
+    for (const record of records) {
+      try {
+        const disk = resultValue(
+          await window.desk.notes.read(record.knowledgeBaseId, record.noteUuid)
+        )
+        if (disk.content === record.content) {
+          deleteRecovery(record.knowledgeBaseId, record.noteUuid)
+        } else {
+          candidates.push(record)
+        }
+      } catch {
+        deleteRecovery(record.knowledgeBaseId, record.noteUuid)
+      }
+    }
+    pendingRecoveries.value = candidates
   }
 
   function applyDetail(detail: KnowledgeBaseDetail): void {
@@ -109,6 +152,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       overview.value = payload.workspace
       settings.value = payload.settings
       editor.restore(payload.session, payload.workspace.knowledgeBases)
+      await prepareRecoveries(payload.recoveries)
       unsubscribeWorkspace = window.desk.workspace.onChanged((next) => {
         overview.value = next
         if (
@@ -153,6 +197,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     unsubscribeExternal = null
     for (const timer of autosaveTimers.values()) clearTimeout(timer)
     autosaveTimers.clear()
+    for (const timer of recoveryTimers.values()) clearTimeout(timer)
+    recoveryTimers.clear()
+    for (const [key, session] of Object.entries(documents.value)) {
+      if (session.dirty) void persistRecovery(key)
+    }
     editor.dispose()
   }
 
@@ -254,6 +303,24 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     }
   }
 
+  async function openNoteByUuid(knowledgeBaseId: string, noteUuid: string): Promise<void> {
+    const detail = resultValue(await window.desk.knowledgeBases.read(knowledgeBaseId))
+    const stack = [...detail.toc]
+    let target: Extract<DeskTocNode, { type: 'note' }> | null = null
+    while (stack.length > 0) {
+      const node = stack.shift()!
+      if (node.type === 'note' && node.uuid === noteUuid) {
+        target = node
+        break
+      }
+      stack.unshift(...node.children)
+    }
+    if (!target) throw new Error(`关联笔记不存在：${noteUuid}`)
+    await ensureDocument(knowledgeBaseId, noteUuid)
+    editor.openNote(detail, noteUuid, target.title, settings.value?.defaultNoteView ?? 'visual')
+    await selectKnowledgeBase(knowledgeBaseId)
+  }
+
   function updateDocumentContent(key: string, content: string): void {
     const session = documents.value[key]
     if (!session || session.document.readOnly) return
@@ -262,6 +329,20 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     const currentTimer = autosaveTimers.get(key)
     if (currentTimer) clearTimeout(currentTimer)
     autosaveTimers.delete(key)
+    const currentRecoveryTimer = recoveryTimers.get(key)
+    if (currentRecoveryTimer) clearTimeout(currentRecoveryTimer)
+    recoveryTimers.delete(key)
+    if (dirty) {
+      recoveryTimers.set(
+        key,
+        setTimeout(() => {
+          recoveryTimers.delete(key)
+          void persistRecovery(key)
+        }, 250)
+      )
+    } else {
+      deleteRecovery(session.document.knowledgeBaseId, session.document.uuid)
+    }
     if (dirty && settings.value?.autosave.enabled) {
       const timer = setTimeout(() => {
         autosaveTimers.delete(key)
@@ -279,6 +360,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     const session = documents.value[key]
     if (!session || !session.dirty || session.document.readOnly || session.saving) return
     setDocumentSession(key, { ...session, saving: true })
+    const recoveryTimer = recoveryTimers.get(key)
+    if (recoveryTimer) clearTimeout(recoveryTimer)
+    recoveryTimers.delete(key)
     error.value = null
     try {
       const mutation = resultValue(
@@ -297,6 +381,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         saving: false
       })
       applyDetail(mutation.knowledgeBase)
+      deleteRecovery(mutation.note.knowledgeBaseId, mutation.note.uuid)
       status.value = '已保存'
     } catch (cause) {
       const current = documents.value[key] ?? session
@@ -309,6 +394,22 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       error.value = cause instanceof Error ? cause.message : String(cause)
       throw cause
     }
+  }
+
+  async function writeLocalAttachment(
+    knowledgeBaseId: string,
+    noteUuid: string,
+    file: File
+  ): Promise<AttachmentWriteLocalResult> {
+    const data = new Uint8Array(await file.arrayBuffer())
+    return resultValue(
+      await window.desk.attachments.writeLocal({
+        knowledgeBaseId,
+        noteUuid,
+        fileName: file.name || `image-${Date.now()}.png`,
+        data
+      })
+    )
   }
 
   async function saveCurrentDocument(): Promise<void> {
@@ -334,6 +435,45 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       externalConflict: false,
       saving: false
     })
+    deleteRecovery(next.knowledgeBaseId, next.uuid)
+  }
+
+  async function acceptRecovery(record: RecoveryRecord): Promise<void> {
+    const loaded = await ensureDocument(record.knowledgeBaseId, record.noteUuid)
+    const key = documentKey(record.knowledgeBaseId, record.noteUuid)
+    setDocumentSession(key, {
+      ...loaded,
+      content: record.content,
+      dirty: record.content !== loaded.document.content,
+      externalConflict: false
+    })
+    const descriptor = overview.value.allKnowledgeBases.find(
+      (item) => item.id === record.knowledgeBaseId
+    )
+    if (descriptor) {
+      editor.openNote(
+        descriptor,
+        record.noteUuid,
+        record.title,
+        settings.value?.defaultNoteView ?? 'visual'
+      )
+      await selectKnowledgeBase(record.knowledgeBaseId)
+    }
+    pendingRecoveries.value = pendingRecoveries.value.filter(
+      (candidate) =>
+        candidate.knowledgeBaseId !== record.knowledgeBaseId ||
+        candidate.noteUuid !== record.noteUuid
+    )
+    await persistRecovery(key)
+  }
+
+  function discardRecovery(record: RecoveryRecord): void {
+    deleteRecovery(record.knowledgeBaseId, record.noteUuid)
+    pendingRecoveries.value = pendingRecoveries.value.filter(
+      (candidate) =>
+        candidate.knowledgeBaseId !== record.knowledgeBaseId ||
+        candidate.noteUuid !== record.noteUuid
+    )
   }
 
   async function reloadCurrentDocument(): Promise<void> {
@@ -431,6 +571,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     for (const note of preview.notes) {
       editor.closeNote(preview.knowledgeBaseId, note.noteUuid)
       removeDocumentSession(documentKey(preview.knowledgeBaseId, note.noteUuid))
+      deleteRecovery(preview.knowledgeBaseId, note.noteUuid)
     }
   }
 
@@ -445,6 +586,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     selectedKnowledgeBase,
     knowledgeBase,
     documents,
+    pendingRecoveries,
     document,
     editorContent,
     dirty,
@@ -461,13 +603,17 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     selectKnowledgeBase,
     syncToActiveTab,
     selectNote,
+    openNoteByUuid,
     updateDocumentContent,
     updateEditorContent,
     saveDocument,
     saveCurrentDocument,
     saveAllDocuments,
+    writeLocalAttachment,
     reloadCurrentDocument,
     keepEditorAgainstDisk,
+    acceptRecovery,
+    discardRecovery,
     createNote,
     toggleDone,
     previewDeleteNode,

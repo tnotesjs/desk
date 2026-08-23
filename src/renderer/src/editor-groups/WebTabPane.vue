@@ -5,7 +5,7 @@ import { useEditorStore } from '../stores/editor'
 
 import type { DeskResult, WebEditorTab, WebTabState } from '../../../shared/contracts'
 
-const props = defineProps<{ tab: WebEditorTab }>()
+const props = defineProps<{ tab: WebEditorTab; active: boolean }>()
 const editor = useEditorStore()
 const address = ref(props.tab.url)
 const viewport = ref<HTMLElement | null>(null)
@@ -37,7 +37,7 @@ async function updateLayout(): Promise<void> {
   const rect = viewport.value.getBoundingClientRect()
   await window.desk.web.layout({
     tabId: props.tab.id,
-    visible: rect.width > 0 && rect.height > 0,
+    visible: props.active && rect.width > 0 && rect.height > 0,
     bounds: { x: rect.left, y: rect.top, width: rect.width, height: rect.height }
   })
 }
@@ -87,11 +87,23 @@ function onWindowResize(): void {
   void updateLayout()
 }
 
+watch(
+  () => props.active,
+  async (active) => {
+    if (active && !ready.value) {
+      await createView()
+      return
+    }
+    await nextTick()
+    await updateLayout()
+  }
+)
+
 onMounted(() => {
   resizeObserver = new ResizeObserver(() => void updateLayout())
   if (viewport.value) resizeObserver.observe(viewport.value)
   window.addEventListener('resize', onWindowResize)
-  void createView()
+  if (props.active) void createView()
 })
 
 onBeforeUnmount(() => {

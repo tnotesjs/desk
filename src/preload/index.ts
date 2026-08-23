@@ -4,6 +4,9 @@ import { IPC_CHANNELS } from '../shared/contracts'
 
 import type {
   AppSettings,
+  AttachmentWriteLocalRequest,
+  AttachmentWriteLocalResult,
+  AttachmentReadTextRequest,
   BootstrapPayload,
   DeletePreviewDto,
   DeskApi,
@@ -18,6 +21,8 @@ import type {
   NoteUpdateConfigRequest,
   PreviewStartResult,
   PreviewStateDto,
+  RecoveryDeleteRequest,
+  RecoveryWriteRequest,
   TocCreateGroupRequest,
   TocDeleteRequest,
   TocEntryRefDto,
@@ -75,6 +80,12 @@ const api: DeskApi = {
       return () => ipcRenderer.removeListener(IPC_CHANNELS.noteExternalChanged, listener)
     }
   },
+  attachments: {
+    writeLocal: (request: AttachmentWriteLocalRequest) =>
+      invoke<AttachmentWriteLocalResult>(IPC_CHANNELS.attachmentWriteLocal, request),
+    readText: (request: AttachmentReadTextRequest) =>
+      invoke<string>(IPC_CHANNELS.attachmentReadText, request)
+  },
   toc: {
     move: (request: TocMoveRequest) => invoke<KnowledgeBaseDetail>(IPC_CHANNELS.tocMove, request),
     createGroup: (request: TocCreateGroupRequest) =>
@@ -92,6 +103,10 @@ const api: DeskApi = {
   session: {
     read: () => invoke<WorkspaceSession | null>(IPC_CHANNELS.sessionRead),
     save: (session) => invoke<void>(IPC_CHANNELS.sessionSave, session)
+  },
+  recovery: {
+    write: (request: RecoveryWriteRequest) => invoke<void>(IPC_CHANNELS.recoveryWrite, request),
+    delete: (request: RecoveryDeleteRequest) => invoke<void>(IPC_CHANNELS.recoveryDelete, request)
   },
   web: {
     create: (request) => invoke<WebTabState>(IPC_CHANNELS.webCreate, request),

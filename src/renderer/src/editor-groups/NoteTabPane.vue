@@ -1,18 +1,20 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
+import MarkdownEditor from '../markdown/MarkdownEditor.vue'
 import { useEditorStore } from '../stores/editor'
 import { useWorkspaceStore } from '../stores/workspace'
 
 import type { NoteEditorTab, NoteViewMode } from '../../../shared/contracts'
 
-const props = defineProps<{ tab: NoteEditorTab; groupId: string }>()
+const props = defineProps<{ tab: NoteEditorTab; groupId: string; active: boolean }>()
 const editor = useEditorStore()
 const workspace = useWorkspaceStore()
 const key = computed(() => `${props.tab.knowledgeBaseId}:${props.tab.noteUuid}`)
 const session = computed(() =>
   workspace.getDocumentSession(props.tab.knowledgeBaseId, props.tab.noteUuid)
 )
+const markdownEditor = ref<InstanceType<typeof MarkdownEditor> | null>(null)
 
 onMounted(() => {
   void workspace.ensureDocument(props.tab.knowledgeBaseId, props.tab.noteUuid)
@@ -22,12 +24,34 @@ function setMode(mode: NoteViewMode): void {
   editor.setNoteViewMode(props.tab.id, mode)
 }
 
-function updateFromTextarea(event: Event): void {
-  workspace.updateDocumentContent(key.value, (event.target as HTMLTextAreaElement).value)
+function updateContent(content: string): void {
+  workspace.updateDocumentContent(key.value, content)
 }
 
 function activate(): void {
   editor.activate(props.groupId, props.tab.id)
+}
+
+function insertTemplate(text: string): void {
+  markdownEditor.value?.insertTextAt(text)
+}
+
+async function pasteImage(file: File, insertAt: number): Promise<void> {
+  try {
+    const attachment = await workspace.writeLocalAttachment(
+      props.tab.knowledgeBaseId,
+      props.tab.noteUuid,
+      file
+    )
+    const alt =
+      file.name
+        .replace(/\.[^.]+$/, '')
+        .replaceAll('[', '')
+        .replaceAll(']', '') || 'image'
+    markdownEditor.value?.insertTextAt(`![${alt}](${attachment.markdownPath})`, insertAt)
+  } catch (cause) {
+    workspace.error = cause instanceof Error ? cause.message : String(cause)
+  }
 }
 </script>
 
@@ -60,6 +84,38 @@ function activate(): void {
           源码
         </button>
       </div>
+      <div class="format-actions" aria-label="Markdown 格式工具栏">
+        <button type="button" title="粗体" @click="markdownEditor?.wrapSelection('**', '**')">
+          B
+        </button>
+        <button type="button" title="斜体" @click="markdownEditor?.wrapSelection('*', '*')">
+          <em>I</em>
+        </button>
+        <button type="button" title="二级标题" @click="markdownEditor?.prefixSelection('## ')">
+          H2
+        </button>
+        <button type="button" title="引用" @click="markdownEditor?.prefixSelection('> ')">❞</button>
+        <button type="button" title="无序列表" @click="markdownEditor?.prefixSelection('- ')">
+          ≡
+        </button>
+        <button
+          type="button"
+          title="链接"
+          @click="markdownEditor?.wrapSelection('[', '](https://)', '链接')"
+        >
+          ↗
+        </button>
+        <button type="button" title="代码块" @click="insertTemplate('\n```ts\n\n```\n')">
+          { }
+        </button>
+        <button
+          type="button"
+          title="表格"
+          @click="insertTemplate('\n| 列 1 | 列 2 |\n| --- | --- |\n| 内容 | 内容 |\n')"
+        >
+          ▦
+        </button>
+      </div>
       <button
         type="button"
         class="save-button"
@@ -70,20 +126,19 @@ function activate(): void {
       </button>
     </div>
 
-    <div v-if="tab.viewMode === 'source'" class="source-editor">
-      <textarea
-        :value="session.content"
-        :readonly="session.document.readOnly"
-        spellcheck="false"
-        @input="updateFromTextarea"
-      />
-    </div>
-    <div v-else class="visual-foundation">
-      <article class="visual-note">
-        <div class="foundation-label">可视化编辑器底座</div>
-        <pre>{{ session.content }}</pre>
-      </article>
-    </div>
+    <MarkdownEditor
+      ref="markdownEditor"
+      class="editor-surface"
+      :content="session.content"
+      :mode="tab.viewMode"
+      :read-only="session.document.readOnly"
+      :knowledge-base-id="tab.knowledgeBaseId"
+      :note-uuid="tab.noteUuid"
+      @change="updateContent"
+      @open-link="editor.openWeb"
+      @open-note="workspace.openNoteByUuid(tab.knowledgeBaseId, $event)"
+      @paste-image="pasteImage"
+    />
   </div>
   <div v-else class="loading-note">正在读取笔记…</div>
 </template>
@@ -134,6 +189,7 @@ function activate(): void {
 }
 
 .view-switcher button,
+.format-actions button,
 .save-button,
 .conflict-banner button {
   border: 0;
@@ -141,6 +197,24 @@ function activate(): void {
   color: var(--muted);
   cursor: pointer;
   font-size: 10px;
+}
+
+.format-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.format-actions button {
+  min-width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+}
+
+.format-actions button:hover {
+  background: var(--hover);
+  color: var(--text);
 }
 
 .view-switcher button {
@@ -192,53 +266,9 @@ function activate(): void {
   padding: 4px 7px;
 }
 
-.source-editor,
-.visual-foundation {
+.editor-surface {
   flex: 1;
   min-height: 0;
-}
-
-.source-editor textarea {
-  width: 100%;
-  height: 100%;
-  resize: none;
-  border: 0;
-  outline: none;
-  background: var(--editor-bg);
-  color: var(--editor-text);
-  padding: 20px max(24px, calc((100% - 940px) / 2));
-  font-family: var(--font-mono);
-  font-size: 13px;
-  line-height: 1.65;
-  tab-size: 2;
-}
-
-.visual-foundation {
-  overflow: auto;
-  padding: 32px max(30px, calc((100% - 820px) / 2));
-  background: var(--document-bg);
-}
-
-.visual-note {
-  min-height: 100%;
-  color: var(--document-text);
-}
-
-.foundation-label {
-  margin-bottom: 20px;
-  color: var(--muted);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.visual-note pre {
-  margin: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font-family: var(--font-sans);
-  font-size: 15px;
-  line-height: 1.75;
 }
 
 .loading-note {

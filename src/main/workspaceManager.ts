@@ -20,6 +20,9 @@ import type {
 } from '@tnotesjs/core/workspace'
 import type {
   DeletePreviewDto,
+  AttachmentWriteLocalRequest,
+  AttachmentWriteLocalResult,
+  AttachmentReadTextRequest,
   DeskTocNode,
   ExternalNoteChangeEvent,
   KnowledgeBaseDescriptor,
@@ -281,6 +284,59 @@ export class WorkspaceManager {
     return this.noteMutation(handle, result)
   }
 
+  async writeLocalAttachment(
+    request: AttachmentWriteLocalRequest
+  ): Promise<AttachmentWriteLocalResult> {
+    const handle = this.getHandle(request.knowledgeBaseId)
+    const result = await handle.workspace.attachments.writeLocal({
+      noteUuid: request.noteUuid,
+      fileName: request.fileName,
+      data: request.data
+    })
+    this.markInternalWrites(result.changedFiles)
+    handle.snapshot = await handle.workspace.refresh()
+    this.emitChanged()
+    return result.value
+  }
+
+  async resolveNoteAsset(
+    knowledgeBaseId: string,
+    noteUuid: string,
+    requestedPath: string
+  ): Promise<string> {
+    const absolutePath = await this.resolvePathInsideNote(knowledgeBaseId, noteUuid, requestedPath)
+    const extension = path.extname(absolutePath).toLocaleLowerCase()
+    const supported = new Set([
+      '.avif',
+      '.bmp',
+      '.gif',
+      '.ico',
+      '.jpeg',
+      '.jpg',
+      '.png',
+      '.svg',
+      '.webp'
+    ])
+    if (!supported.has(extension)) throw new Error('不支持的图片类型')
+    const stat = await fs.stat(absolutePath)
+    if (!stat.isFile()) throw new Error('图片不存在')
+    return absolutePath
+  }
+
+  async readNoteTextAsset(request: AttachmentReadTextRequest): Promise<string> {
+    const absolutePath = await this.resolvePathInsideNote(
+      request.knowledgeBaseId,
+      request.noteUuid,
+      request.path
+    )
+    const stat = await fs.stat(absolutePath)
+    if (!stat.isFile()) throw new Error('引用文件不存在')
+    if (stat.size > 2 * 1024 * 1024) throw new Error('引用文件不能超过 2 MB')
+    const content = await fs.readFile(absolutePath, 'utf8')
+    if (content.includes('\0')) throw new Error('引用文件不是文本文件')
+    return content
+  }
+
   async moveToc(request: TocMoveRequest): Promise<KnowledgeBaseDetail> {
     const handle = this.getHandle(request.knowledgeBaseId)
     const result = await handle.workspace.toc.move({
@@ -344,6 +400,29 @@ export class WorkspaceManager {
     const handle = this.handles.get(knowledgeBaseId)
     if (!handle) throw new Error(`知识库不存在：${knowledgeBaseId}`)
     return handle
+  }
+
+  private async resolvePathInsideNote(
+    knowledgeBaseId: string,
+    noteUuid: string,
+    requestedPath: string
+  ): Promise<string> {
+    const handle = this.getHandle(knowledgeBaseId)
+    const note = await handle.workspace.notes.read(noteUuid)
+    if (
+      !requestedPath ||
+      /^(?:[a-z]+:|\/\/)/i.test(requestedPath) ||
+      requestedPath.split(/[\\/]/).includes('.git')
+    ) {
+      throw new Error('引用路径无效')
+    }
+    const noteRoot = await fs.realpath(note.directoryPath)
+    const candidate = path.resolve(noteRoot, requestedPath)
+    const absolutePath = await fs.realpath(candidate)
+    if (absolutePath !== noteRoot && !absolutePath.startsWith(`${noteRoot}${path.sep}`)) {
+      throw new Error('引用路径超出当前笔记目录')
+    }
+    return absolutePath
   }
 
   private async noteMutation(

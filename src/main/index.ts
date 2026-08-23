@@ -3,6 +3,7 @@ import { app, BrowserWindow, shell } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 
 import icon from '../../resources/icon.png?asset'
+import { handleAssetProtocol, registerAssetScheme } from './assetProtocol'
 import { registerIpc } from './ipc'
 import { deskLog } from './log'
 import { previewManager } from './preview'
@@ -11,6 +12,8 @@ import { workspaceManager } from './workspaceManager'
 
 let mainWindow: BrowserWindow | null = null
 let unregisterIpc: (() => void) | null = null
+
+registerAssetScheme()
 
 function isHttpUrl(value: string): boolean {
   try {
@@ -92,6 +95,7 @@ if (!hasSingleInstanceLock) {
     })
 
     await workspaceManager.initialize()
+    handleAssetProtocol()
     unregisterIpc = registerIpc(() => mainWindow)
     mainWindow = createWindow()
 

@@ -4,6 +4,7 @@ import { z } from 'zod'
 
 import { deskLog } from './log'
 import { previewManager } from './preview'
+import { deleteRecovery, loadRecoveries, writeRecovery } from './recovery'
 import { loadWorkspaceSession, saveWorkspaceSession } from './session'
 import { loadSettings, saveSettings } from './settings'
 import { webContentsManager } from './webContentsManager'
@@ -13,12 +14,16 @@ import { IPC_CHANNELS } from '../shared/contracts'
 import type { WorkspaceError } from '@tnotesjs/core/workspace'
 import type {
   AppSettings,
+  AttachmentWriteLocalRequest,
+  AttachmentReadTextRequest,
   DeskError,
   DeskResult,
   NoteCreateRequest,
   NoteRenameRequest,
   NoteSaveRequest,
   NoteUpdateConfigRequest,
+  RecoveryDeleteRequest,
+  RecoveryWriteRequest,
   TocCreateGroupRequest,
   TocDeleteRequest,
   TocEntryRefDto,
@@ -156,6 +161,34 @@ const noteUpdateConfigSchema = z.object({
     .refine((value) => Object.keys(value).length > 0, '没有可更新字段')
 })
 
+const recoveryWriteSchema = z.object({
+  knowledgeBaseId: z.string().min(1),
+  noteUuid: z.string().min(1),
+  title: z.string(),
+  content: z.string(),
+  revision: z.string().min(1)
+})
+
+const recoveryDeleteSchema = z.object({
+  knowledgeBaseId: z.string().min(1),
+  noteUuid: z.string().min(1)
+})
+
+const attachmentWriteLocalSchema = z.object({
+  knowledgeBaseId: z.string().min(1),
+  noteUuid: z.string().min(1),
+  fileName: z.string().min(1).max(240),
+  data: z.instanceof(Uint8Array).refine((data) => data.byteLength <= 25 * 1024 * 1024, {
+    message: '图片不能超过 25 MB'
+  })
+})
+
+const attachmentReadTextSchema = z.object({
+  knowledgeBaseId: z.string().min(1),
+  noteUuid: z.string().min(1),
+  path: z.string().min(1).max(1024)
+})
+
 const tocMoveSchema = z.object({
   knowledgeBaseId: z.string().min(1),
   source: entryRefSchema,
@@ -242,7 +275,8 @@ export function registerIpc(getWindow: () => BrowserWindow | null): () => void {
     return {
       workspace,
       settings: loadSettings(),
-      session: await loadWorkspaceSession(workspace.path)
+      session: await loadWorkspaceSession(workspace.path),
+      recoveries: await loadRecoveries(workspace.path)
     }
   })
 
@@ -303,6 +337,12 @@ export function registerIpc(getWindow: () => BrowserWindow | null): () => void {
   handle(IPC_CHANNELS.noteUpdateConfig, getWindow, noteUpdateConfigSchema, (input) =>
     workspaceManager.updateNoteConfig(input as NoteUpdateConfigRequest)
   )
+  handle(IPC_CHANNELS.attachmentWriteLocal, getWindow, attachmentWriteLocalSchema, (input) =>
+    workspaceManager.writeLocalAttachment(input as AttachmentWriteLocalRequest)
+  )
+  handle(IPC_CHANNELS.attachmentReadText, getWindow, attachmentReadTextSchema, (input) =>
+    workspaceManager.readNoteTextAsset(input as AttachmentReadTextRequest)
+  )
 
   handle(IPC_CHANNELS.tocMove, getWindow, tocMoveSchema, (input) =>
     workspaceManager.moveToc(input as TocMoveRequest)
@@ -332,6 +372,12 @@ export function registerIpc(getWindow: () => BrowserWindow | null): () => void {
   )
   handle(IPC_CHANNELS.sessionSave, getWindow, workspaceSessionSchema, (session) =>
     saveWorkspaceSession(workspaceManager.getOverview().path, session)
+  )
+  handle(IPC_CHANNELS.recoveryWrite, getWindow, recoveryWriteSchema, (request) =>
+    writeRecovery(workspaceManager.getOverview().path, request as RecoveryWriteRequest)
+  )
+  handle(IPC_CHANNELS.recoveryDelete, getWindow, recoveryDeleteSchema, (request) =>
+    deleteRecovery(workspaceManager.getOverview().path, request as RecoveryDeleteRequest)
   )
 
   handle(

@@ -114,9 +114,21 @@ function tabIcon(tab: EditorTab): string {
       </div>
     </div>
 
-    <NoteTabPane v-if="activeTab?.type === 'note'" :tab="activeTab" :group-id="group.id" />
-    <WebTabPane v-else-if="activeTab?.type === 'web'" :tab="activeTab" />
-    <div v-else class="editor-empty">
+    <div
+      v-for="tab in group.tabs"
+      v-show="tab.id === group.activeTabId"
+      :key="tab.id"
+      class="tab-content"
+    >
+      <NoteTabPane
+        v-if="tab.type === 'note'"
+        :tab="tab"
+        :group-id="group.id"
+        :active="tab.id === group.activeTabId"
+      />
+      <WebTabPane v-else :tab="tab" :active="tab.id === group.activeTabId" />
+    </div>
+    <div v-if="!activeTab" class="editor-empty">
       <div class="empty-mark">T</div>
       <strong>打开一篇笔记或网页</strong>
       <span>可把标签拖到边缘进行左右或上下拆分。</span>
@@ -256,6 +268,13 @@ function tabIcon(tab: EditorTab): string {
   gap: 7px;
   color: var(--muted);
   font-size: 11px;
+}
+
+.tab-content {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
 }
 
 .editor-empty strong {
