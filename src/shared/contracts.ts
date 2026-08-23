@@ -3,6 +3,7 @@ export const IPC_CHANNELS = {
   workspaceChoose: 'workspace:choose',
   workspaceSet: 'workspace:set',
   workspaceRefresh: 'workspace:refresh',
+  workspaceRevealKnowledgeBase: 'workspace:reveal-knowledge-base',
   knowledgeBaseRead: 'knowledge-base:read',
   settingsUpdate: 'settings:update',
   noteRead: 'note:read',
@@ -16,6 +17,16 @@ export const IPC_CHANNELS = {
   imageTokenStatus: 'image:token-status',
   imageTokenUpdate: 'image:token-update',
   imageSettingsValidate: 'image:settings-validate',
+  searchQuery: 'search:query',
+  gitList: 'git:list',
+  gitRefresh: 'git:refresh',
+  gitFetch: 'git:fetch',
+  gitPull: 'git:pull',
+  gitPublish: 'git:publish',
+  ideShowKnowledgeBaseMenu: 'ide:show-knowledge-base-menu',
+  ideShowNoteMenu: 'ide:show-note-menu',
+  ideOpenKnowledgeBase: 'ide:open-knowledge-base',
+  ideOpenNote: 'ide:open-note',
   tocMove: 'toc:move',
   tocCreateGroup: 'toc:create-group',
   tocRenameGroup: 'toc:rename-group',
@@ -44,6 +55,7 @@ export const IPC_CHANNELS = {
   webStateChanged: 'web:state-changed',
   webOpenRequested: 'web:open-requested',
   previewChanged: 'preview:changed',
+  gitStateChanged: 'git:state-changed',
   log: 'desk:log'
 } as const
 
@@ -410,6 +422,57 @@ export interface ImageSettingsValidateResult {
   message: string
 }
 
+export interface SearchRequest {
+  query: string
+  knowledgeBaseId: string | null
+  limit?: number
+}
+
+export interface SearchResultDto {
+  knowledgeBaseId: string
+  knowledgeBaseName: string
+  noteUuid: string
+  noteIndex: string
+  title: string
+  snippet: string
+  score: number
+}
+
+export type GitFileStatus =
+  'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'conflicted'
+
+export interface GitFileChangeDto {
+  path: string
+  previousPath?: string
+  status: GitFileStatus
+  staged: boolean
+  worktree: boolean
+  noteUuid?: string
+  noteIndex?: string
+  noteTitle?: string
+}
+
+export interface GitRepositoryStateDto {
+  knowledgeBaseId: string
+  knowledgeBaseName: string
+  initialized: boolean
+  branch: string | null
+  upstream: string | null
+  ahead: number
+  behind: number
+  changes: GitFileChangeDto[]
+  conflict: boolean
+  busy: 'fetch' | 'pull' | 'publish' | null
+  lastFetchedAt: string | null
+  error: string | null
+}
+
+export interface GitOperationResult {
+  state: GitRepositoryStateDto
+  message: string
+  conflict: boolean
+}
+
 export interface AttachmentReadTextRequest {
   knowledgeBaseId: string
   noteUuid: string
@@ -460,6 +523,7 @@ export interface DeletePreviewDto {
   }>
   filePaths: string[]
   directoryPaths: string[]
+  untrackedFilePaths: string[]
   snapshotRevision: string
 }
 
@@ -474,6 +538,7 @@ export interface DeskApi {
     choose(): Promise<DeskResult<WorkspaceOverview>>
     set(path: string | null): Promise<DeskResult<WorkspaceOverview>>
     refresh(): Promise<DeskResult<WorkspaceOverview>>
+    revealKnowledgeBase(knowledgeBaseId: string): Promise<DeskResult<void>>
     onChanged(callback: (overview: WorkspaceOverview) => void): () => void
   }
   settings: {
@@ -501,6 +566,21 @@ export interface DeskApi {
     ): Promise<DeskResult<AttachmentWriteLocalResult>>
     uploadImage(request: ImageUploadRequest): Promise<DeskResult<ImageUploadResult>>
     readText(request: AttachmentReadTextRequest): Promise<DeskResult<string>>
+  }
+  search(request: SearchRequest): Promise<DeskResult<SearchResultDto[]>>
+  git: {
+    list(): Promise<DeskResult<GitRepositoryStateDto[]>>
+    refresh(knowledgeBaseId?: string): Promise<DeskResult<GitRepositoryStateDto[]>>
+    fetch(knowledgeBaseId: string): Promise<DeskResult<GitOperationResult>>
+    pull(knowledgeBaseId: string): Promise<DeskResult<GitOperationResult>>
+    publish(knowledgeBaseId: string): Promise<DeskResult<GitOperationResult>>
+    onStateChanged(callback: (state: GitRepositoryStateDto) => void): () => void
+  }
+  ide: {
+    showKnowledgeBaseMenu(knowledgeBaseId: string): Promise<DeskResult<void>>
+    showNoteMenu(knowledgeBaseId: string, noteUuid: string): Promise<DeskResult<void>>
+    openKnowledgeBase(knowledgeBaseId: string): Promise<DeskResult<void>>
+    openNote(knowledgeBaseId: string, noteUuid: string): Promise<DeskResult<void>>
   }
   toc: {
     move(request: TocMoveRequest): Promise<DeskResult<KnowledgeBaseDetail>>

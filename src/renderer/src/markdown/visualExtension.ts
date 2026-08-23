@@ -54,7 +54,7 @@ class VisualBlockWidget extends WidgetType {
     container.addEventListener('tn-destroy', cleanup, { once: true })
     container.addEventListener('mousedown', (event) => {
       const target = event.target as HTMLElement
-      if (target.closest('button, .tn-mindmap')) {
+      if (target.closest('button, input, label, .tn-mindmap')) {
         event.stopPropagation()
         return
       }

@@ -44,6 +44,9 @@ importers:
       dompurify:
         specifier: ^3.4.14
         version: 3.4.14
+      github-slugger:
+        specifier: ^2.0.0
+        version: 2.0.0
       highlight.js:
         specifier: ^11.12.0
         version: 11.12.0
@@ -65,6 +68,9 @@ importers:
       pinia:
         specifier: ^4.0.3
         version: 4.0.3(@vue/devtools-api@8.2.1)(typescript@5.9.3)(vue@3.5.41(typescript@5.9.3))
+      prettier:
+        specifier: ^3.9.6
+        version: 3.9.6
       turndown:
         specifier: ^7.2.4
         version: 7.2.4
@@ -114,9 +120,6 @@ importers:
       happy-dom:
         specifier: ^20.11.6
         version: 20.11.6
-      prettier:
-        specifier: ^3.7.4
-        version: 3.9.6
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
@@ -2083,6 +2086,9 @@ packages:
   get-stream@5.2.0:
     resolution: {integrity: sha512-nBF+F1rAZVCu/p7rjzgA+Yb4lfYXrpl7a6VmJrU8wF9I1CKvP/QwPNZHnOlwbTkY6dvtFIzFMSyQXbLoTQPRpA==}
     engines: {node: '>=8'}
+
+  github-slugger@2.0.0:
+    resolution: {integrity: sha512-IaOQ9puYtjrkq7Y0Ygl9KDZnrf/aiUJYUpVf89y8kyaxbRG7Y1SrX/jaumrv81vc61+kiMempujsM3Yw7w5qcw==}
 
   glob-parent@6.0.2:
     resolution: {integrity: sha512-XxwI8EOhVQgWp6iDL+3b0r86f4d6AX6zSU55HfB4ydCEuXLXc5FcYeOu+nnGftS4TEju/11rt4KJPTMgbfmv4A==}
@@ -5309,6 +5315,8 @@ snapshots:
   get-stream@5.2.0:
     dependencies:
       pump: 3.0.4
+
+  github-slugger@2.0.0: {}
 
   glob-parent@6.0.2:
     dependencies:

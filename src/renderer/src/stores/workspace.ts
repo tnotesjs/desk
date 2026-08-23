@@ -11,8 +11,12 @@ import type {
   DeskResult,
   DeskTocNode,
   KnowledgeBaseDetail,
+  GitRepositoryStateDto,
+  NoteCreateRequest,
   NoteDocumentDto,
   RecoveryRecord,
+  SearchResultDto,
+  TocEntryRefDto,
   WorkspaceOverview
 } from '../../../shared/contracts'
 import type { SplitPlacement } from '../editor-groups/layoutModel'
@@ -25,6 +29,13 @@ interface DocumentSession {
   saving: boolean
 }
 
+interface GitAttention {
+  knowledgeBaseId: string
+  knowledgeBaseName: string
+  kind: 'behind' | 'conflict'
+  message: string
+}
+
 function resultValue<T>(result: DeskResult<T>): T {
   if (result.ok) return result.value
   const error = new Error(result.error.message) as Error & { code?: string }
@@ -32,8 +43,36 @@ function resultValue<T>(result: DeskResult<T>): T {
   throw error
 }
 
+function ipcPlain<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
+}
+
 function documentKey(knowledgeBaseId: string, noteUuid: string): string {
   return `${knowledgeBaseId}:${noteUuid}`
+}
+
+function tocEntry(node: DeskTocNode): TocEntryRefDto {
+  return node.type === 'note'
+    ? { type: 'note', noteUuid: node.uuid }
+    : { type: 'folder', folderPath: [...node.folderPath] }
+}
+
+function notePlacement(placement: NoteCreateRequest['placement']): NoteCreateRequest['placement'] {
+  if (!placement || placement.type === 'root') {
+    return { type: 'root', placement: placement?.placement ?? 'end' }
+  }
+  if (placement.type === 'note') {
+    return {
+      type: 'note',
+      targetNoteUuid: placement.targetNoteUuid,
+      placement: placement.placement
+    }
+  }
+  return {
+    type: 'folder',
+    folderPath: [...placement.folderPath],
+    placement: placement.placement
+  }
 }
 
 function replaceDescriptor(
@@ -59,6 +98,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const knowledgeBase = ref<KnowledgeBaseDetail | null>(null)
   const documents = ref<Record<string, DocumentSession>>({})
   const pendingRecoveries = ref<RecoveryRecord[]>([])
+  const searchResults = ref<SearchResultDto[]>([])
+  const searchLoading = ref(false)
+  const gitStates = ref<Record<string, GitRepositoryStateDto>>({})
+  const gitAttention = ref<GitAttention | null>(null)
+  const pendingGitPublishId = ref<string | null>(null)
   const loading = ref(false)
   const error = ref<string | null>(null)
   const status = ref<string | null>(null)
@@ -66,6 +110,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const recoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
   let unsubscribeWorkspace: (() => void) | null = null
   let unsubscribeExternal: (() => void) | null = null
+  let unsubscribeGit: (() => void) | null = null
+  let searchSequence = 0
 
   const activeDocumentKey = computed(() => {
     const tab = editor.activeTab
@@ -152,6 +198,13 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       const payload = resultValue(await window.desk.bootstrap())
       overview.value = payload.workspace
       settings.value = payload.settings
+      const initialGitStates = resultValue(await window.desk.git.list())
+      gitStates.value = Object.fromEntries(
+        initialGitStates.map((state) => [state.knowledgeBaseId, state])
+      )
+      unsubscribeGit = window.desk.git.onStateChanged((state) => {
+        gitStates.value = { ...gitStates.value, [state.knowledgeBaseId]: state }
+      })
       editor.restore(payload.session, payload.workspace.knowledgeBases)
       await prepareRecoveries(payload.recoveries)
       unsubscribeWorkspace = window.desk.workspace.onChanged((next) => {
@@ -196,6 +249,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     unsubscribeWorkspace = null
     unsubscribeExternal?.()
     unsubscribeExternal = null
+    unsubscribeGit?.()
+    unsubscribeGit = null
     for (const timer of autosaveTimers.values()) clearTimeout(timer)
     autosaveTimers.clear()
     for (const timer of recoveryTimers.values()) clearTimeout(timer)
@@ -245,9 +300,115 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       const detail = resultValue(await window.desk.knowledgeBases.read(knowledgeBaseId))
       selectedKnowledgeBaseId.value = knowledgeBaseId
       knowledgeBase.value = detail
+      searchResults.value = []
       overview.value = replaceDescriptor(overview.value, detail)
+      const gitState = gitStates.value[knowledgeBaseId]
+      if (gitState?.behind) {
+        gitAttention.value = {
+          knowledgeBaseId,
+          knowledgeBaseName: detail.displayName,
+          kind: 'behind',
+          message: `本地分支落后上游 ${gitState.behind} 个提交。建议先拉取最新版本，再开始编辑。`
+        }
+      }
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : String(cause)
+    }
+  }
+
+  async function refreshGit(knowledgeBaseId?: string): Promise<void> {
+    try {
+      const states = resultValue(await window.desk.git.refresh(knowledgeBaseId))
+      gitStates.value = Object.fromEntries(states.map((state) => [state.knowledgeBaseId, state]))
+    } catch (cause) {
+      error.value = cause instanceof Error ? cause.message : String(cause)
+    }
+  }
+
+  async function fetchGit(knowledgeBaseId: string): Promise<void> {
+    try {
+      const result = resultValue(await window.desk.git.fetch(knowledgeBaseId))
+      gitStates.value = { ...gitStates.value, [knowledgeBaseId]: result.state }
+      status.value = result.message
+    } catch (cause) {
+      error.value = cause instanceof Error ? cause.message : String(cause)
+    }
+  }
+
+  async function pullGit(knowledgeBaseId: string): Promise<void> {
+    try {
+      const result = resultValue(await window.desk.git.pull(knowledgeBaseId))
+      gitStates.value = { ...gitStates.value, [knowledgeBaseId]: result.state }
+      if (result.conflict) {
+        const descriptor = overview.value.allKnowledgeBases.find(
+          (item) => item.id === knowledgeBaseId
+        )
+        gitAttention.value = {
+          knowledgeBaseId,
+          knowledgeBaseName: descriptor?.displayName ?? result.state.knowledgeBaseName,
+          kind: 'conflict',
+          message: result.message
+        }
+      } else {
+        gitAttention.value = null
+        status.value = result.message
+        await refreshWorkspace()
+      }
+    } catch (cause) {
+      error.value = cause instanceof Error ? cause.message : String(cause)
+    }
+  }
+
+  function requestGitPublish(knowledgeBaseId: string): void {
+    if (settings.value?.confirmBeforeCommit) {
+      pendingGitPublishId.value = knowledgeBaseId
+    } else {
+      void publishGit(knowledgeBaseId)
+    }
+  }
+
+  async function publishGit(knowledgeBaseId: string): Promise<void> {
+    pendingGitPublishId.value = null
+    try {
+      await saveAllDocuments()
+      const result = resultValue(await window.desk.git.publish(knowledgeBaseId))
+      gitStates.value = { ...gitStates.value, [knowledgeBaseId]: result.state }
+      status.value = result.message
+    } catch (cause) {
+      error.value = cause instanceof Error ? cause.message : String(cause)
+    }
+  }
+
+  async function openKnowledgeBaseInIde(knowledgeBaseId: string): Promise<void> {
+    const result = await window.desk.ide.openKnowledgeBase(knowledgeBaseId)
+    if (!result.ok) error.value = result.error.message
+  }
+
+  async function searchNotes(query: string): Promise<void> {
+    const sequence = (searchSequence += 1)
+    const normalized = query.trim()
+    if (!normalized || !selectedKnowledgeBaseId.value) {
+      searchResults.value = []
+      searchLoading.value = false
+      return
+    }
+    searchLoading.value = true
+    try {
+      const results = resultValue(
+        await window.desk.search({
+          query: normalized,
+          knowledgeBaseId: selectedKnowledgeBaseId.value,
+          limit: 50
+        })
+      )
+      if (sequence === searchSequence) searchResults.value = results
+    } catch (cause) {
+      if (sequence === searchSequence) {
+        error.value = cause instanceof Error ? cause.message : String(cause)
+        searchResults.value = []
+      }
+    } finally {
+      if (sequence === searchSequence) searchLoading.value = false
     }
   }
 
@@ -524,14 +685,20 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     })
   }
 
-  async function createNote(title: string): Promise<void> {
+  async function createNote(
+    title: string,
+    placement: NoteCreateRequest['placement'] = { type: 'root', placement: 'end' }
+  ): Promise<void> {
     if (!knowledgeBase.value || knowledgeBase.value.health !== 'ready') return
     const mutation = resultValue(
-      await window.desk.notes.create({
-        knowledgeBaseId: knowledgeBase.value.id,
-        title,
-        expectedSnapshotRevision: knowledgeBase.value.snapshotRevision
-      })
+      await window.desk.notes.create(
+        ipcPlain({
+          knowledgeBaseId: knowledgeBase.value.id,
+          title,
+          placement: notePlacement(placement),
+          expectedSnapshotRevision: knowledgeBase.value.snapshotRevision
+        })
+      )
     )
     applyDetail(mutation.knowledgeBase)
     const key = documentKey(mutation.note.knowledgeBaseId, mutation.note.uuid)
@@ -548,6 +715,101 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       mutation.note.title,
       settings.value?.defaultNoteView ?? 'visual'
     )
+  }
+
+  async function createTocGroup(title: string): Promise<void> {
+    if (!knowledgeBase.value || knowledgeBase.value.health !== 'ready') return
+    try {
+      const detail = resultValue(
+        await window.desk.toc.createGroup(
+          ipcPlain({
+            knowledgeBaseId: knowledgeBase.value.id,
+            title,
+            placement: { type: 'root', placement: 'end' },
+            expectedSnapshotRevision: knowledgeBase.value.snapshotRevision
+          })
+        )
+      )
+      applyDetail(detail)
+      status.value = '分组已创建'
+    } catch (cause) {
+      error.value = cause instanceof Error ? cause.message : String(cause)
+      throw cause
+    }
+  }
+
+  async function renameTocNode(node: DeskTocNode, title: string): Promise<void> {
+    if (!knowledgeBase.value || knowledgeBase.value.health !== 'ready') return
+    try {
+      if (node.type === 'group') {
+        const detail = resultValue(
+          await window.desk.toc.renameGroup(
+            ipcPlain({
+              knowledgeBaseId: knowledgeBase.value.id,
+              folderPath: [...node.folderPath],
+              title,
+              expectedSnapshotRevision: knowledgeBase.value.snapshotRevision
+            })
+          )
+        )
+        applyDetail(detail)
+      } else {
+        const key = documentKey(knowledgeBase.value.id, node.uuid)
+        const loaded =
+          documents.value[key] ?? (await ensureDocument(knowledgeBase.value.id, node.uuid))
+        if (loaded.dirty) await saveDocument(key)
+        const current = documents.value[key] ?? loaded
+        const mutation = resultValue(
+          await window.desk.notes.rename({
+            knowledgeBaseId: knowledgeBase.value.id,
+            noteUuid: node.uuid,
+            title,
+            expectedRevision: current.document.revision
+          })
+        )
+        applyDetail(mutation.knowledgeBase)
+        setDocumentSession(key, {
+          document: mutation.note,
+          content: mutation.note.content,
+          dirty: false,
+          externalConflict: false,
+          saving: false
+        })
+        editor.renameNote(knowledgeBase.value.id, node.uuid, mutation.note.title)
+        deleteRecovery(knowledgeBase.value.id, node.uuid)
+      }
+      status.value = '名称已更新'
+    } catch (cause) {
+      error.value = cause instanceof Error ? cause.message : String(cause)
+      throw cause
+    }
+  }
+
+  async function moveTocNode(
+    source: DeskTocNode,
+    target: DeskTocNode,
+    placement: 'before' | 'after' | 'inside'
+  ): Promise<void> {
+    if (!knowledgeBase.value || knowledgeBase.value.health !== 'ready') return
+    if (source.nodeId === target.nodeId) return
+    try {
+      const detail = resultValue(
+        await window.desk.toc.move(
+          ipcPlain({
+            knowledgeBaseId: knowledgeBase.value.id,
+            source: tocEntry(source),
+            target: tocEntry(target),
+            placement,
+            expectedSnapshotRevision: knowledgeBase.value.snapshotRevision
+          })
+        )
+      )
+      applyDetail(detail)
+      status.value = '目录顺序已更新'
+    } catch (cause) {
+      error.value = cause instanceof Error ? cause.message : String(cause)
+      throw cause
+    }
   }
 
   async function toggleDone(node: Extract<DeskTocNode, { type: 'note' }>): Promise<void> {
@@ -579,20 +841,24 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     return resultValue(
       await window.desk.toc.previewDelete(
         knowledgeBase.value.id,
-        node.type === 'note'
-          ? { type: 'note', noteUuid: node.uuid }
-          : { type: 'folder', folderPath: node.folderPath }
+        ipcPlain(
+          node.type === 'note'
+            ? { type: 'note', noteUuid: node.uuid }
+            : { type: 'folder', folderPath: [...node.folderPath] }
+        )
       )
     )
   }
 
   async function deleteNode(preview: DeletePreviewDto): Promise<void> {
     const detail = resultValue(
-      await window.desk.toc.delete({
-        knowledgeBaseId: preview.knowledgeBaseId,
-        entry: preview.entry,
-        expectedSnapshotRevision: preview.snapshotRevision
-      })
+      await window.desk.toc.delete(
+        ipcPlain({
+          knowledgeBaseId: preview.knowledgeBaseId,
+          entry: preview.entry,
+          expectedSnapshotRevision: preview.snapshotRevision
+        })
+      )
     )
     applyDetail(detail)
     for (const note of preview.notes) {
@@ -614,6 +880,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     knowledgeBase,
     documents,
     pendingRecoveries,
+    searchResults,
+    searchLoading,
+    gitStates,
+    gitAttention,
+    pendingGitPublishId,
     document,
     editorContent,
     dirty,
@@ -628,6 +899,13 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     chooseWorkspace,
     refreshWorkspace,
     selectKnowledgeBase,
+    searchNotes,
+    refreshGit,
+    fetchGit,
+    pullGit,
+    requestGitPublish,
+    publishGit,
+    openKnowledgeBaseInIde,
     syncToActiveTab,
     selectNote,
     openNoteByUuid,
@@ -644,6 +922,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     acceptRecovery,
     discardRecovery,
     createNote,
+    createTocGroup,
+    renameTocNode,
+    moveTocNode,
     toggleDone,
     previewDeleteNode,
     deleteNode,

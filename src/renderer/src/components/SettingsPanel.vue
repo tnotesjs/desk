@@ -24,6 +24,44 @@ const tokenHint = computed(() => {
   return '仅保存在系统加密后的 Desk 私有配置中'
 })
 
+const currentKnowledgeBaseName = computed(() => store.selectedKnowledgeBase?.displayName ?? null)
+const autoPushEnabled = computed({
+  get: () => {
+    const configId = store.selectedKnowledgeBase?.configId
+    return configId ? Boolean(draft.value?.knowledgeBases[configId]?.autoPush?.enabled) : false
+  },
+  set: (enabled: boolean) => {
+    const configId = store.selectedKnowledgeBase?.configId
+    if (!configId || !draft.value) return
+    const current = draft.value.knowledgeBases[configId] ?? {}
+    draft.value.knowledgeBases[configId] = {
+      ...current,
+      autoPush: {
+        enabled,
+        idleMinutes: current.autoPush?.idleMinutes ?? 10
+      }
+    }
+  }
+})
+const autoPushIdleMinutes = computed({
+  get: () => {
+    const configId = store.selectedKnowledgeBase?.configId
+    return configId ? (draft.value?.knowledgeBases[configId]?.autoPush?.idleMinutes ?? 10) : 10
+  },
+  set: (idleMinutes: number) => {
+    const configId = store.selectedKnowledgeBase?.configId
+    if (!configId || !draft.value) return
+    const current = draft.value.knowledgeBases[configId] ?? {}
+    draft.value.knowledgeBases[configId] = {
+      ...current,
+      autoPush: {
+        enabled: current.autoPush?.enabled ?? false,
+        idleMinutes
+      }
+    }
+  }
+})
+
 function resultValue<T>(
   result: Awaited<ReturnType<typeof window.desk.settings.imageTokenStatus>>
 ): T {
@@ -172,6 +210,17 @@ onMounted(() => {
           <label class="toggle">
             <input v-model="draft.confirmBeforeCommit" type="checkbox" />提交前再次弹窗确认变更
           </label>
+          <div v-if="currentKnowledgeBaseName" class="knowledge-git-setting">
+            <label class="toggle">
+              <input v-model="autoPushEnabled" type="checkbox" />
+              <span>{{ currentKnowledgeBaseName }} 在空闲后自动提交并推送</span>
+            </label>
+            <label class="inline-field">
+              <span>连续无内容更新</span>
+              <input v-model.number="autoPushIdleMinutes" type="number" min="1" max="1440" />
+              <span>分钟</span>
+            </label>
+          </div>
         </section>
 
         <section class="settings-section image-settings">
@@ -401,6 +450,16 @@ onMounted(() => {
   align-items: center;
   gap: 18px;
   margin-top: 11px;
+}
+
+.knowledge-git-setting {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-top: 11px;
+  border-radius: 7px;
+  background: var(--input-bg);
+  padding: 9px;
 }
 
 .toggle,

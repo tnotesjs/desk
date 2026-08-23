@@ -121,7 +121,20 @@ async function mountMindmap(
   context: MarkdownRenderContext
 ): Promise<() => void> {
   const { CanvasViewer, MindmapSession } = await import('@tnotesjs/mindmap-core')
-  const { info, content: initialContent } = fenceParts(block.source)
+  const embeddedHost = root.matches('[data-mindmap-content]')
+    ? root
+    : root.querySelector<HTMLElement>('[data-mindmap-content]')
+  const fence = fenceParts(block.source)
+  const info = fence.info
+  let embeddedContent = embeddedHost?.dataset.mindmapContent
+  if (embeddedContent) {
+    try {
+      embeddedContent = decodeURIComponent(embeddedContent)
+    } catch {
+      // Keep an explicitly supplied unencoded value.
+    }
+  }
+  const initialContent = embeddedContent ?? fence.content
   const infoTitle = info.match(/\[([^\]]+)\]/)?.[1]
   const reference = referenceFrom(initialContent)
   const content = reference ? await readReference(context, reference.path) : initialContent
@@ -158,7 +171,10 @@ async function mountMindmap(
 
 async function mountMermaid(root: HTMLElement, block: VisualBlock): Promise<void> {
   const mermaid = (await import('mermaid')).default
-  const { content } = fenceParts(block.source)
+  const embeddedHost = root.matches('[data-mermaid-content]')
+    ? root
+    : root.querySelector<HTMLElement>('[data-mermaid-content]')
+  const content = embeddedHost?.dataset.mermaidContent ?? fenceParts(block.source).content
   mermaid.initialize({
     startOnLoad: false,
     securityLevel: 'strict',
@@ -221,14 +237,17 @@ export function mountSpecialBlock(
       error instanceof Error ? error.message : String(error)
   }
 
-  if (block.kind === 'mindmap') {
+  const hasMindmap = block.kind === 'mindmap' || Boolean(root.querySelector('.tn-mindmap'))
+  const hasMermaid = block.kind === 'mermaid' || Boolean(root.querySelector('.tn-mermaid'))
+
+  if (hasMindmap) {
     void mountMindmap(root, block, context)
       .then((cleanup) => {
         if (disposed) cleanup()
         else asyncCleanup = cleanup
       })
       .catch(reportError)
-  } else if (block.kind === 'mermaid') {
+  } else if (hasMermaid) {
     void mountMermaid(root, block).catch(reportError)
   } else if (block.kind === 'component') {
     void mountNoteReferences(root, context, handlers).catch(reportError)

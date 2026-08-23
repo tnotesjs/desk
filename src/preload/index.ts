@@ -10,6 +10,8 @@ import type {
   ImageSettingsValidateResult,
   ImageTokenStatus,
   ImageUploadResult,
+  GitOperationResult,
+  GitRepositoryStateDto,
   BootstrapPayload,
   DeletePreviewDto,
   DeskApi,
@@ -26,6 +28,7 @@ import type {
   PreviewStateDto,
   RecoveryDeleteRequest,
   RecoveryWriteRequest,
+  SearchResultDto,
   TocCreateGroupRequest,
   TocDeleteRequest,
   TocEntryRefDto,
@@ -47,6 +50,8 @@ const api: DeskApi = {
     choose: () => invoke<WorkspaceOverview>(IPC_CHANNELS.workspaceChoose),
     set: (path) => invoke<WorkspaceOverview>(IPC_CHANNELS.workspaceSet, path),
     refresh: () => invoke<WorkspaceOverview>(IPC_CHANNELS.workspaceRefresh),
+    revealKnowledgeBase: (knowledgeBaseId) =>
+      invoke<void>(IPC_CHANNELS.workspaceRevealKnowledgeBase, knowledgeBaseId),
     onChanged: (callback) => {
       const listener = (_event: Electron.IpcRendererEvent, overview: WorkspaceOverview): void =>
         callback(overview)
@@ -94,6 +99,32 @@ const api: DeskApi = {
       invoke<ImageUploadResult>(IPC_CHANNELS.attachmentUploadImage, request),
     readText: (request: AttachmentReadTextRequest) =>
       invoke<string>(IPC_CHANNELS.attachmentReadText, request)
+  },
+  search: (request) => invoke<SearchResultDto[]>(IPC_CHANNELS.searchQuery, request),
+  git: {
+    list: () => invoke<GitRepositoryStateDto[]>(IPC_CHANNELS.gitList),
+    refresh: (knowledgeBaseId) =>
+      invoke<GitRepositoryStateDto[]>(IPC_CHANNELS.gitRefresh, knowledgeBaseId),
+    fetch: (knowledgeBaseId) => invoke<GitOperationResult>(IPC_CHANNELS.gitFetch, knowledgeBaseId),
+    pull: (knowledgeBaseId) => invoke<GitOperationResult>(IPC_CHANNELS.gitPull, knowledgeBaseId),
+    publish: (knowledgeBaseId) =>
+      invoke<GitOperationResult>(IPC_CHANNELS.gitPublish, knowledgeBaseId),
+    onStateChanged: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, state: GitRepositoryStateDto): void =>
+        callback(state)
+      ipcRenderer.on(IPC_CHANNELS.gitStateChanged, listener)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.gitStateChanged, listener)
+    }
+  },
+  ide: {
+    showKnowledgeBaseMenu: (knowledgeBaseId) =>
+      invoke<void>(IPC_CHANNELS.ideShowKnowledgeBaseMenu, knowledgeBaseId),
+    showNoteMenu: (knowledgeBaseId, noteUuid) =>
+      invoke<void>(IPC_CHANNELS.ideShowNoteMenu, { knowledgeBaseId, noteUuid }),
+    openKnowledgeBase: (knowledgeBaseId) =>
+      invoke<void>(IPC_CHANNELS.ideOpenKnowledgeBase, knowledgeBaseId),
+    openNote: (knowledgeBaseId, noteUuid) =>
+      invoke<void>(IPC_CHANNELS.ideOpenNote, { knowledgeBaseId, noteUuid })
   },
   toc: {
     move: (request: TocMoveRequest) => invoke<KnowledgeBaseDetail>(IPC_CHANNELS.tocMove, request),

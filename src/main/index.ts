@@ -4,16 +4,42 @@ import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 
 import icon from '../../resources/icon.png?asset'
 import { handleAssetProtocol, registerAssetScheme } from './assetProtocol'
+import { gitManager } from './gitManager'
 import { registerIpc } from './ipc'
 import { deskLog } from './log'
 import { previewManager } from './preview'
+import { searchManager } from './searchManager'
 import { webContentsManager } from './webContentsManager'
 import { workspaceManager } from './workspaceManager'
 
 let mainWindow: BrowserWindow | null = null
 let unregisterIpc: (() => void) | null = null
+let unregisterSearchRefresh: (() => void) | null = null
+let searchRefreshTimer: NodeJS.Timeout | null = null
 
 registerAssetScheme()
+
+function scheduleSearchRefresh(): void {
+  const overview = workspaceManager.getOverview()
+  gitManager.configure(workspaceManager.getGitRepositories())
+  searchManager.setWorkspace(overview.path)
+  if (searchRefreshTimer) clearTimeout(searchRefreshTimer)
+  if (!overview.path) return
+  const workspacePath = overview.path
+  searchRefreshTimer = setTimeout(() => {
+    searchRefreshTimer = null
+    void workspaceManager
+      .getSearchDocuments()
+      .then((documents) => searchManager.rebuild(workspacePath, documents))
+      .catch((error) =>
+        deskLog(
+          'search',
+          'document collection failed',
+          error instanceof Error ? error.message : String(error)
+        )
+      )
+  }, 350)
+}
 
 function isHttpUrl(value: string): boolean {
   try {
@@ -95,6 +121,8 @@ if (!hasSingleInstanceLock) {
     })
 
     await workspaceManager.initialize()
+    unregisterSearchRefresh = workspaceManager.onChanged(scheduleSearchRefresh)
+    scheduleSearchRefresh()
     handleAssetProtocol()
     unregisterIpc = registerIpc(() => mainWindow)
     mainWindow = createWindow()
@@ -112,9 +140,15 @@ app.on('before-quit', () => {
 })
 
 app.on('will-quit', () => {
+  if (searchRefreshTimer) clearTimeout(searchRefreshTimer)
+  searchRefreshTimer = null
+  unregisterSearchRefresh?.()
+  unregisterSearchRefresh = null
   unregisterIpc?.()
   unregisterIpc = null
   void workspaceManager.dispose()
+  void searchManager.dispose()
+  void gitManager.dispose()
   webContentsManager.dispose()
 })
 

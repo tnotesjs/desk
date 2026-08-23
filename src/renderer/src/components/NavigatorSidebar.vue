@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 
 import TocNodeList from './TocNodeList.vue'
 import { useEditorStore } from '../stores/editor'
@@ -8,13 +8,17 @@ import { useWorkspaceStore } from '../stores/workspace'
 import type { DeskTocNode } from '../../../shared/contracts'
 
 const emit = defineEmits<{
-  createNote: []
+  createNote: [node?: DeskTocNode, placement?: 'before' | 'after' | 'inside']
+  createGroup: []
+  requestRename: [node: DeskTocNode]
   requestDelete: [node: DeskTocNode]
 }>()
 
 const store = useWorkspaceStore()
 const editor = useEditorStore()
 const query = ref('')
+const changesExpanded = ref(true)
+let searchTimer: ReturnType<typeof setTimeout> | null = null
 
 function filterNodes(nodes: DeskTocNode[], needle: string): DeskTocNode[] {
   if (!needle) return nodes
@@ -31,11 +35,51 @@ const visibleToc = computed(() =>
   filterNodes(store.knowledgeBase?.toc ?? [], query.value.trim().toLocaleLowerCase())
 )
 
+watch([() => query.value, () => store.selectedKnowledgeBaseId], () => {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    searchTimer = null
+    void store.searchNotes(query.value)
+  }, 180)
+})
+
+onUnmounted(() => {
+  if (searchTimer) clearTimeout(searchTimer)
+})
+
 const previewState = computed(() =>
   store.selectedKnowledgeBaseId
     ? (editor.previewStates[store.selectedKnowledgeBaseId] ?? null)
     : null
 )
+
+const gitState = computed(() =>
+  store.selectedKnowledgeBaseId ? (store.gitStates[store.selectedKnowledgeBaseId] ?? null) : null
+)
+
+const statusSymbol: Record<string, string> = {
+  modified: 'M',
+  added: 'A',
+  deleted: 'D',
+  renamed: 'R',
+  untracked: '?',
+  conflicted: '!'
+}
+
+function showNoteMenu(noteUuid: string): void {
+  if (!store.selectedKnowledgeBaseId) return
+  void window.desk.ide.showNoteMenu(store.selectedKnowledgeBaseId, noteUuid)
+}
+
+async function revealKnowledgeBase(): Promise<void> {
+  if (!store.knowledgeBase) return
+  const result = await window.desk.workspace.revealKnowledgeBase(store.knowledgeBase.id)
+  if (!result.ok) store.error = result.error.message
+}
+
+function showKnowledgeBaseMenu(): void {
+  if (store.knowledgeBase) void window.desk.ide.showKnowledgeBaseMenu(store.knowledgeBase.id)
+}
 
 async function togglePreview(): Promise<void> {
   if (!store.selectedKnowledgeBaseId) return
@@ -73,6 +117,15 @@ async function togglePreview(): Promise<void> {
       </button>
       <button
         type="button"
+        class="group-button"
+        :disabled="!store.knowledgeBase || store.knowledgeBase.health !== 'ready'"
+        title="新建目录分组"
+        @click="emit('createGroup')"
+      >
+        ▱+
+      </button>
+      <button
+        type="button"
         class="preview-button"
         :class="previewState?.status"
         :disabled="!store.knowledgeBase || store.knowledgeBase.health !== 'ready'"
@@ -91,17 +144,81 @@ async function togglePreview(): Promise<void> {
 
     <div class="search-wrap">
       <span>⌕</span>
-      <input v-model="query" type="search" placeholder="筛选当前目录" />
+      <input v-model="query" type="search" placeholder="搜索标题和正文" />
     </div>
 
     <div v-if="store.knowledgeBase" class="navigator-body">
       <section class="changes-section">
-        <button type="button" class="section-heading">
-          <span>⌄</span>
+        <div class="section-heading git-heading">
+          <button type="button" class="change-toggle" @click="changesExpanded = !changesExpanded">
+            {{ changesExpanded ? '⌄' : '›' }}
+          </button>
           <strong>变更</strong>
-          <em>0</em>
-        </button>
-        <div class="changes-empty">Git 文件状态将在后续阶段接入</div>
+          <span v-if="gitState?.behind" class="behind-state">↓{{ gitState.behind }}</span>
+          <em>{{ gitState?.changes.length ?? 0 }}</em>
+          <div class="git-actions">
+            <button
+              type="button"
+              title="刷新本地 Git 状态"
+              :disabled="Boolean(gitState?.busy)"
+              @click="store.refreshGit(store.selectedKnowledgeBaseId ?? undefined)"
+            >
+              ↻
+            </button>
+            <button
+              type="button"
+              title="获取并拉取远端更新"
+              :disabled="!gitState?.initialized || Boolean(gitState.busy)"
+              @click="store.pullGit(store.selectedKnowledgeBaseId!)"
+            >
+              ⇣
+            </button>
+            <button
+              type="button"
+              title="提交并推送当前变更"
+              :disabled="!gitState?.initialized || Boolean(gitState.busy)"
+              @click="store.requestGitPublish(store.selectedKnowledgeBaseId!)"
+            >
+              ⇡
+            </button>
+          </div>
+        </div>
+        <template v-if="changesExpanded">
+          <button
+            v-for="change in gitState?.changes ?? []"
+            :key="`${change.status}:${change.path}`"
+            type="button"
+            class="change-item"
+            :class="change.status"
+            :disabled="!change.noteUuid"
+            @click="
+              change.noteUuid &&
+              store.openNoteByUuid(store.selectedKnowledgeBaseId!, change.noteUuid)
+            "
+            @contextmenu.prevent="change.noteUuid && showNoteMenu(change.noteUuid)"
+          >
+            <span>{{ statusSymbol[change.status] }}</span>
+            <span>
+              <strong v-if="change.noteUuid">{{ change.noteIndex }} {{ change.noteTitle }}</strong>
+              <strong v-else>{{ change.path }}</strong>
+              <small v-if="change.noteUuid">{{ change.path }}</small>
+            </span>
+          </button>
+          <div v-if="gitState?.busy" class="changes-empty">
+            {{
+              gitState.busy === 'publish'
+                ? '正在提交并推送…'
+                : gitState.busy === 'pull'
+                  ? '正在拉取…'
+                  : '正在获取远端状态…'
+            }}
+          </div>
+          <div v-else-if="gitState?.error" class="changes-empty git-error">
+            {{ gitState.error }}
+          </div>
+          <div v-else-if="!gitState?.initialized" class="changes-empty">当前目录不是 Git 仓库</div>
+          <div v-else-if="!gitState.changes.length" class="changes-empty">工作区干净</div>
+        </template>
       </section>
 
       <section v-if="store.knowledgeBase.health !== 'ready'" class="diagnostics">
@@ -114,9 +231,40 @@ async function togglePreview(): Promise<void> {
             {{ diagnostic.message }}
           </li>
         </ul>
+        <div class="diagnostic-actions">
+          <button type="button" @click="store.refreshWorkspace">重新检查</button>
+          <button type="button" @click="revealKnowledgeBase">打开目录</button>
+          <button type="button" @click="showKnowledgeBaseMenu">用 IDE 查看</button>
+        </div>
       </section>
 
-      <section class="toc-section">
+      <section v-if="query.trim()" class="search-results-section">
+        <div class="section-heading static">
+          <span>⌕</span>
+          <strong>搜索结果</strong>
+          <em>{{ store.searchResults.length }}</em>
+        </div>
+        <div v-if="store.searchLoading" class="changes-empty">正在查询后台索引…</div>
+        <button
+          v-for="result in store.searchResults"
+          v-else
+          :key="`${result.knowledgeBaseId}:${result.noteUuid}`"
+          type="button"
+          class="search-result"
+          @click="store.openNoteByUuid(result.knowledgeBaseId, result.noteUuid)"
+        >
+          <span
+            ><em>{{ result.noteIndex }}</em
+            ><strong>{{ result.title }}</strong></span
+          >
+          <small>{{ result.snippet }}</small>
+        </button>
+        <div v-if="!store.searchLoading && !store.searchResults.length" class="toc-empty">
+          没有匹配标题或正文的笔记
+        </div>
+      </section>
+
+      <section v-else class="toc-section">
         <div class="section-heading static">
           <span>⌄</span>
           <strong>目录</strong>
@@ -129,7 +277,11 @@ async function togglePreview(): Promise<void> {
           @select="store.selectNote"
           @select-split="store.selectNote($event, 'right')"
           @toggle-done="store.toggleDone"
+          @request-create="(node, placement) => emit('createNote', node, placement)"
+          @request-rename="emit('requestRename', $event)"
           @request-delete="emit('requestDelete', $event)"
+          @move="store.moveTocNode"
+          @open-ide="showNoteMenu($event.uuid)"
         />
         <div v-else class="toc-empty">{{ query ? '没有匹配项' : 'TOC.md 中没有条目' }}</div>
       </section>
@@ -180,6 +332,7 @@ async function togglePreview(): Promise<void> {
 }
 
 .new-button,
+.group-button,
 .preview-button {
   width: 28px;
   height: 28px;
@@ -288,8 +441,171 @@ async function togglePreview(): Promise<void> {
   font-size: 10px;
 }
 
+.git-heading {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.change-toggle,
+.git-actions button {
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.change-toggle {
+  width: 18px;
+  padding: 0;
+  font-size: 15px;
+}
+
+.git-actions {
+  display: flex;
+  gap: 1px;
+  margin-left: 3px;
+}
+
+.git-actions button {
+  width: 21px;
+  height: 21px;
+  padding: 0;
+  font-size: 11px;
+}
+
+.git-actions button:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.git-actions button:disabled {
+  opacity: 0.35;
+}
+
+.behind-state {
+  color: var(--warning);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.change-item {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  padding: 5px 7px 5px 12px;
+  text-align: left;
+}
+
+.change-item:not(:disabled) {
+  cursor: pointer;
+}
+
+.change-item:not(:disabled):hover {
+  background: var(--hover);
+}
+
+.change-item > span:first-child {
+  width: 11px;
+  flex: none;
+  color: var(--warning);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.change-item.conflicted > span:first-child {
+  color: var(--danger);
+}
+
+.change-item > span:last-child {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.change-item strong,
+.change-item small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.change-item strong {
+  font-size: 10px;
+  font-weight: 560;
+}
+
+.change-item small {
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.git-error {
+  color: var(--danger);
+}
+
 .toc-section {
   margin-top: 4px;
+}
+
+.search-results-section {
+  margin-top: 4px;
+}
+
+.search-result {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  padding: 7px 8px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.search-result:hover {
+  background: var(--hover);
+}
+
+.search-result > span {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.search-result em {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-style: normal;
+}
+
+.search-result strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 630;
+}
+
+.search-result small {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .diagnostics {
@@ -309,6 +625,23 @@ async function togglePreview(): Promise<void> {
 .diagnostics ul {
   margin: 6px 0 0;
   padding-left: 15px;
+}
+
+.diagnostic-actions {
+  display: flex;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.diagnostic-actions button {
+  height: 25px;
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border));
+  border-radius: 5px;
+  background: transparent;
+  color: var(--danger);
+  cursor: pointer;
+  padding: 0 7px;
+  font-size: 9px;
 }
 
 .column-empty {

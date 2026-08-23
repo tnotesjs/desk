@@ -2,6 +2,10 @@
 import { useWorkspaceStore } from '../stores/workspace'
 
 const store = useWorkspaceStore()
+
+function showContextMenu(knowledgeBaseId: string): void {
+  void window.desk.ide.showKnowledgeBaseMenu(knowledgeBaseId)
+}
 </script>
 
 <template>
@@ -30,6 +34,7 @@ const store = useWorkspaceStore()
         class="knowledge-item"
         :class="{ active: store.selectedKnowledgeBaseId === item.id }"
         @click="store.selectKnowledgeBase(item.id)"
+        @contextmenu.prevent="showContextMenu(item.id)"
       >
         <span class="knowledge-icon">
           <img v-if="item.icon?.src" :src="item.icon.src" alt="" />
@@ -39,16 +44,24 @@ const store = useWorkspaceStore()
           <strong>{{ item.displayName }}</strong>
           <small>{{ item.name }}</small>
         </span>
-        <span
-          class="knowledge-badge"
-          :class="{ danger: item.health !== 'ready' }"
-          :title="
-            item.health === 'ready'
-              ? `${item.noteCount} 篇笔记`
-              : item.diagnostics.map((diagnostic) => diagnostic.message).join('\n')
-          "
-        >
-          {{ item.health === 'ready' ? item.noteCount : '!' }}
+        <span class="knowledge-state">
+          <small v-if="store.gitStates[item.id]?.behind" class="behind" title="本地落后于远端">
+            ↓{{ store.gitStates[item.id].behind }}
+          </small>
+          <span
+            class="knowledge-badge"
+            :class="{
+              danger: item.health !== 'ready' || store.gitStates[item.id]?.conflict,
+              changed: Boolean(store.gitStates[item.id]?.changes.length)
+            }"
+            :title="
+              item.health === 'ready'
+                ? `${store.gitStates[item.id]?.changes.length ?? 0} 个变更文件`
+                : item.diagnostics.map((diagnostic) => diagnostic.message).join('\n')
+            "
+          >
+            {{ item.health === 'ready' ? (store.gitStates[item.id]?.changes.length ?? 0) : '!' }}
+          </span>
         </span>
       </button>
     </div>
@@ -186,6 +199,24 @@ const store = useWorkspaceStore()
   color: var(--muted);
   font-size: 10px;
   font-weight: 700;
+}
+
+.knowledge-state {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.knowledge-state .behind {
+  color: var(--warning);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.knowledge-badge.changed {
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 
 .knowledge-badge.danger {

@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { deskLog } from './log'
+import { loadSettings } from './settings'
 
 import type { PreviewStartResult, PreviewStateDto } from '../shared/contracts'
 
@@ -71,7 +72,15 @@ function previewEnvironment(): NodeJS.ProcessEnv {
   const environment = { ...process.env }
   delete environment.ELECTRON_RUN_AS_NODE
   delete environment.ELECTRON_NO_ASAR
+  const configuredNode = loadSettings().nodePath
+  const configuredNodeBin =
+    configuredNode && path.isAbsolute(configuredNode)
+      ? fs.existsSync(configuredNode) && fs.statSync(configuredNode).isDirectory()
+        ? configuredNode
+        : path.dirname(configuredNode)
+      : null
   const additionalPaths = [
+    configuredNodeBin,
     resolveNvmBin(),
     path.join(os.homedir(), '.local', 'share', 'pnpm'),
     '/opt/homebrew/bin',

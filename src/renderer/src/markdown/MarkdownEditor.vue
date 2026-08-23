@@ -398,6 +398,21 @@ onBeforeUnmount(() => {
   border-radius: 7px;
 }
 
+.markdown-editor.mode-visual :deep(.tn-math-inline) {
+  margin: 0 0.08em;
+}
+
+.markdown-editor.mode-visual :deep(.tn-math-block) {
+  overflow-x: auto;
+  padding: 12px 8px;
+  text-align: center;
+}
+
+.markdown-editor.mode-visual :deep(.katex) {
+  color: var(--document-text);
+  font-size: 1.05em;
+}
+
 .markdown-editor.mode-visual :deep(.cm-visual-generated) {
   border-left: 2px solid color-mix(in srgb, var(--accent) 50%, transparent);
   padding-left: 14px;
@@ -466,6 +481,148 @@ onBeforeUnmount(() => {
   background: transparent;
   color: var(--muted);
   cursor: pointer;
+}
+
+.markdown-editor.mode-visual :deep(.tn-component-host) {
+  display: contents;
+}
+
+.markdown-editor.mode-visual :deep(.tn-bilibili) {
+  min-height: 92px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 12px 0;
+  border: 1px solid color-mix(in srgb, #fb7299 45%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in srgb, #fb7299 8%, var(--raised));
+  padding: 14px 16px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.markdown-editor.mode-visual :deep(.tn-bilibili-play) {
+  width: 46px;
+  height: 46px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #fb7299;
+  color: white;
+  font-size: 17px;
+}
+
+.markdown-editor.mode-visual :deep(.tn-bilibili > span:last-child) {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.markdown-editor.mode-visual :deep(.tn-bilibili small) {
+  color: var(--muted);
+}
+
+.markdown-editor.mode-visual :deep(.tn-word-list) {
+  margin: 12px 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--raised);
+  padding: 12px;
+}
+
+.markdown-editor.mode-visual :deep(.tn-word-list > header) {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 9px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.markdown-editor.mode-visual :deep(.tn-word-list > div) {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 5px;
+}
+
+.markdown-editor.mode-visual :deep(.tn-word) {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: 5px;
+  padding: 5px 7px;
+  cursor: pointer;
+}
+
+.markdown-editor.mode-visual :deep(.tn-word:hover) {
+  background: var(--hover);
+}
+
+.markdown-editor.mode-visual :deep(.tn-word:has(input:checked) span) {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.markdown-editor.mode-visual :deep(.tn-footprints) {
+  margin: 12px 0;
+  border-left: 2px solid var(--accent);
+  border-radius: 0 9px 9px 0;
+  background: var(--raised);
+  padding: 13px 14px;
+}
+
+.markdown-editor.mode-visual :deep(.tn-footprints > header) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.markdown-editor.mode-visual :deep(.tn-footprints > header span) {
+  color: var(--accent);
+}
+
+.markdown-editor.mode-visual :deep(.tn-footprints-text p) {
+  margin: 5px 0;
+}
+
+.markdown-editor.mode-visual :deep(.tn-footprints-images) {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.markdown-editor.mode-visual :deep(.tn-footprints-images img) {
+  width: 100%;
+  height: 150px;
+  margin: 0;
+  object-fit: cover;
+}
+
+.markdown-editor.mode-visual :deep(.tn-tooltip) {
+  position: relative;
+  border-bottom: 1px dotted var(--accent);
+  cursor: help;
+}
+
+.markdown-editor.mode-visual :deep(.tn-tooltip:hover::after) {
+  content: attr(data-tooltip);
+  position: absolute;
+  z-index: 20;
+  left: 50%;
+  bottom: calc(100% + 7px);
+  transform: translateX(-50%);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--raised);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  padding: 6px 9px;
+  color: var(--text);
+  white-space: nowrap;
+  font-size: 10px;
 }
 
 .markdown-editor.mode-visual :deep(.tn-swiper button:hover),

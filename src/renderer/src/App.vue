@@ -8,15 +8,24 @@ import SettingsPanel from './components/SettingsPanel.vue'
 import { useEditorStore } from './stores/editor'
 import { useWorkspaceStore } from './stores/workspace'
 
-import type { DeletePreviewDto, DeskTocNode } from '../../shared/contracts'
+import type { DeletePreviewDto, DeskTocNode, NoteCreateRequest } from '../../shared/contracts'
 
 const store = useWorkspaceStore()
 const editor = useEditorStore()
 const createDialogOpen = ref(false)
 const settingsOpen = ref(false)
 const createTitle = ref('')
+const createPlacement = ref<NoteCreateRequest['placement']>({ type: 'root', placement: 'end' })
+const createLocationLabel = ref('添加到目录根节点')
+const groupDialogOpen = ref(false)
+const groupTitle = ref('')
+const renameNode = ref<DeskTocNode | null>(null)
+const renameTitle = ref('')
 const deletePreview = ref<DeletePreviewDto | null>(null)
 const recoveryCandidate = computed(() => store.pendingRecoveries[0] ?? null)
+const pendingPublishState = computed(() =>
+  store.pendingGitPublishId ? (store.gitStates[store.pendingGitPublishId] ?? null) : null
+)
 const dialogBusy = ref(false)
 let sessionTimer: ReturnType<typeof setTimeout> | null = null
 let systemTheme: MediaQueryList | null = null
@@ -46,8 +55,25 @@ function applyAppearance(): void {
   document.documentElement.dataset.density = store.settings?.density ?? 'comfortable'
 }
 
-function openCreateDialog(): void {
+function openCreateDialog(
+  node?: DeskTocNode,
+  placement: 'before' | 'after' | 'inside' = 'after'
+): void {
   createTitle.value = ''
+  if (!node) {
+    createPlacement.value = { type: 'root', placement: 'end' }
+    createLocationLabel.value = '添加到目录根节点'
+  } else if (node.type === 'note') {
+    createPlacement.value = { type: 'note', targetNoteUuid: node.uuid, placement }
+    createLocationLabel.value = `${node.noteIndex}. ${node.title} · ${
+      placement === 'before' ? '上方' : placement === 'after' ? '下方' : '子笔记'
+    }`
+  } else {
+    createPlacement.value = { type: 'folder', folderPath: [...node.folderPath], placement }
+    createLocationLabel.value = `${node.title} · ${
+      placement === 'before' ? '上方' : placement === 'after' ? '下方' : '组内'
+    }`
+  }
   createDialogOpen.value = true
 }
 
@@ -56,8 +82,42 @@ async function confirmCreate(): Promise<void> {
   if (!title || dialogBusy.value) return
   dialogBusy.value = true
   try {
-    await store.createNote(title)
+    await store.createNote(title, createPlacement.value)
     createDialogOpen.value = false
+  } finally {
+    dialogBusy.value = false
+  }
+}
+
+function openGroupDialog(): void {
+  groupTitle.value = ''
+  groupDialogOpen.value = true
+}
+
+async function confirmCreateGroup(): Promise<void> {
+  const title = groupTitle.value.trim()
+  if (!title || dialogBusy.value) return
+  dialogBusy.value = true
+  try {
+    await store.createTocGroup(title)
+    groupDialogOpen.value = false
+  } finally {
+    dialogBusy.value = false
+  }
+}
+
+function openRenameDialog(node: DeskTocNode): void {
+  renameNode.value = node
+  renameTitle.value = node.title
+}
+
+async function confirmRename(): Promise<void> {
+  const title = renameTitle.value.trim()
+  if (!renameNode.value || !title || dialogBusy.value) return
+  dialogBusy.value = true
+  try {
+    await store.renameTocNode(renameNode.value, title)
+    renameNode.value = null
   } finally {
     dialogBusy.value = false
   }
@@ -113,9 +173,13 @@ watch(
 watch(
   () =>
     createDialogOpen.value ||
+    groupDialogOpen.value ||
+    Boolean(renameNode.value) ||
     settingsOpen.value ||
     Boolean(deletePreview.value) ||
-    Boolean(recoveryCandidate.value),
+    Boolean(recoveryCandidate.value) ||
+    Boolean(store.gitAttention) ||
+    Boolean(store.pendingGitPublishId),
   (modalOpen) => {
     if (modalOpen) {
       void window.desk.web.hideAll()
@@ -183,7 +247,12 @@ onUnmounted(() => {
       :style="{ gridTemplateColumns: workspaceColumns }"
     >
       <KnowledgeSidebar />
-      <NavigatorSidebar @create-note="openCreateDialog" @request-delete="requestDelete" />
+      <NavigatorSidebar
+        @create-note="openCreateDialog"
+        @create-group="openGroupDialog"
+        @request-rename="openRenameDialog"
+        @request-delete="requestDelete"
+      />
       <EditorPane />
     </main>
 
@@ -204,7 +273,7 @@ onUnmounted(() => {
         <header>
           <div>
             <span>新建笔记</span>
-            <strong>添加到目录根节点</strong>
+            <strong>{{ createLocationLabel }}</strong>
           </div>
           <button type="button" @click="createDialogOpen = false">×</button>
         </header>
@@ -214,8 +283,67 @@ onUnmounted(() => {
         </label>
         <footer>
           <button type="button" class="secondary" @click="createDialogOpen = false">取消</button>
-          <button type="submit" class="primary" :disabled="!createTitle.trim() || dialogBusy">
+          <button
+            type="button"
+            class="primary"
+            :disabled="!createTitle.trim() || dialogBusy"
+            @click="confirmCreate"
+          >
             创建
+          </button>
+        </footer>
+      </form>
+    </div>
+
+    <div v-if="groupDialogOpen" class="dialog-backdrop" @mousedown.self="groupDialogOpen = false">
+      <form class="dialog" @submit.prevent="confirmCreateGroup">
+        <header>
+          <div>
+            <span>新建分组</span>
+            <strong>添加到目录根节点，不创建物理目录</strong>
+          </div>
+          <button type="button" @click="groupDialogOpen = false">×</button>
+        </header>
+        <label>
+          <span>分组名称</span>
+          <input v-model="groupTitle" autofocus placeholder="例如：前端基础" />
+        </label>
+        <footer>
+          <button type="button" class="secondary" @click="groupDialogOpen = false">取消</button>
+          <button
+            type="button"
+            class="primary"
+            :disabled="!groupTitle.trim() || dialogBusy"
+            @click="confirmCreateGroup"
+          >
+            创建
+          </button>
+        </footer>
+      </form>
+    </div>
+
+    <div v-if="renameNode" class="dialog-backdrop" @mousedown.self="renameNode = null">
+      <form class="dialog" @submit.prevent="confirmRename">
+        <header>
+          <div>
+            <span>{{ renameNode.type === 'note' ? '重命名笔记' : '重命名分组' }}</span>
+            <strong>{{ renameNode.title }}</strong>
+          </div>
+          <button type="button" @click="renameNode = null">×</button>
+        </header>
+        <label>
+          <span>新名称</span>
+          <input v-model="renameTitle" autofocus />
+        </label>
+        <footer>
+          <button type="button" class="secondary" @click="renameNode = null">取消</button>
+          <button
+            type="button"
+            class="primary"
+            :disabled="!renameTitle.trim() || dialogBusy"
+            @click="confirmRename"
+          >
+            保存
           </button>
         </footer>
       </form>
@@ -245,8 +373,18 @@ onUnmounted(() => {
           </div>
         </div>
         <p>
-          文件将被直接永久删除，不进入系统废纸篓。Git 未跟踪文件检查会在 Git 模块接入后显示在这里。
+          文件将被直接永久删除，不进入系统废纸篓。
+          <template v-if="deletePreview.untrackedFilePaths.length">
+            其中有 {{ deletePreview.untrackedFilePaths.length }} 个文件尚未被 Git
+            跟踪，删除后无法通过 Git 找回。
+          </template>
+          <template v-else>当前删除范围内没有检测到 Git 未跟踪文件。</template>
         </p>
+        <div v-if="deletePreview.untrackedFilePaths.length" class="untracked-files">
+          <span v-for="filePath in deletePreview.untrackedFilePaths.slice(0, 8)" :key="filePath">
+            {{ filePath }}
+          </span>
+        </div>
         <footer>
           <button type="button" class="secondary" @click="deletePreview = null">取消</button>
           <button type="button" class="danger" :disabled="dialogBusy" @click="confirmDelete">
@@ -283,6 +421,72 @@ onUnmounted(() => {
     </div>
 
     <SettingsPanel v-if="settingsOpen" @close="settingsOpen = false" />
+
+    <div v-if="store.gitAttention" class="dialog-backdrop">
+      <section class="dialog git-dialog">
+        <header>
+          <div>
+            <span>{{
+              store.gitAttention.kind === 'conflict' ? 'Git 需要处理' : '知识库落后'
+            }}</span>
+            <strong>{{ store.gitAttention.knowledgeBaseName }}</strong>
+          </div>
+          <button type="button" @click="store.gitAttention = null">×</button>
+        </header>
+        <p>{{ store.gitAttention.message }}</p>
+        <footer>
+          <button type="button" class="secondary" @click="store.gitAttention = null">
+            稍后处理
+          </button>
+          <button
+            v-if="store.gitAttention.kind === 'conflict'"
+            type="button"
+            class="primary"
+            @click="store.openKnowledgeBaseInIde(store.gitAttention!.knowledgeBaseId)"
+          >
+            在 {{ store.settings?.ide === 'cursor' ? 'Cursor' : 'VSCode' }} 中打开
+          </button>
+          <button
+            v-else
+            type="button"
+            class="primary"
+            @click="store.pullGit(store.gitAttention!.knowledgeBaseId)"
+          >
+            拉取最新版本
+          </button>
+        </footer>
+      </section>
+    </div>
+
+    <div v-if="store.pendingGitPublishId && pendingPublishState" class="dialog-backdrop">
+      <section class="dialog git-dialog">
+        <header>
+          <div>
+            <span>提交前确认</span>
+            <strong>{{ pendingPublishState.knowledgeBaseName }}</strong>
+          </div>
+          <button type="button" @click="store.pendingGitPublishId = null">×</button>
+        </header>
+        <p>
+          本次将提交 {{ pendingPublishState.changes.length }} 个变更文件，并 push 到
+          {{
+            pendingPublishState.upstream ?? '当前分支的上游仓库'
+          }}。变更明细已经显示在文章栏的“变更”分组中。
+        </p>
+        <footer>
+          <button type="button" class="secondary" @click="store.pendingGitPublishId = null">
+            取消
+          </button>
+          <button
+            type="button"
+            class="primary"
+            @click="store.publishGit(store.pendingGitPublishId!)"
+          >
+            确认提交并推送
+          </button>
+        </footer>
+      </section>
+    </div>
   </div>
 </template>
 
@@ -634,5 +838,29 @@ onUnmounted(() => {
   color: var(--muted);
   font-size: 10px;
   line-height: 1.55;
+}
+
+.untracked-files {
+  max-height: 105px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow: auto;
+  margin: 0 15px 14px;
+  border: 1px solid color-mix(in srgb, var(--danger) 30%, var(--border));
+  border-radius: 6px;
+  background: var(--input-bg);
+  padding: 7px;
+  color: var(--danger);
+  font-family: var(--font-mono);
+  font-size: 8px;
+}
+
+.git-dialog p {
+  margin: 0;
+  padding: 17px 15px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.65;
 }
 </style>

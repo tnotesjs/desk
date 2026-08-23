@@ -87,4 +87,37 @@ describe('visual Markdown blocks', () => {
     expect(renderVisualBlock(mindmap, context)).toContain('正在加载脑图')
     expect(renderVisualBlock(references, context)).toContain('正在解析关联笔记')
   })
+
+  it('renders the first-party B/E/F, Tooltip and explicit mindmap components', () => {
+    const bilibili = collectVisualBlocks('<B id="BV1QR4y1y7GG" />')[0]
+    const words = collectVisualBlocks("<EnWordList needSort :words=\"['zebra', 'apple']\" />")[0]
+    const footprints = collectVisualBlocks(
+      '<Footprints :times="[2025, 3, 15, 0, 43]">\n<template #text-area><p>正在整理笔记</p></template>\n<template #image-list><img src="./assets/1.png"></template>\n</Footprints>'
+    )[0]
+    const tooltip = collectVisualBlocks('这里有 <Tooltip text="补充说明">提示文字</Tooltip>。')[0]
+    const explicitMindmap = collectVisualBlocks(
+      '<MindmapPreview content="%23%20Root%0A%0A-%20Child" />'
+    )[0]
+    const legacyMarkmap = collectVisualBlocks('```markmap\n# Root\n\n- Child\n```')[0]
+    const discussions = collectVisualBlocks('<Discussions />')[0]
+
+    expect(renderVisualBlock(bilibili, context)).toContain('BV1QR4y1y7GG')
+    expect(renderVisualBlock(words, context)).toMatch(/apple[\s\S]*zebra/)
+    expect(renderVisualBlock(footprints, context)).toContain('2025-03-15 00:43')
+    expect(renderVisualBlock(footprints, context)).toContain('tnotes-asset://asset?')
+    expect(renderVisualBlock(tooltip, context)).toContain('data-tooltip="补充说明"')
+    expect(renderVisualBlock(explicitMindmap, context)).toContain('data-mindmap-content')
+    expect(legacyMarkmap.kind).toBe('mindmap')
+    expect(renderVisualBlock(discussions, context)).toContain('站点布局组件')
+  })
+
+  it('collects and renders block and inline KaTeX without changing Markdown', () => {
+    const source = '$$\nE = mc^2\n$$\n\n行内公式 $a^2+b^2=c^2$。'
+    const blocks = collectVisualBlocks(source)
+
+    expect(blocks[0]).toMatchObject({ kind: 'math', source: '$$\nE = mc^2\n$$' })
+    expect(renderVisualBlock(blocks[0], context)).toContain('class="katex"')
+    expect(renderVisualBlock(blocks[1], context)).toContain('tn-math-inline')
+    expect(blocks.map((block) => block.source).join('\n\n')).toBe(source)
+  })
 })

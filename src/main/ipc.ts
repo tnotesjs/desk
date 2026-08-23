@@ -1,14 +1,17 @@
 import { randomUUID } from 'node:crypto'
-import { BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron'
+import { BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
 import { z } from 'zod'
 
 import { deskLog } from './log'
+import { gitManager } from './gitManager'
 import { imageBedManager, validateGitHubImageSettings } from './imageBed'
 import { clearGitHubToken, imageTokenStatus, saveGitHubToken } from './imageSecret'
+import { openInConfiguredIde, showIdeContextMenu } from './ide'
 import { previewManager } from './preview'
 import { deleteRecovery, loadRecoveries, writeRecovery } from './recovery'
 import { loadWorkspaceSession, saveWorkspaceSession } from './session'
 import { loadSettings, saveSettings } from './settings'
+import { searchManager } from './searchManager'
 import { webContentsManager } from './webContentsManager'
 import { workspaceManager } from './workspaceManager'
 import { IPC_CHANNELS } from '../shared/contracts'
@@ -319,11 +322,21 @@ export function registerIpc(getWindow: () => BrowserWindow | null): () => void {
     }
   )
   handle(IPC_CHANNELS.workspaceRefresh, getWindow, noInputSchema, () => workspaceManager.refresh())
+  handle(
+    IPC_CHANNELS.workspaceRevealKnowledgeBase,
+    getWindow,
+    z.string().min(1),
+    async (knowledgeBaseId) => {
+      const error = await shell.openPath(workspaceManager.getLocation(knowledgeBaseId).rootPath)
+      if (error) throw new Error(error)
+    }
+  )
   handle(IPC_CHANNELS.knowledgeBaseRead, getWindow, z.string().min(1), (knowledgeBaseId) =>
     workspaceManager.getDetail(knowledgeBaseId)
   )
   handle(IPC_CHANNELS.settingsUpdate, getWindow, z.record(z.string(), z.unknown()), (input) => {
     const settings = saveSettings(input as Partial<AppSettings>)
+    gitManager.applyAutoPushSchedules(true)
     return settings
   })
   handle(IPC_CHANNELS.imageTokenStatus, getWindow, noInputSchema, () => imageTokenStatus())
@@ -348,6 +361,54 @@ export function registerIpc(getWindow: () => BrowserWindow | null): () => void {
       token: z.string().max(2048).optional()
     }),
     ({ github, token }) => validateGitHubImageSettings(github, token)
+  )
+  handle(
+    IPC_CHANNELS.searchQuery,
+    getWindow,
+    z.object({
+      query: z.string().max(500),
+      knowledgeBaseId: z.string().min(1).nullable(),
+      limit: z.number().int().min(1).max(100).optional()
+    }),
+    (request) => searchManager.search(request)
+  )
+  handle(IPC_CHANNELS.gitList, getWindow, noInputSchema, () => gitManager.list())
+  handle(IPC_CHANNELS.gitRefresh, getWindow, z.string().min(1).optional(), (knowledgeBaseId) =>
+    gitManager.refresh(knowledgeBaseId)
+  )
+  handle(IPC_CHANNELS.gitFetch, getWindow, z.string().min(1), (knowledgeBaseId) =>
+    gitManager.fetch(knowledgeBaseId)
+  )
+  handle(IPC_CHANNELS.gitPull, getWindow, z.string().min(1), (knowledgeBaseId) =>
+    gitManager.pull(knowledgeBaseId)
+  )
+  handle(IPC_CHANNELS.gitPublish, getWindow, z.string().min(1), (knowledgeBaseId) =>
+    gitManager.publish(knowledgeBaseId)
+  )
+  handle(IPC_CHANNELS.ideShowKnowledgeBaseMenu, getWindow, z.string().min(1), (knowledgeBaseId) => {
+    const window = getWindow()
+    if (!window) throw new Error('Desk 主窗口不可用')
+    showIdeContextMenu(window, workspaceManager.getLocation(knowledgeBaseId).rootPath)
+  })
+  handle(
+    IPC_CHANNELS.ideShowNoteMenu,
+    getWindow,
+    z.object({ knowledgeBaseId: z.string().min(1), noteUuid: z.string().min(1) }),
+    ({ knowledgeBaseId, noteUuid }) => {
+      const window = getWindow()
+      if (!window) throw new Error('Desk 主窗口不可用')
+      showIdeContextMenu(window, workspaceManager.getNoteLocation(knowledgeBaseId, noteUuid))
+    }
+  )
+  handle(IPC_CHANNELS.ideOpenKnowledgeBase, getWindow, z.string().min(1), (knowledgeBaseId) =>
+    openInConfiguredIde(workspaceManager.getLocation(knowledgeBaseId).rootPath)
+  )
+  handle(
+    IPC_CHANNELS.ideOpenNote,
+    getWindow,
+    z.object({ knowledgeBaseId: z.string().min(1), noteUuid: z.string().min(1) }),
+    ({ knowledgeBaseId, noteUuid }) =>
+      openInConfiguredIde(workspaceManager.getNoteLocation(knowledgeBaseId, noteUuid))
   )
 
   handle(
@@ -397,8 +458,16 @@ export function registerIpc(getWindow: () => BrowserWindow | null): () => void {
       knowledgeBaseId: z.string().min(1),
       entry: entryRefSchema
     }),
-    ({ knowledgeBaseId, entry }) =>
-      workspaceManager.previewDelete(knowledgeBaseId, entry as TocEntryRefDto)
+    async ({ knowledgeBaseId, entry }) => {
+      const preview = await workspaceManager.previewDelete(knowledgeBaseId, entry as TocEntryRefDto)
+      return {
+        ...preview,
+        untrackedFilePaths: gitManager.untrackedFilesInside(knowledgeBaseId, [
+          ...preview.filePaths,
+          ...preview.directoryPaths
+        ])
+      }
+    }
   )
   handle(IPC_CHANNELS.tocDelete, getWindow, tocDeleteSchema, (input) =>
     workspaceManager.deleteToc(input as TocDeleteRequest)
@@ -508,6 +577,12 @@ export function registerIpc(getWindow: () => BrowserWindow | null): () => void {
       window.webContents.send(IPC_CHANNELS.previewChanged, state)
     }
   })
+  const offGitChanged = gitManager.onChanged((state) => {
+    const window = getWindow()
+    if (window && !window.isDestroyed()) {
+      window.webContents.send(IPC_CHANNELS.gitStateChanged, state)
+    }
+  })
 
   return () => {
     offChanged()
@@ -515,6 +590,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): () => void {
     offWebState()
     offWebOpenRequested()
     offPreviewChanged()
+    offGitChanged()
     for (const channel of Object.values(IPC_CHANNELS)) {
       ipcMain.removeHandler(channel)
     }

@@ -9,6 +9,8 @@ import { deskLog } from './log'
 import { loadSettings, settingsForKnowledgeBase } from './settings'
 import { loadWorkspace, saveWorkspace } from './workspace'
 
+import type { SearchIndexDocument } from './searchModel'
+
 import type {
   ChangedFile,
   KnowledgeBaseSnapshot,
@@ -62,6 +64,20 @@ interface KnowledgeBaseHandle {
 interface WorkspaceManagerEvents {
   changed: [WorkspaceOverview]
   noteExternalChanged: [ExternalNoteChangeEvent]
+}
+
+export interface GitRepositoryDescriptor {
+  knowledgeBaseId: string
+  knowledgeBaseName: string
+  configId: string
+  rootPath: string
+  notes: Array<{
+    uuid: string
+    index: string
+    title: string
+    dirName: string
+    directoryPath: string
+  }>
 }
 
 function stablePathSuffix(rootPath: string): string {
@@ -236,6 +252,63 @@ export class WorkspaceManager {
     return { name: handle.name, rootPath: handle.rootPath }
   }
 
+  getNoteLocation(knowledgeBaseId: string, noteUuid: string): string {
+    const handle = this.getHandle(knowledgeBaseId)
+    const note = handle.snapshot.notes.find((item) => item.uuid === noteUuid)
+    if (!note) throw new Error(`笔记不存在：${noteUuid}`)
+    return note.directoryPath
+  }
+
+  getGitRepositories(): GitRepositoryDescriptor[] {
+    return [...this.handles.values()].map((handle) => ({
+      knowledgeBaseId: handle.id,
+      knowledgeBaseName: handle.name,
+      configId: handle.snapshot.id,
+      rootPath: handle.rootPath,
+      notes: handle.snapshot.notes.map((note) => ({
+        uuid: note.uuid,
+        index: note.index,
+        title: note.title,
+        dirName: note.dirName,
+        directoryPath: note.directoryPath
+      }))
+    }))
+  }
+
+  async getSearchDocuments(): Promise<SearchIndexDocument[]> {
+    const pending = [...this.handles.values()].flatMap((handle) =>
+      handle.snapshot.notes.map((note) => ({ handle, note }))
+    )
+    const documents: SearchIndexDocument[] = []
+    let cursor = 0
+    const readNext = async (): Promise<void> => {
+      while (cursor < pending.length) {
+        const current = pending[cursor]
+        cursor += 1
+        try {
+          const content = await fs.readFile(current.note.readmePath, 'utf8')
+          documents.push({
+            id: `${current.handle.id}:${current.note.uuid}`,
+            knowledgeBaseId: current.handle.id,
+            knowledgeBaseName: current.handle.name,
+            noteUuid: current.note.uuid,
+            noteIndex: current.note.index,
+            title: current.note.title,
+            content,
+            revision: createHash('sha256').update(content).digest('hex')
+          })
+        } catch (error) {
+          deskLog('search', 'note skipped', {
+            path: current.note.readmePath,
+            error: error instanceof Error ? error.message : String(error)
+          })
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(12, pending.length) }, () => readNext()))
+    return documents.sort((left, right) => left.id.localeCompare(right.id))
+  }
+
   async readNote(knowledgeBaseId: string, noteUuid: string): Promise<NoteDocumentDto> {
     const handle = this.getHandle(knowledgeBaseId)
     return toNoteDocument(handle, await handle.workspace.notes.read(noteUuid))
@@ -371,7 +444,7 @@ export class WorkspaceManager {
   async previewDelete(knowledgeBaseId: string, entry: TocEntryRefDto): Promise<DeletePreviewDto> {
     const handle = this.getHandle(knowledgeBaseId)
     const preview = await handle.workspace.toc.previewDelete(coreEntryRef(entry))
-    return { knowledgeBaseId, ...preview, entry }
+    return { knowledgeBaseId, ...preview, entry, untrackedFilePaths: [] }
   }
 
   async deleteToc(request: TocDeleteRequest): Promise<KnowledgeBaseDetail> {

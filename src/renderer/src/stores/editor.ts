@@ -269,6 +269,23 @@ export const useEditorStore = defineStore('editor', () => {
     }
   }
 
+  function renameNote(knowledgeBaseId: string, noteUuid: string, title: string): void {
+    let changed = false
+    for (const group of groups.value) {
+      for (const tab of group.tabs) {
+        if (
+          tab.type === 'note' &&
+          tab.knowledgeBaseId === knowledgeBaseId &&
+          tab.noteUuid === noteUuid
+        ) {
+          tab.title = title
+          changed = true
+        }
+      }
+    }
+    if (changed) layout.value = { ...layout.value }
+  }
+
   function setNoteViewMode(tabId: string, viewMode: NoteViewMode): void {
     const located = findTab(layout.value, tabId)
     if (located?.tab.type !== 'note') return
@@ -348,6 +365,7 @@ export const useEditorStore = defineStore('editor', () => {
     stopPreview,
     close,
     closeNote,
+    renameNote,
     setNoteViewMode,
     moveTab,
     splitTab,
