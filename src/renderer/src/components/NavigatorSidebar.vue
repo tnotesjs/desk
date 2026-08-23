@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 
 import TocNodeList from './TocNodeList.vue'
+import { useEditorStore } from '../stores/editor'
 import { useWorkspaceStore } from '../stores/workspace'
 
 import type { DeskTocNode } from '../../../shared/contracts'
@@ -12,6 +13,7 @@ const emit = defineEmits<{
 }>()
 
 const store = useWorkspaceStore()
+const editor = useEditorStore()
 const query = ref('')
 
 function filterNodes(nodes: DeskTocNode[], needle: string): DeskTocNode[] {
@@ -28,6 +30,29 @@ function filterNodes(nodes: DeskTocNode[], needle: string): DeskTocNode[] {
 const visibleToc = computed(() =>
   filterNodes(store.knowledgeBase?.toc ?? [], query.value.trim().toLocaleLowerCase())
 )
+
+const previewState = computed(() =>
+  store.selectedKnowledgeBaseId
+    ? (editor.previewStates[store.selectedKnowledgeBaseId] ?? null)
+    : null
+)
+
+async function togglePreview(): Promise<void> {
+  if (!store.selectedKnowledgeBaseId) return
+  try {
+    if (previewState.value?.status === 'ready' || previewState.value?.status === 'starting') {
+      await editor.stopPreview(store.selectedKnowledgeBaseId)
+    } else {
+      const currentNote =
+        store.document?.knowledgeBaseId === store.selectedKnowledgeBaseId
+          ? store.document.dirName
+          : undefined
+      await editor.startPreview(store.selectedKnowledgeBaseId, currentNote)
+    }
+  } catch (cause) {
+    store.error = cause instanceof Error ? cause.message : String(cause)
+  }
+}
 </script>
 
 <template>
@@ -45,6 +70,22 @@ const visibleToc = computed(() =>
         @click="emit('createNote')"
       >
         +
+      </button>
+      <button
+        type="button"
+        class="preview-button"
+        :class="previewState?.status"
+        :disabled="!store.knowledgeBase || store.knowledgeBase.health !== 'ready'"
+        :title="
+          previewState?.status === 'ready' || previewState?.status === 'starting'
+            ? '停止站点预览服务'
+            : '启动站点预览'
+        "
+        @click="togglePreview"
+      >
+        {{
+          previewState?.status === 'starting' ? '…' : previewState?.status === 'ready' ? '■' : '▶'
+        }}
       </button>
     </header>
 
@@ -86,6 +127,7 @@ const visibleToc = computed(() =>
           :nodes="visibleToc"
           :selected-note-uuid="store.document?.uuid ?? null"
           @select="store.selectNote"
+          @select-split="store.selectNote($event, 'right')"
           @toggle-done="store.toggleDone"
           @request-delete="emit('requestDelete', $event)"
         />
@@ -137,7 +179,8 @@ const visibleToc = computed(() =>
   font-weight: 650;
 }
 
-.new-button {
+.new-button,
+.preview-button {
   width: 28px;
   height: 28px;
   border: 1px solid var(--border);
@@ -151,6 +194,16 @@ const visibleToc = computed(() =>
 .new-button:hover:not(:disabled) {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+.preview-button {
+  font-size: 10px;
+}
+
+.preview-button.ready,
+.preview-button.starting {
+  border-color: color-mix(in srgb, var(--success) 45%, var(--border));
+  color: var(--success);
 }
 
 .new-button:disabled {

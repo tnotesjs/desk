@@ -1,46 +1,42 @@
-import { ChildProcess, spawn } from 'child_process'
-import { existsSync, readdirSync, readFileSync } from 'fs'
-import { homedir } from 'os'
-import { join } from 'path'
+import { spawn, type ChildProcess } from 'node:child_process'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+
 import { deskLog } from './log'
 
-export type PreviewRuntimeStatus = 'idle' | 'starting' | 'ready' | 'error'
-
-export interface PreviewState {
-  repo: string | null
-  port: number | null
-  status: PreviewRuntimeStatus
-  error: string | null
-  baseUrl: string | null
-}
+import type { PreviewStartResult, PreviewStateDto } from '../shared/contracts'
 
 const DEFAULT_PORT = 5173
 const READY_TIMEOUT_MS = 90_000
 const OUTPUT_TAIL_MAX = 4000
 
+interface PreviewHandle {
+  state: PreviewStateDto
+  child: ChildProcess | null
+  readyPromise: Promise<void> | null
+  outputTail: string
+  stopping: boolean
+}
+
 function readRepoPort(repoDir: string): number {
   try {
-    const raw = readFileSync(join(repoDir, '.tnotes.json'), 'utf-8')
+    const raw = fs.readFileSync(path.join(repoDir, '.tnotes.json'), 'utf8')
     const data = JSON.parse(raw) as { port?: number }
-    if (typeof data.port === 'number' && data.port > 0) return data.port
+    if (typeof data.port === 'number' && data.port > 0 && data.port < 65536) return data.port
   } catch {
-    // fall through
+    // Use the conventional Vite port.
   }
   return DEFAULT_PORT
 }
 
-export function buildNotePreviewUrl(repoName: string, port: number, noteDir: string): string {
-  const folder = encodeURIComponent(noteDir)
-  return `http://localhost:${port}/${repoName}/notes/${folder}/README`
-}
-
 function resolveNvmAlias(nvmDir: string, name: string): string {
   let current = name
-  for (let i = 0; i < 8; i++) {
-    const aliasPath = join(nvmDir, 'alias', current)
-    if (!existsSync(aliasPath)) break
+  for (let index = 0; index < 8; index += 1) {
+    const aliasPath = path.join(nvmDir, 'alias', current)
+    if (!fs.existsSync(aliasPath)) break
     try {
-      current = readFileSync(aliasPath, 'utf-8').trim()
+      current = fs.readFileSync(aliasPath, 'utf8').trim()
     } catch {
       break
     }
@@ -49,298 +45,306 @@ function resolveNvmAlias(nvmDir: string, name: string): string {
 }
 
 function resolveNvmBin(): string | null {
-  if (process.env.NVM_BIN && existsSync(join(process.env.NVM_BIN, 'node'))) {
+  if (process.env.NVM_BIN && fs.existsSync(path.join(process.env.NVM_BIN, 'node'))) {
     return process.env.NVM_BIN
   }
-
-  const nvmDir = process.env.NVM_DIR || join(homedir(), '.nvm')
-  const versionsRoot = join(nvmDir, 'versions', 'node')
-  if (!existsSync(versionsRoot)) return null
-
+  const nvmDir = process.env.NVM_DIR || path.join(os.homedir(), '.nvm')
+  const versionsRoot = path.join(nvmDir, 'versions', 'node')
+  if (!fs.existsSync(versionsRoot)) return null
   const aliasTarget = resolveNvmAlias(nvmDir, 'default')
   const candidates = [
-    join(versionsRoot, aliasTarget, 'bin'),
-    join(versionsRoot, aliasTarget.startsWith('v') ? aliasTarget : `v${aliasTarget}`, 'bin')
+    path.join(versionsRoot, aliasTarget, 'bin'),
+    path.join(versionsRoot, aliasTarget.startsWith('v') ? aliasTarget : `v${aliasTarget}`, 'bin')
   ]
-
-  for (const bin of candidates) {
-    if (existsSync(join(bin, 'node'))) return bin
+  for (const candidate of candidates) {
+    if (fs.existsSync(path.join(candidate, 'node'))) return candidate
   }
-
-  const versions = readdirSync(versionsRoot)
-    .filter((v) => /^v\d+\.\d+\.\d+/.test(v))
-    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
-  const latest = versions[versions.length - 1]
-  if (!latest) return null
-  const latestBin = join(versionsRoot, latest, 'bin')
-  return existsSync(join(latestBin, 'node')) ? latestBin : null
+  const versions = fs
+    .readdirSync(versionsRoot)
+    .filter((version) => /^v\d+\.\d+\.\d+/.test(version))
+    .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }))
+  const latest = versions.at(-1)
+  return latest ? path.join(versionsRoot, latest, 'bin') : null
 }
 
-function buildPreviewEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env }
-  delete env.ELECTRON_RUN_AS_NODE
-  delete env.ELECTRON_NO_ASAR
-
-  const prepend: string[] = []
-  const nvmBin = resolveNvmBin()
-  if (nvmBin) prepend.push(nvmBin)
-  prepend.push(join(homedir(), '.local', 'share', 'pnpm'))
-  prepend.push('/opt/homebrew/bin', '/usr/local/bin')
-
-  const path = env.PATH || ''
-  env.PATH = [...prepend, path].filter(Boolean).join(':')
-
-  deskLog('preview:env', 'nvmBin', nvmBin)
-  deskLog('preview:env', 'PATH head', env.PATH.split(':').slice(0, 8))
-  deskLog('preview:env', 'ELECTRON_RUN_AS_NODE', process.env.ELECTRON_RUN_AS_NODE ?? '(unset)')
-
-  return env
+function previewEnvironment(): NodeJS.ProcessEnv {
+  const environment = { ...process.env }
+  delete environment.ELECTRON_RUN_AS_NODE
+  delete environment.ELECTRON_NO_ASAR
+  const additionalPaths = [
+    resolveNvmBin(),
+    path.join(os.homedir(), '.local', 'share', 'pnpm'),
+    '/opt/homebrew/bin',
+    '/usr/local/bin'
+  ].filter((entry): entry is string => Boolean(entry))
+  environment.PATH = [...additionalPaths, environment.PATH ?? ''].join(path.delimiter)
+  environment.GIT_TERMINAL_PROMPT = '0'
+  return environment
 }
 
-function isReadyOutput(text: string): boolean {
-  return (
-    text.includes('Local:') ||
-    text.includes('http://localhost') ||
-    text.includes('本地开发服务地址') ||
-    text.includes('VitePress 服务') ||
-    (text.includes('➜') && text.includes('Local'))
-  )
-}
-
-function spawnDevServer(repoDir: string): ChildProcess {
-  const env = buildPreviewEnv()
-
-  if (process.platform === 'win32') {
-    return spawn('pnpm.cmd', ['tn:dev'], {
-      cwd: repoDir,
-      env,
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
+function packageManager(repoDir: string): { command: string; args: string[] } {
+  if (fs.existsSync(path.join(repoDir, 'pnpm-lock.yaml'))) {
+    return { command: process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', args: ['tn:dev'] }
   }
-
-  // Non-login shell: keep our PATH (login shells reset to system Node and break pnpm).
-  return spawn('/bin/zsh', ['-c', 'pnpm tn:dev'], {
-    cwd: repoDir,
-    env,
-    detached: true,
-    stdio: ['ignore', 'pipe', 'pipe']
-  })
+  if (fs.existsSync(path.join(repoDir, 'yarn.lock'))) {
+    return { command: process.platform === 'win32' ? 'yarn.cmd' : 'yarn', args: ['tn:dev'] }
+  }
+  return {
+    command: process.platform === 'win32' ? 'npm.cmd' : 'npm',
+    args: ['run', 'tn:dev']
+  }
 }
 
-function trimOutputTail(buf: string): string {
-  const text = buf.trim()
-  if (text.length <= OUTPUT_TAIL_MAX) return text
-  return text.slice(-OUTPUT_TAIL_MAX)
+function notePreviewUrl(baseUrl: string, repoName: string, noteDirName?: string): string {
+  if (!noteDirName) return baseUrl
+  const base = new URL(baseUrl)
+  base.pathname = `/${repoName}/notes/${encodeURIComponent(noteDirName)}/README`
+  return base.toString()
 }
 
 export class PreviewManager {
-  private child: ChildProcess | null = null
-  private state: PreviewState = {
-    repo: null,
-    port: null,
-    status: 'idle',
-    error: null,
-    baseUrl: null
-  }
-  private readyPromise: Promise<void> | null = null
-  private stopping = false
-  private outputBuf = ''
+  private handles = new Map<string, PreviewHandle>()
+  private listener: ((state: PreviewStateDto) => void) | null = null
 
-  getState(): PreviewState {
-    return { ...this.state }
+  onChanged(listener: (state: PreviewStateDto) => void): () => void {
+    this.listener = listener
+    return () => {
+      if (this.listener === listener) this.listener = null
+    }
   }
 
-  async ensureStarted(repoName: string, repoDir: string): Promise<PreviewState> {
-    deskLog('preview', 'ensureStarted', { repoName, repoDir, current: this.state })
+  list(): PreviewStateDto[] {
+    return [...this.handles.values()].map((handle) => ({ ...handle.state }))
+  }
 
-    if (
-      this.state.repo === repoName &&
-      this.child &&
-      !this.child.killed &&
-      (this.state.status === 'ready' || this.state.status === 'starting')
-    ) {
-      deskLog('preview', 'reuse existing process', this.state.status)
-      if (this.state.status === 'starting' && this.readyPromise) {
-        await this.readyPromise
+  async start(
+    knowledgeBaseId: string,
+    knowledgeBaseName: string,
+    repoDir: string,
+    noteDirName?: string
+  ): Promise<PreviewStartResult> {
+    const existing = this.handles.get(knowledgeBaseId)
+    if (existing?.child && !existing.child.killed) {
+      if (existing.state.status === 'starting' && existing.readyPromise) {
+        await existing.readyPromise.catch(() => undefined)
       }
-      return this.getState()
+      return {
+        state: { ...existing.state },
+        url: existing.state.baseUrl
+          ? notePreviewUrl(existing.state.baseUrl, knowledgeBaseName, noteDirName)
+          : null
+      }
     }
 
-    await this.stop()
-    this.stopping = false
-    this.outputBuf = ''
-
-    if (!existsSync(join(repoDir, 'package.json'))) {
-      this.state = {
-        repo: repoName,
-        port: null,
+    if (!fs.existsSync(path.join(repoDir, 'package.json'))) {
+      const state: PreviewStateDto = {
+        knowledgeBaseId,
+        knowledgeBaseName,
         status: 'error',
-        error: `缺少 package.json: ${repoName}`,
-        baseUrl: null
+        port: null,
+        baseUrl: null,
+        error: '知识库缺少 package.json，无法启动站点预览'
       }
-      deskLog('preview', 'missing package.json', repoDir)
-      return this.getState()
+      this.handles.set(knowledgeBaseId, {
+        state,
+        child: null,
+        readyPromise: null,
+        outputTail: '',
+        stopping: false
+      })
+      this.emit(state)
+      return { state, url: null }
+    }
+
+    const hasInstalledDependencies =
+      fs.existsSync(path.join(repoDir, 'node_modules')) ||
+      fs.existsSync(path.join(repoDir, '.pnp.cjs')) ||
+      fs.existsSync(path.join(repoDir, '.pnp.js'))
+    if (!hasInstalledDependencies) {
+      const state: PreviewStateDto = {
+        knowledgeBaseId,
+        knowledgeBaseName,
+        status: 'error',
+        port: null,
+        baseUrl: null,
+        error: '知识库依赖尚未安装。请先在配置的 IDE 或终端中为该知识库安装依赖。'
+      }
+      this.handles.set(knowledgeBaseId, {
+        state,
+        child: null,
+        readyPromise: null,
+        outputTail: '',
+        stopping: false
+      })
+      this.emit(state)
+      return { state, url: null }
     }
 
     const port = readRepoPort(repoDir)
-    this.state = {
-      repo: repoName,
-      port,
+    const state: PreviewStateDto = {
+      knowledgeBaseId,
+      knowledgeBaseName,
       status: 'starting',
-      error: null,
-      baseUrl: `http://localhost:${port}/${repoName}/`
+      port,
+      baseUrl: `http://localhost:${port}/${knowledgeBaseName}/`,
+      error: null
     }
-    deskLog('preview', 'spawning tn:dev', { port, baseUrl: this.state.baseUrl })
+    const handle: PreviewHandle = {
+      state,
+      child: null,
+      readyPromise: null,
+      outputTail: '',
+      stopping: false
+    }
+    this.handles.set(knowledgeBaseId, handle)
+    this.emit(state)
 
-    this.readyPromise = new Promise<void>((resolve, reject) => {
+    handle.readyPromise = this.spawnAndWait(handle, repoDir)
+    await handle.readyPromise.catch(() => undefined)
+    handle.readyPromise = null
+    return {
+      state: { ...handle.state },
+      url: handle.state.baseUrl
+        ? notePreviewUrl(handle.state.baseUrl, knowledgeBaseName, noteDirName)
+        : null
+    }
+  }
+
+  async stop(knowledgeBaseId: string): Promise<PreviewStateDto> {
+    const handle = this.handles.get(knowledgeBaseId)
+    if (!handle) {
+      return {
+        knowledgeBaseId,
+        knowledgeBaseName: knowledgeBaseId,
+        status: 'idle',
+        port: null,
+        baseUrl: null,
+        error: null
+      }
+    }
+    await this.stopHandle(handle)
+    this.handles.delete(knowledgeBaseId)
+    const state: PreviewStateDto = { ...handle.state, status: 'idle', error: null }
+    this.emit(state)
+    return state
+  }
+
+  async stopAll(): Promise<void> {
+    await Promise.all([...this.handles.values()].map((handle) => this.stopHandle(handle)))
+    this.handles.clear()
+  }
+
+  private spawnAndWait(handle: PreviewHandle, repoDir: string): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const runtime = packageManager(repoDir)
       let settled = false
-      const finish = (err?: Error): void => {
+      const finish = (error?: Error): void => {
         if (settled) return
         settled = true
         clearTimeout(timer)
-        if (err) reject(err)
+        if (error) reject(error)
         else resolve()
       }
-
       const timer = setTimeout(() => {
-        if (this.state.status === 'starting') {
-          deskLog('preview', 'ready timeout → soft-ready')
-          // Soft-ready: some VitePress logs may not match detectors; iframe can still load.
-          this.state = { ...this.state, status: 'ready' }
+        if (handle.state.status === 'starting') {
+          handle.state = { ...handle.state, status: 'ready' }
+          this.emit(handle.state)
         }
         finish()
       }, READY_TIMEOUT_MS)
 
-      const onData = (chunk: Buffer | string): void => {
+      const child = spawn(runtime.command, runtime.args, {
+        cwd: repoDir,
+        env: previewEnvironment(),
+        detached: process.platform !== 'win32',
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe']
+      })
+      handle.child = child
+      deskLog('preview', 'started', {
+        knowledgeBaseId: handle.state.knowledgeBaseId,
+        command: runtime.command,
+        pid: child.pid ?? null
+      })
+
+      const onOutput = (chunk: Buffer | string): void => {
         const text = chunk.toString()
-        this.outputBuf += text
-        if (this.outputBuf.length > OUTPUT_TAIL_MAX * 2) {
-          this.outputBuf = this.outputBuf.slice(-OUTPUT_TAIL_MAX)
-        }
-        const line = text.trim()
-        if (line) deskLog('preview:out', line.slice(0, 500))
-        if (isReadyOutput(text)) {
-          deskLog('preview', 'ready detected')
-          this.state = { ...this.state, status: 'ready', error: null }
+        handle.outputTail = `${handle.outputTail}${text}`.slice(-OUTPUT_TAIL_MAX)
+        const match = text.match(/https?:\/\/(?:localhost|127\.0\.0\.1):(\d+)(\/[^\s]*)?/i)
+        if (match && handle.state.status === 'starting') {
+          const detectedPort = Number(match[1])
+          handle.state = {
+            ...handle.state,
+            status: 'ready',
+            port: detectedPort,
+            baseUrl: `http://localhost:${detectedPort}/${handle.state.knowledgeBaseName}/`,
+            error: null
+          }
+          this.emit(handle.state)
           finish()
         }
       }
-
-      const child = spawnDevServer(repoDir)
-      this.child = child
-      deskLog('preview', 'child pid', child.pid ?? null)
-
-      child.stdout?.on('data', onData)
-      child.stderr?.on('data', onData)
-
-      child.on('error', (err) => {
-        deskLog('preview', 'child error', err.message)
-        if (this.stopping) {
-          finish()
-          return
-        }
-        this.state = {
-          repo: repoName,
-          port,
-          status: 'error',
-          error: err.message,
-          baseUrl: null
-        }
-        this.child = null
-        finish(err)
+      child.stdout?.on('data', onOutput)
+      child.stderr?.on('data', onOutput)
+      child.on('error', (error) => {
+        if (handle.stopping) return finish()
+        handle.child = null
+        handle.state = { ...handle.state, status: 'error', error: error.message }
+        this.emit(handle.state)
+        finish(error)
       })
-
       child.on('exit', (code, signal) => {
-        deskLog('preview', 'child exit', { code, signal, stopping: this.stopping })
-        if (this.child === child) this.child = null
-        if (this.stopping) {
-          if (!settled) finish()
-          return
+        if (handle.child === child) handle.child = null
+        if (handle.stopping) return finish()
+        const summary = `预览进程已退出（code=${code ?? 'null'}, signal=${signal ?? 'null'}）`
+        handle.state = {
+          ...handle.state,
+          status: 'error',
+          error: handle.outputTail.trim() ? `${summary}\n\n${handle.outputTail.trim()}` : summary
         }
-        if (this.state.status === 'starting' || this.state.status === 'ready') {
-          const tail = trimOutputTail(this.outputBuf)
-          const summary = `预览进程已退出 (code=${code ?? 'null'}, signal=${signal ?? 'null'})`
-          this.state = {
-            repo: repoName,
-            port,
-            status: 'error',
-            error: tail ? `${summary}\n\n${tail}` : summary,
-            baseUrl: this.state.baseUrl
-          }
-        }
-        if (!settled) {
-          finish(new Error(this.state.error || '预览进程退出'))
-        }
+        this.emit(handle.state)
+        finish(new Error(summary))
       })
     })
-
-    try {
-      await this.readyPromise
-    } catch {
-      // state already recorded
-    } finally {
-      this.readyPromise = null
-    }
-
-    deskLog('preview', 'ensureStarted done', this.getState())
-    return this.getState()
   }
 
-  async stop(): Promise<PreviewState> {
-    deskLog('preview', 'stop', { hadChild: Boolean(this.child), state: this.state })
-    this.stopping = true
-    const child = this.child
-    this.child = null
-    this.readyPromise = null
-
-    const pid = child?.pid
-    if (child && pid && !child.killed) {
-      await new Promise<void>((resolve) => {
-        let done = false
-        const finish = (): void => {
-          if (done) return
-          done = true
-          resolve()
+  private async stopHandle(handle: PreviewHandle): Promise<void> {
+    handle.stopping = true
+    const child = handle.child
+    handle.child = null
+    if (!child?.pid || child.killed) return
+    const pid = child.pid
+    await new Promise<void>((resolve) => {
+      let done = false
+      const finish = (): void => {
+        if (done) return
+        done = true
+        resolve()
+      }
+      child.once('exit', finish)
+      try {
+        if (process.platform === 'win32') {
+          spawn('taskkill', ['/pid', String(pid), '/f', '/t'], { windowsHide: true })
+        } else {
+          process.kill(-pid, 'SIGTERM')
         }
-        child.once('exit', finish)
+      } catch {
+        child.kill('SIGTERM')
+      }
+      setTimeout(() => {
         try {
-          if (process.platform === 'win32') {
-            spawn('taskkill', ['/pid', String(pid), '/f', '/t'])
-          } else {
-            try {
-              process.kill(-pid, 'SIGTERM')
-            } catch {
-              child.kill('SIGTERM')
-            }
-          }
+          if (process.platform === 'win32') child.kill('SIGKILL')
+          else process.kill(-pid, 'SIGKILL')
         } catch {
-          // ignore
+          // Process already exited.
         }
-        setTimeout(() => {
-          try {
-            if (process.platform !== 'win32') {
-              process.kill(-pid, 'SIGKILL')
-            } else {
-              child.kill('SIGKILL')
-            }
-          } catch {
-            // ignore
-          }
-          finish()
-        }, 2500)
-      })
-    }
+        finish()
+      }, 2500)
+    })
+  }
 
-    this.state = {
-      repo: null,
-      port: null,
-      status: 'idle',
-      error: null,
-      baseUrl: null
-    }
-    this.outputBuf = ''
-    return this.getState()
+  private emit(state: PreviewStateDto): void {
+    this.listener?.({ ...state })
   }
 }
 

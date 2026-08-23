@@ -1,18 +1,32 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import EditorPane from './components/EditorPane.vue'
 import KnowledgeSidebar from './components/KnowledgeSidebar.vue'
 import NavigatorSidebar from './components/NavigatorSidebar.vue'
+import { useEditorStore } from './stores/editor'
 import { useWorkspaceStore } from './stores/workspace'
 
 import type { DeletePreviewDto, DeskTocNode } from '../../shared/contracts'
 
 const store = useWorkspaceStore()
+const editor = useEditorStore()
 const createDialogOpen = ref(false)
 const createTitle = ref('')
 const deletePreview = ref<DeletePreviewDto | null>(null)
 const dialogBusy = ref(false)
+let sessionTimer: ReturnType<typeof setTimeout> | null = null
+
+const workspaceColumns = computed(() => {
+  const knowledgeWidth = editor.knowledgeSidebarCollapsed ? 48 : editor.knowledgeSidebarWidth
+  const navigatorWidth = editor.navigatorSidebarCollapsed ? 0 : editor.navigatorSidebarWidth
+  return `${knowledgeWidth}px ${navigatorWidth}px minmax(0, 1fr)`
+})
+
+async function persistSession(): Promise<void> {
+  const result = await window.desk.session.save(editor.toSession(store.selectedKnowledgeBaseId))
+  if (!result.ok) store.error = `无法保存工作区会话：${result.error.message}`
+}
 
 function onKeydown(event: KeyboardEvent): void {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
@@ -58,13 +72,56 @@ async function confirmDelete(): Promise<void> {
   }
 }
 
-onMounted(() => {
+watch(
+  () => editor.activeTab?.id,
+  () => void store.syncToActiveTab()
+)
+
+watch(
+  [
+    () => editor.layout,
+    () => editor.activeGroupId,
+    () => store.selectedKnowledgeBaseId,
+    () => editor.knowledgeSidebarWidth,
+    () => editor.navigatorSidebarWidth,
+    () => editor.knowledgeSidebarCollapsed,
+    () => editor.navigatorSidebarCollapsed,
+    () => editor.expandedTocNodes
+  ],
+  () => {
+    if (!store.hasWorkspace) return
+    if (sessionTimer) clearTimeout(sessionTimer)
+    sessionTimer = setTimeout(() => {
+      sessionTimer = null
+      void persistSession()
+    }, 450)
+  },
+  { deep: true }
+)
+
+watch(
+  () => createDialogOpen.value || Boolean(deletePreview.value),
+  (modalOpen) => {
+    if (modalOpen) {
+      void window.desk.web.hideAll()
+    } else {
+      requestAnimationFrame(() => window.dispatchEvent(new Event('resize')))
+    }
+  }
+)
+
+onMounted(async () => {
   window.addEventListener('keydown', onKeydown)
-  void store.initialize()
+  await store.initialize()
+  await persistSession()
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
+  if (sessionTimer) clearTimeout(sessionTimer)
+  if (store.hasWorkspace) {
+    void persistSession()
+  }
   store.dispose()
 })
 </script>
@@ -96,7 +153,11 @@ onUnmounted(() => {
       <button type="button" @click="store.status = null">×</button>
     </div>
 
-    <main v-if="store.hasWorkspace" class="workspace-layout">
+    <main
+      v-if="store.hasWorkspace"
+      class="workspace-layout"
+      :style="{ gridTemplateColumns: workspaceColumns }"
+    >
       <KnowledgeSidebar />
       <NavigatorSidebar @create-note="openCreateDialog" @request-delete="requestDelete" />
       <EditorPane />

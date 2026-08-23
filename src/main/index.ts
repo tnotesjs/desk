@@ -6,6 +6,7 @@ import icon from '../../resources/icon.png?asset'
 import { registerIpc } from './ipc'
 import { deskLog } from './log'
 import { previewManager } from './preview'
+import { webContentsManager } from './webContentsManager'
 import { workspaceManager } from './workspaceManager'
 
 let mainWindow: BrowserWindow | null = null
@@ -41,11 +42,12 @@ function createWindow(): BrowserWindow {
 
   window.once('ready-to-show', () => {
     window.show()
-    if (is.dev) {
+    if (is.dev && process.env.DESK_OPEN_DEVTOOLS === '1') {
       window.webContents.openDevTools({ mode: 'bottom' })
       deskLog('desk', 'DevTools opened (dev mode)')
     }
   })
+  webContentsManager.attachWindow(window)
   window.on('closed', () => {
     if (mainWindow === window) mainWindow = null
   })
@@ -102,13 +104,14 @@ if (!hasSingleInstanceLock) {
 }
 
 app.on('before-quit', () => {
-  void previewManager.stop()
+  void previewManager.stopAll()
 })
 
 app.on('will-quit', () => {
   unregisterIpc?.()
   unregisterIpc = null
   void workspaceManager.dispose()
+  webContentsManager.dispose()
 })
 
 app.on('window-all-closed', () => {

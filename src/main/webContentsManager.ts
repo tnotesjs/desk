@@ -1,0 +1,273 @@
+import { BrowserWindow, session, shell, WebContentsView } from 'electron'
+
+import { deskLog } from './log'
+
+import type { WebBounds, WebOpenRequestedEvent, WebTabState } from '../shared/contracts'
+
+const WEB_PARTITION = 'persist:tnotes-desk-web'
+
+interface WebHandle {
+  tabId: string
+  view: WebContentsView
+  state: WebTabState
+}
+
+function normalizeWebUrl(value: string): string {
+  const trimmed = value.trim()
+  const candidate = /^[a-z][a-z\d+.-]*:/i.test(trimmed) ? trimmed : `https://${trimmed}`
+  const url = new URL(candidate)
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error('网页标签只允许访问 http/https 地址')
+  }
+  return url.toString()
+}
+
+function safeBounds(bounds: WebBounds): Electron.Rectangle {
+  return {
+    x: Math.max(0, Math.round(bounds.x)),
+    y: Math.max(0, Math.round(bounds.y)),
+    width: Math.max(1, Math.round(bounds.width)),
+    height: Math.max(1, Math.round(bounds.height))
+  }
+}
+
+export class WebContentsManager {
+  private handles = new Map<string, WebHandle>()
+  private mainWindow: BrowserWindow | null = null
+  private stateListener: ((state: WebTabState) => void) | null = null
+  private openRequestedListener: ((event: WebOpenRequestedEvent) => void) | null = null
+  private sessionConfigured = false
+
+  private configureSession(): void {
+    if (this.sessionConfigured) return
+    this.sessionConfigured = true
+    const webSession = session.fromPartition(WEB_PARTITION)
+    webSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
+    webSession.on('will-download', (event, item) => {
+      event.preventDefault()
+      const url = item.getURL()
+      if (url) void shell.openExternal(url)
+    })
+  }
+
+  attachWindow(window: BrowserWindow): void {
+    this.configureSession()
+    this.mainWindow = window
+    window.on('hide', () => this.hideAll())
+    window.on('minimize', () => this.hideAll())
+    window.on('closed', () => {
+      if (this.mainWindow === window) this.mainWindow = null
+      this.closeAll()
+    })
+  }
+
+  onStateChanged(listener: (state: WebTabState) => void): () => void {
+    this.stateListener = listener
+    return () => {
+      if (this.stateListener === listener) this.stateListener = null
+    }
+  }
+
+  onOpenRequested(listener: (event: WebOpenRequestedEvent) => void): () => void {
+    this.openRequestedListener = listener
+    return () => {
+      if (this.openRequestedListener === listener) this.openRequestedListener = null
+    }
+  }
+
+  async create(tabId: string, inputUrl: string): Promise<WebTabState> {
+    const existing = this.handles.get(tabId)
+    if (existing) return { ...existing.state }
+    const window = this.requireWindow()
+    const url = normalizeWebUrl(inputUrl)
+    const view = new WebContentsView({
+      webPreferences: {
+        partition: WEB_PARTITION,
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true
+      }
+    })
+    view.setBackgroundColor('#101319')
+    view.setVisible(false)
+    window.contentView.addChildView(view)
+
+    const handle: WebHandle = {
+      tabId,
+      view,
+      state: {
+        tabId,
+        url,
+        title: url,
+        canGoBack: false,
+        canGoForward: false,
+        loading: true
+      }
+    }
+    this.handles.set(tabId, handle)
+    this.bindWebContents(handle)
+
+    try {
+      await view.webContents.loadURL(url)
+    } catch (error) {
+      handle.state.error = error instanceof Error ? error.message : String(error)
+      handle.state.loading = false
+      this.emitState(handle)
+    }
+    return { ...handle.state }
+  }
+
+  layout(tabId: string, visible: boolean, bounds?: WebBounds): void {
+    const handle = this.getHandle(tabId)
+    if (!visible) {
+      handle.view.setVisible(false)
+      return
+    }
+    if (!bounds) throw new Error('显示网页标签时缺少布局区域')
+    handle.view.setBounds(safeBounds(bounds))
+    handle.view.setVisible(true)
+  }
+
+  close(tabId: string): void {
+    const handle = this.handles.get(tabId)
+    if (!handle) return
+    this.handles.delete(tabId)
+    handle.view.setVisible(false)
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      this.mainWindow.contentView.removeChildView(handle.view)
+    }
+    handle.view.webContents.close()
+  }
+
+  closeAll(): void {
+    for (const tabId of [...this.handles.keys()]) this.close(tabId)
+  }
+
+  hideAll(): void {
+    for (const handle of this.handles.values()) handle.view.setVisible(false)
+  }
+
+  async navigate(tabId: string, inputUrl: string): Promise<WebTabState> {
+    const handle = this.getHandle(tabId)
+    const url = normalizeWebUrl(inputUrl)
+    handle.state = { ...handle.state, url, loading: true, error: undefined }
+    this.emitState(handle)
+    try {
+      await handle.view.webContents.loadURL(url)
+    } catch (error) {
+      handle.state.error = error instanceof Error ? error.message : String(error)
+      handle.state.loading = false
+      this.emitState(handle)
+    }
+    return { ...handle.state }
+  }
+
+  goBack(tabId: string): void {
+    const navigation = this.getHandle(tabId).view.webContents.navigationHistory
+    if (navigation.canGoBack()) navigation.goBack()
+  }
+
+  goForward(tabId: string): void {
+    const navigation = this.getHandle(tabId).view.webContents.navigationHistory
+    if (navigation.canGoForward()) navigation.goForward()
+  }
+
+  reload(tabId: string): void {
+    this.getHandle(tabId).view.webContents.reload()
+  }
+
+  stop(tabId: string): void {
+    this.getHandle(tabId).view.webContents.stop()
+  }
+
+  async openExternal(inputUrl: string): Promise<void> {
+    await shell.openExternal(normalizeWebUrl(inputUrl))
+  }
+
+  async clearBrowsingData(): Promise<void> {
+    this.hideAll()
+    await session.fromPartition(WEB_PARTITION).clearStorageData()
+  }
+
+  dispose(): void {
+    this.closeAll()
+    this.stateListener = null
+    this.openRequestedListener = null
+  }
+
+  private requireWindow(): BrowserWindow {
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) throw new Error('主窗口尚未就绪')
+    return this.mainWindow
+  }
+
+  private getHandle(tabId: string): WebHandle {
+    const handle = this.handles.get(tabId)
+    if (!handle) throw new Error(`网页标签不存在：${tabId}`)
+    return handle
+  }
+
+  private bindWebContents(handle: WebHandle): void {
+    const contents = handle.view.webContents
+    const refresh = (): void => {
+      if (contents.isDestroyed()) return
+      const navigation = contents.navigationHistory
+      handle.state = {
+        ...handle.state,
+        url: contents.getURL() || handle.state.url,
+        canGoBack: navigation.canGoBack(),
+        canGoForward: navigation.canGoForward(),
+        loading: contents.isLoading()
+      }
+      this.emitState(handle)
+    }
+
+    contents.setWindowOpenHandler(({ url }) => {
+      try {
+        this.openRequestedListener?.({ sourceTabId: handle.tabId, url: normalizeWebUrl(url) })
+      } catch {
+        // Ignore non-http(s) popups.
+      }
+      return { action: 'deny' }
+    })
+    contents.on('will-navigate', (event, url) => {
+      try {
+        normalizeWebUrl(url)
+      } catch {
+        event.preventDefault()
+      }
+    })
+    contents.on('page-title-updated', (_event, title) => {
+      handle.state.title = title || handle.state.url
+      this.emitState(handle)
+    })
+    contents.on('page-favicon-updated', (_event, favicons) => {
+      handle.state.faviconUrl = favicons.find((url) => /^https?:/i.test(url))
+      this.emitState(handle)
+    })
+    contents.on('did-start-loading', refresh)
+    contents.on('did-stop-loading', refresh)
+    contents.on('did-navigate', refresh)
+    contents.on('did-navigate-in-page', refresh)
+    contents.on('did-fail-load', (_event, code, description, validatedUrl, isMainFrame) => {
+      if (!isMainFrame || code === -3) return
+      handle.state = {
+        ...handle.state,
+        url: validatedUrl || handle.state.url,
+        loading: false,
+        error: description
+      }
+      this.emitState(handle)
+    })
+    contents.on('render-process-gone', (_event, details) => {
+      handle.state = { ...handle.state, loading: false, error: `网页进程已退出：${details.reason}` }
+      deskLog('web', 'render process gone', { tabId: handle.tabId, reason: details.reason })
+      this.emitState(handle)
+    })
+  }
+
+  private emitState(handle: WebHandle): void {
+    this.stateListener?.({ ...handle.state })
+  }
+}
+
+export const webContentsManager = new WebContentsManager()

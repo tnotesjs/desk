@@ -228,6 +228,11 @@ export class WorkspaceManager {
     return toDetail(this.getHandle(knowledgeBaseId))
   }
 
+  getLocation(knowledgeBaseId: string): { name: string; rootPath: string } {
+    const handle = this.getHandle(knowledgeBaseId)
+    return { name: handle.name, rootPath: handle.rootPath }
+  }
+
   async readNote(knowledgeBaseId: string, noteUuid: string): Promise<NoteDocumentDto> {
     const handle = this.getHandle(knowledgeBaseId)
     return toNoteDocument(handle, await handle.workspace.notes.read(noteUuid))

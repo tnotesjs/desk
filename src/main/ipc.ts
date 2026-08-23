@@ -3,7 +3,10 @@ import { BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from 'electro
 import { z } from 'zod'
 
 import { deskLog } from './log'
+import { previewManager } from './preview'
+import { loadWorkspaceSession, saveWorkspaceSession } from './session'
 import { loadSettings, saveSettings } from './settings'
+import { webContentsManager } from './webContentsManager'
 import { workspaceManager } from './workspaceManager'
 import { IPC_CHANNELS } from '../shared/contracts'
 
@@ -20,8 +23,74 @@ import type {
   TocDeleteRequest,
   TocEntryRefDto,
   TocMoveRequest,
-  TocRenameGroupRequest
+  TocRenameGroupRequest,
+  WorkspaceSession
 } from '../shared/contracts'
+
+const iconSchema = z
+  .object({
+    src: z.string().optional(),
+    svg: z.string().optional()
+  })
+  .nullable()
+
+const noteTabSchema = z.object({
+  id: z.string().min(1),
+  type: z.literal('note'),
+  knowledgeBaseId: z.string().min(1),
+  knowledgeBaseName: z.string(),
+  noteUuid: z.string().min(1),
+  title: z.string(),
+  icon: iconSchema,
+  viewMode: z.enum(['visual', 'source'])
+})
+
+const webTabSchema = z.object({
+  id: z.string().min(1),
+  type: z.literal('web'),
+  url: z.string().min(1),
+  title: z.string()
+})
+
+const editorTabSchema = z.discriminatedUnion('type', [noteTabSchema, webTabSchema])
+
+const editorLayoutSchema: z.ZodType<WorkspaceSession['layout']> = z.lazy(() =>
+  z.discriminatedUnion('type', [
+    z.object({
+      type: z.literal('group'),
+      id: z.string().min(1),
+      tabs: z.array(editorTabSchema),
+      activeTabId: z.string().nullable()
+    }),
+    z.object({
+      type: z.literal('split'),
+      id: z.string().min(1),
+      direction: z.enum(['horizontal', 'vertical']),
+      ratio: z.number().min(0.15).max(0.85),
+      first: editorLayoutSchema,
+      second: editorLayoutSchema
+    })
+  ])
+)
+
+const workspaceSessionSchema = z.object({
+  version: z.literal(1),
+  selectedKnowledgeBaseId: z.string().nullable(),
+  layout: editorLayoutSchema,
+  activeGroupId: z.string().min(1),
+  knowledgeSidebarWidth: z.number().min(48).max(520),
+  navigatorSidebarWidth: z.number().min(160).max(700),
+  knowledgeSidebarCollapsed: z.boolean(),
+  navigatorSidebarCollapsed: z.boolean(),
+  expandedTocNodes: z.record(z.string(), z.array(z.string()))
+})
+
+const webBoundsSchema = z.object({
+  x: z.number().finite(),
+  y: z.number().finite(),
+  width: z.number().positive(),
+  height: z.number().positive()
+})
 
 const entryRefSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('note'), noteUuid: z.string().min(1) }),
@@ -168,10 +237,14 @@ function handle<TInput, TOutput>(
 const noInputSchema = z.undefined()
 
 export function registerIpc(getWindow: () => BrowserWindow | null): () => void {
-  handle(IPC_CHANNELS.bootstrap, getWindow, noInputSchema, () => ({
-    workspace: workspaceManager.getOverview(),
-    settings: loadSettings()
-  }))
+  handle(IPC_CHANNELS.bootstrap, getWindow, noInputSchema, async () => {
+    const workspace = workspaceManager.getOverview()
+    return {
+      workspace,
+      settings: loadSettings(),
+      session: await loadWorkspaceSession(workspace.path)
+    }
+  })
 
   handle(IPC_CHANNELS.workspaceChoose, getWindow, noInputSchema, async () => {
     const parent = getWindow()
@@ -184,11 +257,21 @@ export function registerIpc(getWindow: () => BrowserWindow | null): () => void {
     if (result.canceled || result.filePaths.length === 0) {
       return workspaceManager.getOverview()
     }
-    return workspaceManager.setWorkspace(result.filePaths[0])
+    await previewManager.stopAll()
+    webContentsManager.closeAll()
+    const overview = await workspaceManager.setWorkspace(result.filePaths[0])
+    return overview
   })
 
-  handle(IPC_CHANNELS.workspaceSet, getWindow, z.string().min(1).nullable(), (workspacePath) =>
-    workspaceManager.setWorkspace(workspacePath)
+  handle(
+    IPC_CHANNELS.workspaceSet,
+    getWindow,
+    z.string().min(1).nullable(),
+    async (workspacePath) => {
+      await previewManager.stopAll()
+      webContentsManager.closeAll()
+      return workspaceManager.setWorkspace(workspacePath)
+    }
   )
   handle(IPC_CHANNELS.workspaceRefresh, getWindow, noInputSchema, () => workspaceManager.refresh())
   handle(IPC_CHANNELS.knowledgeBaseRead, getWindow, z.string().min(1), (knowledgeBaseId) =>
@@ -244,6 +327,74 @@ export function registerIpc(getWindow: () => BrowserWindow | null): () => void {
     workspaceManager.deleteToc(input as TocDeleteRequest)
   )
 
+  handle(IPC_CHANNELS.sessionRead, getWindow, noInputSchema, () =>
+    loadWorkspaceSession(workspaceManager.getOverview().path)
+  )
+  handle(IPC_CHANNELS.sessionSave, getWindow, workspaceSessionSchema, (session) =>
+    saveWorkspaceSession(workspaceManager.getOverview().path, session)
+  )
+
+  handle(
+    IPC_CHANNELS.webCreate,
+    getWindow,
+    z.object({ tabId: z.string().min(1), url: z.string().min(1) }),
+    ({ tabId, url }) => webContentsManager.create(tabId, url)
+  )
+  handle(
+    IPC_CHANNELS.webLayout,
+    getWindow,
+    z.object({
+      tabId: z.string().min(1),
+      visible: z.boolean(),
+      bounds: webBoundsSchema.optional()
+    }),
+    ({ tabId, visible, bounds }) => webContentsManager.layout(tabId, visible, bounds)
+  )
+  handle(IPC_CHANNELS.webHideAll, getWindow, noInputSchema, () => webContentsManager.hideAll())
+  handle(IPC_CHANNELS.webClose, getWindow, z.string().min(1), (tabId) =>
+    webContentsManager.close(tabId)
+  )
+  handle(
+    IPC_CHANNELS.webNavigate,
+    getWindow,
+    z.object({ tabId: z.string().min(1), url: z.string().min(1) }),
+    ({ tabId, url }) => webContentsManager.navigate(tabId, url)
+  )
+  handle(IPC_CHANNELS.webGoBack, getWindow, z.string().min(1), (tabId) =>
+    webContentsManager.goBack(tabId)
+  )
+  handle(IPC_CHANNELS.webGoForward, getWindow, z.string().min(1), (tabId) =>
+    webContentsManager.goForward(tabId)
+  )
+  handle(IPC_CHANNELS.webReload, getWindow, z.string().min(1), (tabId) =>
+    webContentsManager.reload(tabId)
+  )
+  handle(IPC_CHANNELS.webStop, getWindow, z.string().min(1), (tabId) =>
+    webContentsManager.stop(tabId)
+  )
+  handle(IPC_CHANNELS.webOpenExternal, getWindow, z.string().min(1), (url) =>
+    webContentsManager.openExternal(url)
+  )
+  handle(IPC_CHANNELS.webClearBrowsingData, getWindow, noInputSchema, () =>
+    webContentsManager.clearBrowsingData()
+  )
+  handle(
+    IPC_CHANNELS.previewStart,
+    getWindow,
+    z.object({
+      knowledgeBaseId: z.string().min(1),
+      noteDirName: z.string().min(1).optional()
+    }),
+    ({ knowledgeBaseId, noteDirName }) => {
+      const location = workspaceManager.getLocation(knowledgeBaseId)
+      return previewManager.start(knowledgeBaseId, location.name, location.rootPath, noteDirName)
+    }
+  )
+  handle(IPC_CHANNELS.previewStop, getWindow, z.string().min(1), (knowledgeBaseId) =>
+    previewManager.stop(knowledgeBaseId)
+  )
+  handle(IPC_CHANNELS.previewList, getWindow, noInputSchema, () => previewManager.list())
+
   const offChanged = workspaceManager.onChanged((overview) => {
     const window = getWindow()
     if (window && !window.isDestroyed()) {
@@ -256,10 +407,31 @@ export function registerIpc(getWindow: () => BrowserWindow | null): () => void {
       window.webContents.send(IPC_CHANNELS.noteExternalChanged, event)
     }
   })
+  const offWebState = webContentsManager.onStateChanged((state) => {
+    const window = getWindow()
+    if (window && !window.isDestroyed()) {
+      window.webContents.send(IPC_CHANNELS.webStateChanged, state)
+    }
+  })
+  const offWebOpenRequested = webContentsManager.onOpenRequested((event) => {
+    const window = getWindow()
+    if (window && !window.isDestroyed()) {
+      window.webContents.send(IPC_CHANNELS.webOpenRequested, event)
+    }
+  })
+  const offPreviewChanged = previewManager.onChanged((state) => {
+    const window = getWindow()
+    if (window && !window.isDestroyed()) {
+      window.webContents.send(IPC_CHANNELS.previewChanged, state)
+    }
+  })
 
   return () => {
     offChanged()
     offExternalChanged()
+    offWebState()
+    offWebOpenRequested()
+    offPreviewChanged()
     for (const channel of Object.values(IPC_CHANNELS)) {
       ipcMain.removeHandler(channel)
     }

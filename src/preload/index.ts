@@ -16,11 +16,16 @@ import type {
   NoteRenameRequest,
   NoteSaveRequest,
   NoteUpdateConfigRequest,
+  PreviewStartResult,
+  PreviewStateDto,
   TocCreateGroupRequest,
   TocDeleteRequest,
   TocEntryRefDto,
   TocMoveRequest,
   TocRenameGroupRequest,
+  WebOpenRequestedEvent,
+  WebTabState,
+  WorkspaceSession,
   WorkspaceOverview
 } from '../shared/contracts'
 
@@ -83,6 +88,46 @@ const api: DeskApi = {
       }),
     delete: (request: TocDeleteRequest) =>
       invoke<KnowledgeBaseDetail>(IPC_CHANNELS.tocDelete, request)
+  },
+  session: {
+    read: () => invoke<WorkspaceSession | null>(IPC_CHANNELS.sessionRead),
+    save: (session) => invoke<void>(IPC_CHANNELS.sessionSave, session)
+  },
+  web: {
+    create: (request) => invoke<WebTabState>(IPC_CHANNELS.webCreate, request),
+    layout: (request) => invoke<void>(IPC_CHANNELS.webLayout, request),
+    hideAll: () => invoke<void>(IPC_CHANNELS.webHideAll),
+    close: (tabId) => invoke<void>(IPC_CHANNELS.webClose, tabId),
+    navigate: (request) => invoke<WebTabState>(IPC_CHANNELS.webNavigate, request),
+    goBack: (tabId) => invoke<void>(IPC_CHANNELS.webGoBack, tabId),
+    goForward: (tabId) => invoke<void>(IPC_CHANNELS.webGoForward, tabId),
+    reload: (tabId) => invoke<void>(IPC_CHANNELS.webReload, tabId),
+    stop: (tabId) => invoke<void>(IPC_CHANNELS.webStop, tabId),
+    openExternal: (url) => invoke<void>(IPC_CHANNELS.webOpenExternal, url),
+    clearBrowsingData: () => invoke<void>(IPC_CHANNELS.webClearBrowsingData),
+    onStateChanged: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, state: WebTabState): void =>
+        callback(state)
+      ipcRenderer.on(IPC_CHANNELS.webStateChanged, listener)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.webStateChanged, listener)
+    },
+    onOpenRequested: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: WebOpenRequestedEvent): void =>
+        callback(payload)
+      ipcRenderer.on(IPC_CHANNELS.webOpenRequested, listener)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.webOpenRequested, listener)
+    }
+  },
+  preview: {
+    start: (request) => invoke<PreviewStartResult>(IPC_CHANNELS.previewStart, request),
+    stop: (knowledgeBaseId) => invoke<PreviewStateDto>(IPC_CHANNELS.previewStop, knowledgeBaseId),
+    list: () => invoke<PreviewStateDto[]>(IPC_CHANNELS.previewList),
+    onChanged: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, state: PreviewStateDto): void =>
+        callback(state)
+      ipcRenderer.on(IPC_CHANNELS.previewChanged, listener)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.previewChanged, listener)
+    }
   },
   onLog: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, line: string): void => callback(line)

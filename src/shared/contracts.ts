@@ -15,8 +15,27 @@ export const IPC_CHANNELS = {
   tocRenameGroup: 'toc:rename-group',
   tocPreviewDelete: 'toc:preview-delete',
   tocDelete: 'toc:delete',
+  sessionRead: 'session:read',
+  sessionSave: 'session:save',
+  webCreate: 'web:create',
+  webLayout: 'web:layout',
+  webHideAll: 'web:hide-all',
+  webClose: 'web:close',
+  webNavigate: 'web:navigate',
+  webGoBack: 'web:go-back',
+  webGoForward: 'web:go-forward',
+  webReload: 'web:reload',
+  webStop: 'web:stop',
+  webOpenExternal: 'web:open-external',
+  webClearBrowsingData: 'web:clear-browsing-data',
+  previewStart: 'preview:start',
+  previewStop: 'preview:stop',
+  previewList: 'preview:list',
   workspaceChanged: 'workspace:changed',
   noteExternalChanged: 'note:external-changed',
+  webStateChanged: 'web:state-changed',
+  webOpenRequested: 'web:open-requested',
+  previewChanged: 'preview:changed',
   log: 'desk:log'
 } as const
 
@@ -120,6 +139,115 @@ export interface AppSettings {
 export interface BootstrapPayload {
   workspace: WorkspaceOverview
   settings: AppSettings
+  session: WorkspaceSession | null
+}
+
+export interface NoteEditorTab {
+  id: string
+  type: 'note'
+  knowledgeBaseId: string
+  knowledgeBaseName: string
+  noteUuid: string
+  title: string
+  icon: KnowledgeBaseIconDto | null
+  viewMode: NoteViewMode
+}
+
+export interface WebEditorTab {
+  id: string
+  type: 'web'
+  url: string
+  title: string
+}
+
+export type EditorTab = NoteEditorTab | WebEditorTab
+
+export interface EditorGroupNode {
+  type: 'group'
+  id: string
+  tabs: EditorTab[]
+  activeTabId: string | null
+}
+
+export interface EditorSplitNode {
+  type: 'split'
+  id: string
+  direction: 'horizontal' | 'vertical'
+  ratio: number
+  first: EditorLayoutNode
+  second: EditorLayoutNode
+}
+
+export type EditorLayoutNode = EditorGroupNode | EditorSplitNode
+
+export interface WorkspaceSession {
+  version: 1
+  selectedKnowledgeBaseId: string | null
+  layout: EditorLayoutNode
+  activeGroupId: string
+  knowledgeSidebarWidth: number
+  navigatorSidebarWidth: number
+  knowledgeSidebarCollapsed: boolean
+  navigatorSidebarCollapsed: boolean
+  expandedTocNodes: Record<string, string[]>
+}
+
+export interface WebBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface WebCreateRequest {
+  tabId: string
+  url: string
+}
+
+export interface WebLayoutRequest {
+  tabId: string
+  visible: boolean
+  bounds?: WebBounds
+}
+
+export interface WebNavigateRequest {
+  tabId: string
+  url: string
+}
+
+export interface WebTabState {
+  tabId: string
+  url: string
+  title: string
+  canGoBack: boolean
+  canGoForward: boolean
+  loading: boolean
+  faviconUrl?: string
+  error?: string
+}
+
+export interface WebOpenRequestedEvent {
+  sourceTabId: string
+  url: string
+}
+
+export interface PreviewStateDto {
+  knowledgeBaseId: string
+  knowledgeBaseName: string
+  status: 'idle' | 'starting' | 'ready' | 'error'
+  port: number | null
+  baseUrl: string | null
+  error: string | null
+}
+
+export interface PreviewStartRequest {
+  knowledgeBaseId: string
+  noteDirName?: string
+}
+
+export interface PreviewStartResult {
+  state: PreviewStateDto
+  url: string | null
 }
 
 export interface NoteDocumentDto {
@@ -274,6 +402,31 @@ export interface DeskApi {
       entry: TocEntryRefDto
     ): Promise<DeskResult<DeletePreviewDto>>
     delete(request: TocDeleteRequest): Promise<DeskResult<KnowledgeBaseDetail>>
+  }
+  session: {
+    read(): Promise<DeskResult<WorkspaceSession | null>>
+    save(session: WorkspaceSession): Promise<DeskResult<void>>
+  }
+  web: {
+    create(request: WebCreateRequest): Promise<DeskResult<WebTabState>>
+    layout(request: WebLayoutRequest): Promise<DeskResult<void>>
+    hideAll(): Promise<DeskResult<void>>
+    close(tabId: string): Promise<DeskResult<void>>
+    navigate(request: WebNavigateRequest): Promise<DeskResult<WebTabState>>
+    goBack(tabId: string): Promise<DeskResult<void>>
+    goForward(tabId: string): Promise<DeskResult<void>>
+    reload(tabId: string): Promise<DeskResult<void>>
+    stop(tabId: string): Promise<DeskResult<void>>
+    openExternal(url: string): Promise<DeskResult<void>>
+    clearBrowsingData(): Promise<DeskResult<void>>
+    onStateChanged(callback: (state: WebTabState) => void): () => void
+    onOpenRequested(callback: (event: WebOpenRequestedEvent) => void): () => void
+  }
+  preview: {
+    start(request: PreviewStartRequest): Promise<DeskResult<PreviewStartResult>>
+    stop(knowledgeBaseId: string): Promise<DeskResult<PreviewStateDto>>
+    list(): Promise<DeskResult<PreviewStateDto[]>>
+    onChanged(callback: (state: PreviewStateDto) => void): () => void
   }
   onLog(callback: (line: string) => void): () => void
 }

@@ -3,6 +3,7 @@ productName: TNotes Desk
 directories:
   buildResources: build
 files:
+  - '!playground/**'
   - '!**/.vscode/*'
   - '!src/*'
   - '!electron.vite.config.{js,ts,mjs,cjs}'

@@ -1,6 +1,8 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 
+import { useEditorStore } from './editor'
+
 import type {
   AppSettings,
   DeletePreviewDto,
@@ -10,12 +12,25 @@ import type {
   NoteDocumentDto,
   WorkspaceOverview
 } from '../../../shared/contracts'
+import type { SplitPlacement } from '../editor-groups/layoutModel'
+
+interface DocumentSession {
+  document: NoteDocumentDto
+  content: string
+  dirty: boolean
+  externalConflict: boolean
+  saving: boolean
+}
 
 function resultValue<T>(result: DeskResult<T>): T {
   if (result.ok) return result.value
   const error = new Error(result.error.message) as Error & { code?: string }
   error.code = result.error.code
   throw error
+}
+
+function documentKey(knowledgeBaseId: string, noteUuid: string): string {
+  return `${knowledgeBaseId}:${noteUuid}`
 }
 
 function replaceDescriptor(
@@ -34,26 +49,31 @@ function replaceDescriptor(
 }
 
 export const useWorkspaceStore = defineStore('workspace', () => {
-  const overview = ref<WorkspaceOverview>({
-    path: null,
-    knowledgeBases: [],
-    allKnowledgeBases: []
-  })
+  const editor = useEditorStore()
+  const overview = ref<WorkspaceOverview>({ path: null, knowledgeBases: [], allKnowledgeBases: [] })
   const settings = ref<AppSettings | null>(null)
   const selectedKnowledgeBaseId = ref<string | null>(null)
   const knowledgeBase = ref<KnowledgeBaseDetail | null>(null)
-  const document = ref<NoteDocumentDto | null>(null)
-  const editorContent = ref('')
-  const dirty = ref(false)
-  const externalConflict = ref(false)
+  const documents = ref<Record<string, DocumentSession>>({})
   const loading = ref(false)
-  const saving = ref(false)
   const error = ref<string | null>(null)
   const status = ref<string | null>(null)
-  let autosaveTimer: ReturnType<typeof setTimeout> | null = null
+  const autosaveTimers = new Map<string, ReturnType<typeof setTimeout>>()
   let unsubscribeWorkspace: (() => void) | null = null
   let unsubscribeExternal: (() => void) | null = null
 
+  const activeDocumentKey = computed(() => {
+    const tab = editor.activeTab
+    return tab?.type === 'note' ? documentKey(tab.knowledgeBaseId, tab.noteUuid) : null
+  })
+  const activeDocumentSession = computed(() =>
+    activeDocumentKey.value ? (documents.value[activeDocumentKey.value] ?? null) : null
+  )
+  const document = computed(() => activeDocumentSession.value?.document ?? null)
+  const editorContent = computed(() => activeDocumentSession.value?.content ?? '')
+  const dirty = computed(() => Boolean(activeDocumentSession.value?.dirty))
+  const externalConflict = computed(() => Boolean(activeDocumentSession.value?.externalConflict))
+  const saving = computed(() => Boolean(activeDocumentSession.value?.saving))
   const hasWorkspace = computed(() => Boolean(overview.value.path))
   const selectedKnowledgeBase = computed(() =>
     selectedKnowledgeBaseId.value
@@ -62,27 +82,33 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       : null
   )
 
-  function clearDocument(): void {
-    document.value = null
-    editorContent.value = ''
-    dirty.value = false
-    externalConflict.value = false
-    if (autosaveTimer) clearTimeout(autosaveTimer)
-    autosaveTimer = null
+  function setDocumentSession(key: string, session: DocumentSession): void {
+    documents.value = { ...documents.value, [key]: session }
+  }
+
+  function removeDocumentSession(key: string): void {
+    const next = { ...documents.value }
+    delete next[key]
+    documents.value = next
+    const timer = autosaveTimers.get(key)
+    if (timer) clearTimeout(timer)
+    autosaveTimers.delete(key)
   }
 
   function applyDetail(detail: KnowledgeBaseDetail): void {
-    knowledgeBase.value = detail
+    if (selectedKnowledgeBaseId.value === detail.id) knowledgeBase.value = detail
     overview.value = replaceDescriptor(overview.value, detail)
   }
 
   async function initialize(): Promise<void> {
     loading.value = true
     error.value = null
+    editor.initializeWebEvents()
     try {
       const payload = resultValue(await window.desk.bootstrap())
       overview.value = payload.workspace
       settings.value = payload.settings
+      editor.restore(payload.session, payload.workspace.knowledgeBases)
       unsubscribeWorkspace = window.desk.workspace.onChanged((next) => {
         overview.value = next
         if (
@@ -91,25 +117,28 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         ) {
           selectedKnowledgeBaseId.value = null
           knowledgeBase.value = null
-          clearDocument()
         }
       })
       unsubscribeExternal = window.desk.notes.onExternalChanged((event) => {
-        if (
-          document.value?.knowledgeBaseId !== event.knowledgeBaseId ||
-          document.value.uuid !== event.noteUuid
-        ) {
+        const key = documentKey(event.knowledgeBaseId, event.noteUuid)
+        const session = documents.value[key]
+        if (!session) return
+        if (session.dirty) {
+          setDocumentSession(key, { ...session, externalConflict: true })
           return
         }
-        if (dirty.value) {
-          externalConflict.value = true
-          return
-        }
-        void reloadCurrentDocument()
+        void reloadDocument(key)
       })
 
-      const first = overview.value.knowledgeBases[0]
-      if (first) await selectKnowledgeBase(first.id)
+      const initial = payload.workspace.knowledgeBases.find(
+        (item) => item.id === payload.session?.selectedKnowledgeBaseId
+      )
+      const selected = initial ?? payload.workspace.knowledgeBases[0]
+      if (selected) await selectKnowledgeBase(selected.id)
+      const activeTab = editor.activeTab
+      if (activeTab?.type === 'note') {
+        await ensureDocument(activeTab.knowledgeBaseId, activeTab.noteUuid)
+      }
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : String(cause)
     } finally {
@@ -122,17 +151,21 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     unsubscribeWorkspace = null
     unsubscribeExternal?.()
     unsubscribeExternal = null
-    if (autosaveTimer) clearTimeout(autosaveTimer)
+    for (const timer of autosaveTimers.values()) clearTimeout(timer)
+    autosaveTimers.clear()
+    editor.dispose()
   }
 
   async function chooseWorkspace(): Promise<void> {
     loading.value = true
     error.value = null
     try {
+      await saveAllDocuments()
       overview.value = resultValue(await window.desk.workspace.choose())
+      editor.reset()
+      documents.value = {}
       selectedKnowledgeBaseId.value = null
       knowledgeBase.value = null
-      clearDocument()
       const first = overview.value.knowledgeBases[0]
       if (first) await selectKnowledgeBase(first.id)
     } catch (cause) {
@@ -147,9 +180,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     error.value = null
     try {
       overview.value = resultValue(await window.desk.workspace.refresh())
-      if (selectedKnowledgeBaseId.value) {
-        await reloadKnowledgeBase()
-      }
+      if (selectedKnowledgeBaseId.value) await reloadKnowledgeBase()
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : String(cause)
     } finally {
@@ -158,113 +189,172 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   async function selectKnowledgeBase(knowledgeBaseId: string): Promise<void> {
-    if (knowledgeBaseId === selectedKnowledgeBaseId.value && knowledgeBase.value) {
-      return
-    }
-    if (dirty.value) await saveCurrentDocument()
+    if (knowledgeBaseId === selectedKnowledgeBaseId.value && knowledgeBase.value) return
     error.value = null
     try {
       const detail = resultValue(await window.desk.knowledgeBases.read(knowledgeBaseId))
       selectedKnowledgeBaseId.value = knowledgeBaseId
-      applyDetail(detail)
-      clearDocument()
+      knowledgeBase.value = detail
+      overview.value = replaceDescriptor(overview.value, detail)
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : String(cause)
     }
+  }
+
+  async function syncToActiveTab(): Promise<void> {
+    const tab = editor.activeTab
+    if (tab?.type !== 'note') return
+    if (selectedKnowledgeBaseId.value !== tab.knowledgeBaseId) {
+      await selectKnowledgeBase(tab.knowledgeBaseId)
+    }
+    await ensureDocument(tab.knowledgeBaseId, tab.noteUuid)
   }
 
   async function reloadKnowledgeBase(): Promise<void> {
     if (!selectedKnowledgeBaseId.value) return
-    const detail = resultValue(await window.desk.knowledgeBases.read(selectedKnowledgeBaseId.value))
-    applyDetail(detail)
+    applyDetail(resultValue(await window.desk.knowledgeBases.read(selectedKnowledgeBaseId.value)))
   }
 
-  async function selectNote(node: Extract<DeskTocNode, { type: 'note' }>): Promise<void> {
-    if (!selectedKnowledgeBaseId.value) return
-    if (document.value?.uuid === node.uuid) return
-    if (dirty.value) await saveCurrentDocument()
+  async function ensureDocument(
+    knowledgeBaseId: string,
+    noteUuid: string
+  ): Promise<DocumentSession> {
+    const key = documentKey(knowledgeBaseId, noteUuid)
+    const existing = documents.value[key]
+    if (existing) return existing
+    const next = resultValue(await window.desk.notes.read(knowledgeBaseId, noteUuid))
+    const session: DocumentSession = {
+      document: next,
+      content: next.content,
+      dirty: false,
+      externalConflict: false,
+      saving: false
+    }
+    setDocumentSession(key, session)
+    return session
+  }
+
+  async function selectNote(
+    node: Extract<DeskTocNode, { type: 'note' }>,
+    split?: SplitPlacement
+  ): Promise<void> {
+    if (!selectedKnowledgeBaseId.value || !selectedKnowledgeBase.value) return
     error.value = null
     try {
-      const next = resultValue(
-        await window.desk.notes.read(selectedKnowledgeBaseId.value, node.uuid)
+      await ensureDocument(selectedKnowledgeBaseId.value, node.uuid)
+      editor.openNote(
+        selectedKnowledgeBase.value,
+        node.uuid,
+        node.title,
+        settings.value?.defaultNoteView ?? 'visual',
+        split
       )
-      document.value = next
-      editorContent.value = next.content
-      dirty.value = false
-      externalConflict.value = false
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : String(cause)
     }
   }
 
-  function updateEditorContent(content: string): void {
-    if (!document.value || document.value.readOnly) return
-    editorContent.value = content
-    dirty.value = content !== document.value.content
-    externalConflict.value = false
-    if (autosaveTimer) clearTimeout(autosaveTimer)
-    if (dirty.value && settings.value?.autosave.enabled) {
-      autosaveTimer = setTimeout(() => {
-        autosaveTimer = null
-        void saveCurrentDocument().catch(() => undefined)
+  function updateDocumentContent(key: string, content: string): void {
+    const session = documents.value[key]
+    if (!session || session.document.readOnly) return
+    const dirty = content !== session.document.content
+    setDocumentSession(key, { ...session, content, dirty, externalConflict: false })
+    const currentTimer = autosaveTimers.get(key)
+    if (currentTimer) clearTimeout(currentTimer)
+    autosaveTimers.delete(key)
+    if (dirty && settings.value?.autosave.enabled) {
+      const timer = setTimeout(() => {
+        autosaveTimers.delete(key)
+        void saveDocument(key).catch(() => undefined)
       }, settings.value.autosave.delayMs)
+      autosaveTimers.set(key, timer)
     }
   }
 
-  async function saveCurrentDocument(): Promise<void> {
-    if (!document.value || !dirty.value || document.value.readOnly || saving.value) {
-      return
-    }
-    saving.value = true
+  function updateEditorContent(content: string): void {
+    if (activeDocumentKey.value) updateDocumentContent(activeDocumentKey.value, content)
+  }
+
+  async function saveDocument(key: string): Promise<void> {
+    const session = documents.value[key]
+    if (!session || !session.dirty || session.document.readOnly || session.saving) return
+    setDocumentSession(key, { ...session, saving: true })
     error.value = null
     try {
       const mutation = resultValue(
         await window.desk.notes.save({
-          knowledgeBaseId: document.value.knowledgeBaseId,
-          noteUuid: document.value.uuid,
-          content: editorContent.value,
-          expectedRevision: document.value.revision
+          knowledgeBaseId: session.document.knowledgeBaseId,
+          noteUuid: session.document.uuid,
+          content: session.content,
+          expectedRevision: session.document.revision
         })
       )
-      document.value = mutation.note
-      editorContent.value = mutation.note.content
-      dirty.value = false
-      externalConflict.value = false
+      setDocumentSession(key, {
+        document: mutation.note,
+        content: mutation.note.content,
+        dirty: false,
+        externalConflict: false,
+        saving: false
+      })
       applyDetail(mutation.knowledgeBase)
       status.value = '已保存'
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause)
-      error.value = message
-      if ((cause as { code?: string }).code === 'REVISION_CONFLICT') {
-        externalConflict.value = true
-      }
+      const current = documents.value[key] ?? session
+      const isConflict = (cause as { code?: string }).code === 'REVISION_CONFLICT'
+      setDocumentSession(key, {
+        ...current,
+        saving: false,
+        externalConflict: current.externalConflict || isConflict
+      })
+      error.value = cause instanceof Error ? cause.message : String(cause)
       throw cause
-    } finally {
-      saving.value = false
     }
   }
 
-  async function reloadCurrentDocument(): Promise<void> {
-    if (!document.value) return
+  async function saveCurrentDocument(): Promise<void> {
+    if (activeDocumentKey.value) await saveDocument(activeDocumentKey.value)
+  }
+
+  async function saveAllDocuments(): Promise<void> {
+    for (const [key, session] of Object.entries(documents.value)) {
+      if (session.dirty) await saveDocument(key)
+    }
+  }
+
+  async function reloadDocument(key: string): Promise<void> {
+    const session = documents.value[key]
+    if (!session) return
     const next = resultValue(
-      await window.desk.notes.read(document.value.knowledgeBaseId, document.value.uuid)
+      await window.desk.notes.read(session.document.knowledgeBaseId, session.document.uuid)
     )
-    document.value = next
-    editorContent.value = next.content
-    dirty.value = false
-    externalConflict.value = false
+    setDocumentSession(key, {
+      document: next,
+      content: next.content,
+      dirty: false,
+      externalConflict: false,
+      saving: false
+    })
+  }
+
+  async function reloadCurrentDocument(): Promise<void> {
+    if (activeDocumentKey.value) await reloadDocument(activeDocumentKey.value)
   }
 
   async function keepEditorAgainstDisk(): Promise<void> {
-    if (!document.value) return
-    const content = editorContent.value
+    const key = activeDocumentKey.value
+    if (!key) return
+    const session = documents.value[key]
+    if (!session) return
     const next = resultValue(
-      await window.desk.notes.read(document.value.knowledgeBaseId, document.value.uuid)
+      await window.desk.notes.read(session.document.knowledgeBaseId, session.document.uuid)
     )
-    document.value = next
-    editorContent.value = content
-    dirty.value = content !== next.content
-    externalConflict.value = false
+    setDocumentSession(key, {
+      document: next,
+      content: session.content,
+      dirty: session.content !== next.content,
+      externalConflict: false,
+      saving: false
+    })
   }
 
   async function createNote(title: string): Promise<void> {
@@ -277,27 +367,44 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       })
     )
     applyDetail(mutation.knowledgeBase)
-    document.value = mutation.note
-    editorContent.value = mutation.note.content
-    dirty.value = false
+    const key = documentKey(mutation.note.knowledgeBaseId, mutation.note.uuid)
+    setDocumentSession(key, {
+      document: mutation.note,
+      content: mutation.note.content,
+      dirty: false,
+      externalConflict: false,
+      saving: false
+    })
+    editor.openNote(
+      mutation.knowledgeBase,
+      mutation.note.uuid,
+      mutation.note.title,
+      settings.value?.defaultNoteView ?? 'visual'
+    )
   }
 
   async function toggleDone(node: Extract<DeskTocNode, { type: 'note' }>): Promise<void> {
     if (!knowledgeBase.value || knowledgeBase.value.health !== 'ready') return
-    const source =
-      document.value?.uuid === node.uuid
-        ? document.value
-        : resultValue(await window.desk.notes.read(knowledgeBase.value.id, node.uuid))
+    const key = documentKey(knowledgeBase.value.id, node.uuid)
+    const loaded = documents.value[key] ?? (await ensureDocument(knowledgeBase.value.id, node.uuid))
+    if (loaded.dirty) await saveDocument(key)
+    const current = documents.value[key] ?? loaded
     const mutation = resultValue(
       await window.desk.notes.updateConfig({
         knowledgeBaseId: knowledgeBase.value.id,
         noteUuid: node.uuid,
-        expectedRevision: source.revision,
+        expectedRevision: current.document.revision,
         updates: { done: !node.completed }
       })
     )
     applyDetail(mutation.knowledgeBase)
-    if (document.value?.uuid === node.uuid) document.value = mutation.note
+    setDocumentSession(key, {
+      document: mutation.note,
+      content: mutation.note.content,
+      dirty: false,
+      externalConflict: false,
+      saving: false
+    })
   }
 
   async function previewDeleteNode(node: DeskTocNode): Promise<DeletePreviewDto> {
@@ -321,9 +428,14 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       })
     )
     applyDetail(detail)
-    if (document.value && preview.notes.some((note) => note.noteUuid === document.value?.uuid)) {
-      clearDocument()
+    for (const note of preview.notes) {
+      editor.closeNote(preview.knowledgeBaseId, note.noteUuid)
+      removeDocumentSession(documentKey(preview.knowledgeBaseId, note.noteUuid))
     }
+  }
+
+  function getDocumentSession(knowledgeBaseId: string, noteUuid: string): DocumentSession | null {
+    return documents.value[documentKey(knowledgeBaseId, noteUuid)] ?? null
   }
 
   return {
@@ -332,6 +444,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     selectedKnowledgeBaseId,
     selectedKnowledgeBase,
     knowledgeBase,
+    documents,
     document,
     editorContent,
     dirty,
@@ -346,14 +459,20 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     chooseWorkspace,
     refreshWorkspace,
     selectKnowledgeBase,
+    syncToActiveTab,
     selectNote,
+    updateDocumentContent,
     updateEditorContent,
+    saveDocument,
     saveCurrentDocument,
+    saveAllDocuments,
     reloadCurrentDocument,
     keepEditorAgainstDisk,
     createNote,
     toggleDone,
     previewDeleteNode,
-    deleteNode
+    deleteNode,
+    ensureDocument,
+    getDocumentSession
   }
 })

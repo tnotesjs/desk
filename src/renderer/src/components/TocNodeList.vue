@@ -13,6 +13,7 @@ defineProps<{
 
 const emit = defineEmits<{
   select: [node: Extract<DeskTocNode, { type: 'note' }>]
+  selectSplit: [node: Extract<DeskTocNode, { type: 'note' }>]
   toggleDone: [node: Extract<DeskTocNode, { type: 'note' }>]
   requestDelete: [node: DeskTocNode]
 }>()
@@ -68,6 +69,16 @@ function toggle(nodeId: string): void {
         </template>
 
         <button
+          v-if="node.type === 'note'"
+          type="button"
+          class="row-action split-action"
+          title="在右侧打开"
+          @click="emit('selectSplit', node)"
+        >
+          ◫
+        </button>
+
+        <button
           type="button"
           class="row-action"
           title="永久删除"
@@ -83,6 +94,7 @@ function toggle(nodeId: string): void {
         :selected-note-uuid="selectedNoteUuid"
         :depth="(depth ?? 0) + 1"
         @select="emit('select', $event)"
+        @select-split="emit('selectSplit', $event)"
         @toggle-done="emit('toggleDone', $event)"
         @request-delete="emit('requestDelete', $event)"
       />
@@ -198,6 +210,11 @@ function toggle(nodeId: string): void {
 
 .toc-row:hover > .row-action {
   display: block;
+}
+
+.split-action:hover {
+  background: var(--selected);
+  color: var(--accent);
 }
 
 .row-action:hover {
