@@ -16,6 +16,7 @@ const tokenStatus = ref<ImageTokenStatus>({ configured: false, encryptionAvailab
 const busy = ref(false)
 const validationMessage = ref('')
 const validationError = ref(false)
+const shortcutsOpen = ref(false)
 
 const tokenHint = computed(() => {
   if (!tokenStatus.value.encryptionAvailable) return '当前系统暂不可用安全加密存储'
@@ -25,6 +26,39 @@ const tokenHint = computed(() => {
 })
 
 const currentKnowledgeBaseName = computed(() => store.selectedKnowledgeBase?.displayName ?? null)
+const primaryKey = computed(() => (store.runtimePlatform === 'darwin' ? '⌘' : 'Ctrl'))
+const altKey = computed(() => (store.runtimePlatform === 'darwin' ? '⌥' : 'Alt'))
+const shortcutGroups = computed(() => [
+  {
+    title: '标签与导航',
+    items: [
+      ['关闭当前标签', `${primaryKey.value} W`],
+      ['关闭已保存笔记', `${primaryKey.value} K  U`],
+      ['全部关闭', `${primaryKey.value} K  W`],
+      ['将预览标签保持打开', `${primaryKey.value} K  Enter`],
+      ['固定 / 解除固定', `${primaryKey.value} K  Shift Enter`],
+      ['下一个 / 上一个标签', 'Ctrl Tab / Ctrl Shift Tab'],
+      ['复制笔记目录路径', `${altKey.value} ${primaryKey.value} C`],
+      ['在系统文件管理器中显示', `${altKey.value} ${primaryKey.value} R`]
+    ]
+  },
+  {
+    title: 'Markdown 编辑',
+    items: [
+      ['保存', `${primaryKey.value} S`],
+      ['撤销 / 重做', `${primaryKey.value} Z / ${primaryKey.value} Shift Z`],
+      ['一级至六级标题', `${altKey.value} ${primaryKey.value} 1…6`],
+      ['正文', `${altKey.value} ${primaryKey.value} 0`],
+      ['粗体 / 斜体', `${primaryKey.value} B / ${primaryKey.value} I`],
+      ['删除线', `${primaryKey.value} Shift X`],
+      ['行内代码', `${primaryKey.value} E`],
+      ['有序 / 无序列表', `${primaryKey.value} Shift 7 / 8`],
+      ['任务列表', `${altKey.value} ${primaryKey.value} T`],
+      ['引用', `${primaryKey.value} Shift U`],
+      ['分割线', `${altKey.value} ${primaryKey.value} S`]
+    ]
+  }
+])
 const autoPushEnabled = computed({
   get: () => {
     const configId = store.selectedKnowledgeBase?.configId
@@ -159,7 +193,8 @@ onMounted(() => {
             <label>
               <span>笔记默认视图</span>
               <select v-model="draft.defaultNoteView">
-                <option value="visual">可视化</option>
+                <option value="visual">可视化编辑</option>
+                <option value="readonly">只读</option>
                 <option value="source">源码</option>
               </select>
             </label>
@@ -183,6 +218,33 @@ onMounted(() => {
               ><input v-model="draft.prettier" type="checkbox" />按 Core 规则格式化</label
             >
           </div>
+        </section>
+
+        <section class="settings-section">
+          <div class="section-heading">
+            <strong>标签与导航</strong>
+            <span>控制标签容量、布局和目录联动</span>
+          </div>
+          <div class="settings-grid thirds">
+            <label>
+              <span>最多打开标签数</span>
+              <input v-model.number="draft.tabs.maxOpenCount" type="number" min="1" max="30" />
+            </label>
+            <label class="setting-card-toggle">
+              <input v-model="draft.tabs.wrap" type="checkbox" />
+              <span><strong>标签自动换行</strong><small>横向空间不足时显示为多行</small></span>
+            </label>
+            <label class="setting-card-toggle">
+              <input v-model="draft.tabs.autoRevealInToc" type="checkbox" />
+              <span><strong>跟随活动标签</strong><small>自动切换知识库并定位目录项</small></span>
+            </label>
+          </div>
+          <button type="button" class="shortcut-entry" @click="shortcutsOpen = true">
+            <span
+              ><strong>快捷键清单</strong><small>查看 Desk 当前支持的标签与编辑快捷键</small></span
+            >
+            <span aria-hidden="true">⌨</span>
+          </button>
         </section>
 
         <section class="settings-section">
@@ -309,6 +371,29 @@ onMounted(() => {
         <button type="button" class="primary" :disabled="busy" @click="save">保存设置</button>
       </footer>
     </section>
+
+    <div v-if="shortcutsOpen" class="shortcut-backdrop" @mousedown.self="shortcutsOpen = false">
+      <section class="shortcut-panel" aria-label="快捷键清单">
+        <header>
+          <div>
+            <span>Desk</span>
+            <strong>快捷键清单</strong>
+          </div>
+          <button type="button" aria-label="关闭快捷键清单" @click="shortcutsOpen = false">
+            ×
+          </button>
+        </header>
+        <div class="shortcut-scroll">
+          <section v-for="group in shortcutGroups" :key="group.title">
+            <h3>{{ group.title }}</h3>
+            <div v-for="item in group.items" :key="item[0]" class="shortcut-row">
+              <span>{{ item[0] }}</span>
+              <kbd>{{ item[1] }}</kbd>
+            </div>
+          </section>
+        </div>
+      </section>
+    </div>
   </div>
 </template>
 
@@ -424,6 +509,57 @@ onMounted(() => {
   gap: 5px;
   color: var(--muted);
   font-size: 9px;
+}
+
+.setting-card-toggle {
+  min-height: 52px;
+  flex-direction: row !important;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--input-bg);
+  padding: 8px 10px;
+}
+
+.setting-card-toggle > span,
+.shortcut-entry > span:first-child {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.setting-card-toggle strong,
+.shortcut-entry strong {
+  color: var(--text);
+  font-size: 10px;
+}
+
+.setting-card-toggle small,
+.shortcut-entry small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.shortcut-entry {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  padding: 9px 11px;
+  text-align: left;
+}
+
+.shortcut-entry:hover {
+  border-color: var(--accent);
+  background: var(--hover);
 }
 
 .settings-panel input:not([type='checkbox']):not([type='radio']),
@@ -574,6 +710,93 @@ onMounted(() => {
   border-color: var(--accent);
   background: var(--accent);
   color: white;
+}
+
+.shortcut-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  background: rgba(3, 6, 12, 0.52);
+}
+
+.shortcut-panel {
+  width: min(620px, calc(100% - 48px));
+  max-height: min(720px, calc(100% - 60px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--raised);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+}
+
+.shortcut-panel > header {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  padding: 13px 16px;
+}
+
+.shortcut-panel > header > div {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.shortcut-panel > header span {
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.shortcut-panel > header strong {
+  font-size: 14px;
+}
+
+.shortcut-panel > header button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 20px;
+}
+
+.shortcut-scroll {
+  overflow: auto;
+  padding: 6px 18px 18px;
+}
+
+.shortcut-scroll section + section {
+  margin-top: 20px;
+}
+
+.shortcut-scroll h3 {
+  margin: 12px 0 6px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.shortcut-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 20px;
+  min-height: 35px;
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+}
+
+.shortcut-row kbd {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--input-bg);
+  color: var(--text);
+  padding: 3px 7px;
+  font: inherit;
 }
 
 @media (max-width: 760px) {

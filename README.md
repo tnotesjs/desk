@@ -2,11 +2,13 @@
 
 TNotes 的本地优先桌面客户端，使用 Electron、Vue 3、TypeScript 和 CodeMirror 6 构建。
 
-## 首版能力
+> Desk 当前处于开发预览阶段，功能和交互仍会持续调整。当前完成度、已知限制和提交约定见[开发进度说明](./docs/development-status.md)。
+
+## 当前开发版本能力
 
 - 选择一个父目录并扫描其直接子目录中的 `TNotes.*` 知识库；配置异常的知识库仍会显示诊断信息
 - 三栏导航：知识库、当前知识库的目录与 Git 变更、可拆分的编辑区域
-- 笔记标签支持可视化编辑和 Markdown 源码编辑；标题、目录和笔记编号规则复用 `@tnotesjs/core`
+- 笔记标签支持可视化编辑、只读和 Markdown 源码三种视图；标题、目录和笔记编号规则复用 `@tnotesjs/core`
 - 支持 GFM、任务列表、表格、代码高亮、KaTeX、Mermaid、思维导图，以及 TNotes 的特殊组件语法
 - 网页标签与笔记标签相互独立，可访问普通网页，也可启动 `pnpm tn:dev` 后打开本地站点
 - 全文搜索使用后台 Worker 和持久化增量索引
@@ -32,7 +34,7 @@ pnpm install
 pnpm dev
 ```
 
-当前开发阶段的 `@tnotesjs/core` 通过 `link:../core` 引用同级目录。Core 发布后会在 Desk 发布前锁定为对应的正式版本。
+Desk 使用已发布的 `@tnotesjs/core@0.6.0`，不依赖同级 Core 源码目录，可以单独克隆、安装和构建。
 
 完整校验：
 
@@ -51,7 +53,7 @@ pnpm build:win
 pnpm build:linux
 ```
 
-GitHub Actions 会在提交和 Pull Request 上执行静态检查、测试与构建；推送 `v*` 标签时会分别构建 macOS、Windows、Linux 安装包并生成 GitHub Release。
+GitHub Actions 会在提交和 Pull Request 上执行静态检查、测试与构建。项目当前不创建版本标签或 GitHub Release；安装包发布、签名和多平台发布验收会在正式开发完成后处理。
 
 ## Repository
 

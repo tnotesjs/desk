@@ -6,16 +6,19 @@ import {
   collapseEmptyGroups,
   createGroup,
   createId,
+  cycleTab,
   findGroup,
   findTab,
   insertTab,
   listGroups,
   removeTab,
   setSplitRatio,
-  splitGroupWithTab
+  splitGroupWithTab,
+  updateGroup
 } from '../editor-groups/layoutModel'
 
 import type {
+  AppSettings,
   EditorLayoutNode,
   EditorTab,
   KnowledgeBaseDescriptor,
@@ -31,20 +34,33 @@ import type { SplitPlacement } from '../editor-groups/layoutModel'
 const DEFAULT_WEB_URL = 'https://github.com/tnotesjs'
 
 function cloneTab(tab: EditorTab): EditorTab {
-  return { ...tab, id: createId(tab.type) }
+  return {
+    ...tab,
+    id: createId(tab.type),
+    openedAt: Date.now(),
+    pinned: false,
+    ...(tab.type === 'note' ? { preview: false } : {})
+  }
 }
 
 function sanitizeLayout(node: EditorLayoutNode, knowledgeBaseIds: Set<string>): EditorLayoutNode {
   if (node.type === 'group') {
-    const tabs = node.tabs.filter((tab) => {
-      if (tab.type === 'note') return knowledgeBaseIds.has(tab.knowledgeBaseId)
-      try {
-        const url = new URL(tab.url)
-        return url.protocol === 'http:' || url.protocol === 'https:'
-      } catch {
-        return false
-      }
-    })
+    const tabs = node.tabs
+      .filter((tab) => {
+        if (tab.type === 'note') return knowledgeBaseIds.has(tab.knowledgeBaseId)
+        try {
+          const url = new URL(tab.url)
+          return url.protocol === 'http:' || url.protocol === 'https:'
+        } catch {
+          return false
+        }
+      })
+      .map((tab, index) => ({
+        ...tab,
+        pinned: Boolean(tab.pinned),
+        openedAt: tab.openedAt ?? Date.now() + index,
+        ...(tab.type === 'note' ? { preview: Boolean(tab.preview), dirty: Boolean(tab.dirty) } : {})
+      }))
     return {
       ...node,
       tabs,
@@ -72,6 +88,8 @@ export const useEditorStore = defineStore('editor', () => {
   const knowledgeSidebarCollapsed = ref(false)
   const navigatorSidebarCollapsed = ref(false)
   const expandedTocNodes = ref<Record<string, string[]>>({})
+  const maxOpenTabCount = ref(10)
+  const wrapTabs = ref(true)
   let unsubscribeWebState: (() => void) | null = null
   let unsubscribeWebOpen: (() => void) | null = null
   let unsubscribePreview: (() => void) | null = null
@@ -84,6 +102,15 @@ export const useEditorStore = defineStore('editor', () => {
     const group = activeGroup.value
     return group?.tabs.find((tab) => tab.id === group.activeTabId) ?? null
   })
+  const tabCount = computed(() =>
+    groups.value.reduce((total, group) => total + group.tabs.length, 0)
+  )
+
+  function configure(settings: AppSettings): void {
+    maxOpenTabCount.value = settings.tabs.maxOpenCount
+    wrapTabs.value = settings.tabs.wrap
+    trimToLimit()
+  }
 
   function initializeWebEvents(): void {
     if (!unsubscribeWebState) {
@@ -147,6 +174,7 @@ export const useEditorStore = defineStore('editor', () => {
     knowledgeSidebarCollapsed.value = session.knowledgeSidebarCollapsed
     navigatorSidebarCollapsed.value = session.navigatorSidebarCollapsed
     expandedTocNodes.value = session.expandedTocNodes
+    trimToLimit()
   }
 
   function reset(): void {
@@ -166,25 +194,101 @@ export const useEditorStore = defineStore('editor', () => {
     layout.value = activateTabInLayout(layout.value, groupId, tabId)
   }
 
+  function cycleActiveTab(direction: 'next' | 'previous'): void {
+    const group = activeGroup.value
+    if (!group) return
+    layout.value = cycleTab(layout.value, group.id, direction)
+  }
+
+  function closableTabs(
+    excludedIds = new Set<string>()
+  ): Array<{ groupId: string; tab: EditorTab }> {
+    return groups.value
+      .flatMap((group) => group.tabs.map((tab) => ({ groupId: group.id, tab })))
+      .filter(
+        ({ tab }) => !tab.pinned && !excludedIds.has(tab.id) && (tab.type === 'web' || !tab.dirty)
+      )
+      .sort((left, right) => (left.tab.openedAt ?? 0) - (right.tab.openedAt ?? 0))
+  }
+
+  function ensureRoomForTab(excludedIds = new Set<string>()): void {
+    while (tabCount.value >= maxOpenTabCount.value) {
+      const oldest = closableTabs(excludedIds)[0]
+      if (!oldest) {
+        throw new Error(
+          `标签数量已达到上限 ${maxOpenTabCount.value}，请先解除固定或保存并关闭一个标签。`
+        )
+      }
+      close(oldest.groupId, oldest.tab.id)
+    }
+  }
+
+  function trimToLimit(): void {
+    while (tabCount.value > maxOpenTabCount.value) {
+      const oldest = closableTabs()[0]
+      if (!oldest) return
+      close(oldest.groupId, oldest.tab.id)
+    }
+  }
+
+  function keepOpen(tabId: string): void {
+    const located = findTab(layout.value, tabId)
+    if (located?.tab.type !== 'note' || !located.tab.preview) return
+    located.tab.preview = false
+    layout.value = { ...layout.value }
+  }
+
+  function setPinned(tabId: string, pinned: boolean): void {
+    const located = findTab(layout.value, tabId)
+    if (!located) return
+    located.tab.pinned = pinned
+    if (located.tab.type === 'note' && pinned) located.tab.preview = false
+    layout.value = { ...layout.value }
+  }
+
+  function togglePinned(tabId: string): void {
+    const located = findTab(layout.value, tabId)
+    if (located) setPinned(tabId, !located.tab.pinned)
+  }
+
+  function setNoteDirty(knowledgeBaseId: string, noteUuid: string, dirty: boolean): void {
+    let changed = false
+    for (const group of groups.value) {
+      for (const tab of group.tabs) {
+        if (
+          tab.type === 'note' &&
+          tab.knowledgeBaseId === knowledgeBaseId &&
+          tab.noteUuid === noteUuid
+        ) {
+          tab.dirty = dirty
+          if (dirty) tab.preview = false
+          changed = true
+        }
+      }
+    }
+    if (changed) layout.value = { ...layout.value }
+  }
+
   function openNote(
     knowledgeBase: KnowledgeBaseDescriptor,
     noteUuid: string,
     title: string,
     viewMode: NoteViewMode,
-    split?: SplitPlacement
+    split?: SplitPlacement,
+    openBehavior: 'preview' | 'permanent' = 'preview'
   ): string {
-    if (!split) {
-      for (const group of groups.value) {
-        const existing = group.tabs.find(
-          (tab) =>
-            tab.type === 'note' &&
-            tab.knowledgeBaseId === knowledgeBase.id &&
-            tab.noteUuid === noteUuid
-        )
-        if (existing) {
-          activate(group.id, existing.id)
-          return existing.id
-        }
+    const targetGroup = activeGroup.value
+    if (!split && targetGroup) {
+      const existing = targetGroup.tabs.find(
+        (tab) =>
+          tab.type === 'note' &&
+          tab.knowledgeBaseId === knowledgeBase.id &&
+          tab.noteUuid === noteUuid
+      )
+      if (existing) {
+        activate(targetGroup.id, existing.id)
+        if (openBehavior === 'permanent') keepOpen(existing.id)
+        return existing.id
       }
     }
 
@@ -196,24 +300,50 @@ export const useEditorStore = defineStore('editor', () => {
       noteUuid,
       title,
       icon: knowledgeBase.icon,
-      viewMode
+      viewMode,
+      preview: openBehavior === 'preview',
+      pinned: false,
+      openedAt: Date.now(),
+      dirty: false
     }
     if (split) {
-      const result = splitGroupWithTab(layout.value, activeGroupId.value, split, tab)
+      const currentGroupId = activeGroupId.value
+      const excluded = new Set(activeTab.value ? [activeTab.value.id] : [])
+      ensureRoomForTab(excluded)
+      const targetGroupId = findGroup(layout.value, currentGroupId)
+        ? currentGroupId
+        : activeGroupId.value
+      const result = splitGroupWithTab(layout.value, targetGroupId, split, tab)
       layout.value = result.layout
       activeGroupId.value = result.groupId
     } else {
-      layout.value = insertTab(layout.value, activeGroupId.value, tab)
+      const previewTab = activeGroup.value?.tabs.find(
+        (candidate) => candidate.type === 'note' && candidate.preview && !candidate.pinned
+      )
+      if (openBehavior === 'preview' && previewTab && activeGroup.value) {
+        const groupId = activeGroup.value.id
+        layout.value = updateGroup(layout.value, groupId, (group) => ({
+          ...group,
+          tabs: group.tabs.map((candidate) => (candidate.id === previewTab.id ? tab : candidate)),
+          activeTabId: tab.id
+        }))
+      } else {
+        ensureRoomForTab()
+        layout.value = insertTab(layout.value, activeGroupId.value, tab)
+      }
     }
     return tab.id
   }
 
   function openWeb(url = DEFAULT_WEB_URL, targetGroupId?: string): string {
+    ensureRoomForTab()
     const tab: WebEditorTab = {
       id: createId('web'),
       type: 'web',
       url,
-      title: url
+      title: url,
+      pinned: false,
+      openedAt: Date.now()
     }
     const groupId = targetGroupId ?? activeGroupId.value
     layout.value = insertTab(layout.value, groupId, tab)
@@ -240,8 +370,9 @@ export const useEditorStore = defineStore('editor', () => {
     }
   }
 
-  function close(groupId: string, tabId: string): void {
+  function close(groupId: string, tabId: string): boolean {
     const located = findTab(layout.value, tabId)
+    if (!located || located.tab.pinned) return false
     if (located?.tab.type === 'web') {
       void window.desk.web.close(tabId)
       const nextStates = { ...webStates.value }
@@ -253,6 +384,32 @@ export const useEditorStore = defineStore('editor', () => {
     if (!remainingGroups.some((group) => group.id === activeGroupId.value)) {
       activeGroupId.value = remainingGroups[0].id
     }
+    return true
+  }
+
+  function closeSavedNotes(): void {
+    const targets = groups.value.flatMap((group) =>
+      group.tabs
+        .filter((tab) => tab.type === 'note' && !tab.dirty && !tab.pinned)
+        .map((tab) => ({ groupId: group.id, tabId: tab.id }))
+    )
+    for (const target of targets) close(target.groupId, target.tabId)
+  }
+
+  function closeAllTabs(): void {
+    const targets = groups.value.flatMap((group) =>
+      group.tabs.filter((tab) => !tab.pinned).map((tab) => ({ groupId: group.id, tabId: tab.id }))
+    )
+    for (const target of targets) close(target.groupId, target.tabId)
+  }
+
+  function closeAllWebTabs(): void {
+    const targets = groups.value.flatMap((group) =>
+      group.tabs
+        .filter((tab) => tab.type === 'web' && !tab.pinned)
+        .map((tab) => ({ groupId: group.id, tabId: tab.id }))
+    )
+    for (const target of targets) close(target.groupId, target.tabId)
   }
 
   function closeNote(knowledgeBaseId: string, noteUuid: string): void {
@@ -305,10 +462,15 @@ export const useEditorStore = defineStore('editor', () => {
   function splitTab(tabId: string, targetGroupId: string, placement: SplitPlacement): void {
     const located = findTab(layout.value, tabId)
     if (!located) return
-    const tab = located.group.id === targetGroupId ? cloneTab(located.tab) : located.tab
+    const duplicate = located.group.id === targetGroupId
+    if (duplicate) ensureRoomForTab(new Set([tabId]))
+    const resolvedTargetGroupId = findGroup(layout.value, targetGroupId)
+      ? targetGroupId
+      : activeGroupId.value
+    const tab = duplicate ? cloneTab(located.tab) : located.tab
     let next = layout.value
-    if (located.group.id !== targetGroupId) next = removeTab(next, located.group.id, tabId)
-    const result = splitGroupWithTab(next, targetGroupId, placement, tab)
+    if (!duplicate) next = removeTab(next, located.group.id, tabId)
+    const result = splitGroupWithTab(next, resolvedTargetGroupId, placement, tab)
     layout.value = collapseEmptyGroups(result.layout)
     activeGroupId.value = result.groupId
   }
@@ -346,6 +508,7 @@ export const useEditorStore = defineStore('editor', () => {
     activeGroupId,
     activeGroup,
     activeTab,
+    tabCount,
     groups,
     webStates,
     previewStates,
@@ -354,19 +517,30 @@ export const useEditorStore = defineStore('editor', () => {
     knowledgeSidebarCollapsed,
     navigatorSidebarCollapsed,
     expandedTocNodes,
+    maxOpenTabCount,
+    wrapTabs,
+    configure,
     initializeWebEvents,
     dispose,
     restore,
     reset,
     activate,
+    cycleActiveTab,
     openNote,
     openWeb,
     startPreview,
     stopPreview,
     close,
+    closeSavedNotes,
+    closeAllTabs,
+    closeAllWebTabs,
     closeNote,
     renameNote,
     setNoteViewMode,
+    setNoteDirty,
+    keepOpen,
+    setPinned,
+    togglePinned,
     moveTab,
     splitTab,
     splitActive,

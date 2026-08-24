@@ -14,6 +14,7 @@ import type {
   GitRepositoryStateDto,
   NoteCreateRequest,
   NoteDocumentDto,
+  NoteEditorTab,
   RecoveryRecord,
   SearchResultDto,
   TocEntryRefDto,
@@ -94,6 +95,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const editor = useEditorStore()
   const overview = ref<WorkspaceOverview>({ path: null, knowledgeBases: [], allKnowledgeBases: [] })
   const settings = ref<AppSettings | null>(null)
+  const runtimePlatform = ref<'darwin' | 'win32' | 'linux'>('darwin')
   const selectedKnowledgeBaseId = ref<string | null>(null)
   const knowledgeBase = ref<KnowledgeBaseDetail | null>(null)
   const documents = ref<Record<string, DocumentSession>>({})
@@ -106,12 +108,18 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const loading = ref(false)
   const error = ref<string | null>(null)
   const status = ref<string | null>(null)
+  const tocFocusRequest = ref<{
+    knowledgeBaseId: string
+    noteUuid: string
+    sequence: number
+  } | null>(null)
   const autosaveTimers = new Map<string, ReturnType<typeof setTimeout>>()
   const recoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
   let unsubscribeWorkspace: (() => void) | null = null
   let unsubscribeExternal: (() => void) | null = null
   let unsubscribeGit: (() => void) | null = null
   let searchSequence = 0
+  let tocFocusSequence = 0
 
   const activeDocumentKey = computed(() => {
     const tab = editor.activeTab
@@ -198,6 +206,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       const payload = resultValue(await window.desk.bootstrap())
       overview.value = payload.workspace
       settings.value = payload.settings
+      runtimePlatform.value = payload.platform
+      editor.configure(payload.settings)
       const initialGitStates = resultValue(await window.desk.git.list())
       gitStates.value = Object.fromEntries(
         initialGitStates.map((state) => [state.knowledgeBaseId, state])
@@ -412,13 +422,33 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     }
   }
 
-  async function syncToActiveTab(): Promise<void> {
+  async function syncToActiveTab(forceReveal = false): Promise<void> {
     const tab = editor.activeTab
     if (tab?.type !== 'note') return
-    if (selectedKnowledgeBaseId.value !== tab.knowledgeBaseId) {
-      await selectKnowledgeBase(tab.knowledgeBaseId)
-    }
     await ensureDocument(tab.knowledgeBaseId, tab.noteUuid)
+    if (forceReveal || settings.value?.tabs.autoRevealInToc) {
+      if (selectedKnowledgeBaseId.value !== tab.knowledgeBaseId) {
+        await selectKnowledgeBase(tab.knowledgeBaseId)
+      }
+      tocFocusSequence += 1
+      tocFocusRequest.value = {
+        knowledgeBaseId: tab.knowledgeBaseId,
+        noteUuid: tab.noteUuid,
+        sequence: tocFocusSequence
+      }
+    }
+  }
+
+  async function revealTabInToc(tab: NoteEditorTab): Promise<void> {
+    const located = editor.groups
+      .flatMap((group) => group.tabs)
+      .find((candidate) => candidate.id === tab.id)
+    if (!located || located.type !== 'note') return
+    const group = editor.groups.find((candidate) =>
+      candidate.tabs.some((item) => item.id === tab.id)
+    )
+    if (group) editor.activate(group.id, tab.id)
+    await syncToActiveTab(true)
   }
 
   async function reloadKnowledgeBase(): Promise<void> {
@@ -447,7 +477,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
   async function selectNote(
     node: Extract<DeskTocNode, { type: 'note' }>,
-    split?: SplitPlacement
+    split?: SplitPlacement,
+    permanent = false
   ): Promise<void> {
     if (!selectedKnowledgeBaseId.value || !selectedKnowledgeBase.value) return
     error.value = null
@@ -458,7 +489,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         node.uuid,
         node.title,
         settings.value?.defaultNoteView ?? 'visual',
-        split
+        split,
+        permanent ? 'permanent' : 'preview'
       )
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : String(cause)
@@ -480,7 +512,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     if (!target) throw new Error(`关联笔记不存在：${noteUuid}`)
     await ensureDocument(knowledgeBaseId, noteUuid)
     editor.openNote(detail, noteUuid, target.title, settings.value?.defaultNoteView ?? 'visual')
-    await selectKnowledgeBase(knowledgeBaseId)
+    await syncToActiveTab()
   }
 
   function updateDocumentContent(key: string, content: string): void {
@@ -488,6 +520,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     if (!session || session.document.readOnly) return
     const dirty = content !== session.document.content
     setDocumentSession(key, { ...session, content, dirty, externalConflict: false })
+    editor.setNoteDirty(session.document.knowledgeBaseId, session.document.uuid, dirty)
     const currentTimer = autosaveTimers.get(key)
     if (currentTimer) clearTimeout(currentTimer)
     autosaveTimers.delete(key)
@@ -542,6 +575,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         externalConflict: false,
         saving: false
       })
+      editor.setNoteDirty(mutation.note.knowledgeBaseId, mutation.note.uuid, false)
       applyDetail(mutation.knowledgeBase)
       deleteRecovery(mutation.note.knowledgeBaseId, mutation.note.uuid)
       status.value = '已保存'
@@ -597,7 +631,22 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   async function updateSettings(next: Partial<AppSettings>): Promise<AppSettings> {
     const updated = resultValue(await window.desk.settings.update(next))
     settings.value = updated
+    editor.configure(updated)
     return updated
+  }
+
+  async function copyNoteDirectoryPath(tab: NoteEditorTab): Promise<void> {
+    const result = await window.desk.notes.copyDirectoryPath(tab.knowledgeBaseId, tab.noteUuid)
+    if (!result.ok) {
+      error.value = result.error.message
+      return
+    }
+    status.value = `已复制路径：${result.value}`
+  }
+
+  async function revealNoteInFileManager(tab: NoteEditorTab): Promise<void> {
+    const result = await window.desk.notes.revealInFileManager(tab.knowledgeBaseId, tab.noteUuid)
+    if (!result.ok) error.value = result.error.message
   }
 
   async function saveCurrentDocument(): Promise<void> {
@@ -623,6 +672,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       externalConflict: false,
       saving: false
     })
+    editor.setNoteDirty(next.knowledgeBaseId, next.uuid, false)
     deleteRecovery(next.knowledgeBaseId, next.uuid)
   }
 
@@ -635,6 +685,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       dirty: record.content !== loaded.document.content,
       externalConflict: false
     })
+    editor.setNoteDirty(
+      record.knowledgeBaseId,
+      record.noteUuid,
+      record.content !== loaded.document.content
+    )
     const descriptor = overview.value.allKnowledgeBases.find(
       (item) => item.id === record.knowledgeBaseId
     )
@@ -643,7 +698,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         descriptor,
         record.noteUuid,
         record.title,
-        settings.value?.defaultNoteView ?? 'visual'
+        settings.value?.defaultNoteView ?? 'visual',
+        undefined,
+        'permanent'
       )
       await selectKnowledgeBase(record.knowledgeBaseId)
     }
@@ -713,7 +770,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       mutation.knowledgeBase,
       mutation.note.uuid,
       mutation.note.title,
-      settings.value?.defaultNoteView ?? 'visual'
+      settings.value?.defaultNoteView ?? 'visual',
+      undefined,
+      'permanent'
     )
   }
 
@@ -875,6 +934,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   return {
     overview,
     settings,
+    runtimePlatform,
     selectedKnowledgeBaseId,
     selectedKnowledgeBase,
     knowledgeBase,
@@ -893,6 +953,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     saving,
     error,
     status,
+    tocFocusRequest,
     hasWorkspace,
     initialize,
     dispose,
@@ -907,6 +968,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     publishGit,
     openKnowledgeBaseInIde,
     syncToActiveTab,
+    revealTabInToc,
     selectNote,
     openNoteByUuid,
     updateDocumentContent,
@@ -917,6 +979,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     writeLocalAttachment,
     uploadImage,
     updateSettings,
+    copyNoteDirectoryPath,
+    revealNoteInFileManager,
     reloadCurrentDocument,
     keepEditorAgainstDisk,
     acceptRecovery,

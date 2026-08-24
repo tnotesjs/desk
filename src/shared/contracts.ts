@@ -1,5 +1,7 @@
 export const IPC_CHANNELS = {
   bootstrap: 'desk:bootstrap',
+  windowClose: 'window:close',
+  tabShortcut: 'tab:shortcut',
   workspaceChoose: 'workspace:choose',
   workspaceSet: 'workspace:set',
   workspaceRefresh: 'workspace:refresh',
@@ -11,6 +13,8 @@ export const IPC_CHANNELS = {
   noteCreate: 'note:create',
   noteRename: 'note:rename',
   noteUpdateConfig: 'note:update-config',
+  noteCopyDirectoryPath: 'note:copy-directory-path',
+  noteRevealInFileManager: 'note:reveal-in-file-manager',
   attachmentWriteLocal: 'attachment:write-local',
   attachmentUploadImage: 'attachment:upload-image',
   attachmentReadText: 'attachment:read-text',
@@ -124,7 +128,17 @@ export interface WorkspaceOverview {
   allKnowledgeBases: KnowledgeBaseDescriptor[]
 }
 
-export type NoteViewMode = 'visual' | 'source'
+export type NoteViewMode = 'visual' | 'readonly' | 'source'
+export type TabShortcutCommand =
+  | 'close-active-tab-or-window'
+  | 'close-saved-note-tabs'
+  | 'close-all-tabs'
+  | 'keep-active-tab-open'
+  | 'toggle-pin-active-tab'
+  | 'copy-active-note-path'
+  | 'reveal-active-note-in-file-manager'
+  | 'next-tab'
+  | 'previous-tab'
 export type ThemeMode = 'system' | 'light' | 'dark'
 export type InterfaceDensity = 'compact' | 'comfortable'
 export type IdeKind = 'vscode' | 'cursor'
@@ -166,6 +180,11 @@ export interface AppSettings {
   gitPath: string | null
   nodePath: string | null
   confirmBeforeCommit: boolean
+  tabs: {
+    maxOpenCount: number
+    wrap: boolean
+    autoRevealInToc: boolean
+  }
   imageUpload: ImageUploadSettings
   hiddenKnowledgeBases: string[]
   knowledgeBases: Record<string, KnowledgeBaseSettings>
@@ -174,6 +193,7 @@ export interface AppSettings {
 export interface BootstrapPayload {
   workspace: WorkspaceOverview
   settings: AppSettings
+  platform: 'darwin' | 'win32' | 'linux'
   session: WorkspaceSession | null
   recoveries: RecoveryRecord[]
 }
@@ -210,6 +230,10 @@ export interface NoteEditorTab {
   title: string
   icon: KnowledgeBaseIconDto | null
   viewMode: NoteViewMode
+  preview?: boolean
+  pinned?: boolean
+  openedAt?: number
+  dirty?: boolean
 }
 
 export interface WebEditorTab {
@@ -217,6 +241,8 @@ export interface WebEditorTab {
   type: 'web'
   url: string
   title: string
+  pinned?: boolean
+  openedAt?: number
 }
 
 export type EditorTab = NoteEditorTab | WebEditorTab
@@ -534,6 +560,10 @@ export interface ExternalNoteChangeEvent {
 
 export interface DeskApi {
   bootstrap(): Promise<DeskResult<BootstrapPayload>>
+  app: {
+    closeWindow(): Promise<DeskResult<void>>
+    onTabShortcut(callback: (command: TabShortcutCommand) => void): () => void
+  }
   workspace: {
     choose(): Promise<DeskResult<WorkspaceOverview>>
     set(path: string | null): Promise<DeskResult<WorkspaceOverview>>
@@ -558,6 +588,8 @@ export interface DeskApi {
     create(request: NoteCreateRequest): Promise<DeskResult<NoteMutationDto>>
     rename(request: NoteRenameRequest): Promise<DeskResult<NoteMutationDto>>
     updateConfig(request: NoteUpdateConfigRequest): Promise<DeskResult<NoteMutationDto>>
+    copyDirectoryPath(knowledgeBaseId: string, noteUuid: string): Promise<DeskResult<string>>
+    revealInFileManager(knowledgeBaseId: string, noteUuid: string): Promise<DeskResult<void>>
     onExternalChanged(callback: (event: ExternalNoteChangeEvent) => void): () => void
   }
   attachments: {

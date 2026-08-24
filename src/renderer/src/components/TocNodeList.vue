@@ -1,18 +1,21 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { inject, nextTick, provide, ref, watch } from 'vue'
 
 import type { DeskTocNode } from '../../../shared/contracts'
+import type { InjectionKey, Ref } from 'vue'
 
 defineOptions({ name: 'TocNodeList' })
 
-defineProps<{
+const props = defineProps<{
   nodes: DeskTocNode[]
   selectedNoteUuid: string | null
   depth?: number
+  focusRequestId?: number
 }>()
 
 const emit = defineEmits<{
   select: [node: Extract<DeskTocNode, { type: 'note' }>]
+  selectPermanent: [node: Extract<DeskTocNode, { type: 'note' }>]
   selectSplit: [node: Extract<DeskTocNode, { type: 'note' }>]
   toggleDone: [node: Extract<DeskTocNode, { type: 'note' }>]
   requestCreate: [node: DeskTocNode, placement: 'before' | 'after' | 'inside']
@@ -22,8 +25,51 @@ const emit = defineEmits<{
   openIde: [node: Extract<DeskTocNode, { type: 'note' }>]
 }>()
 
-const collapsed = ref(new Set<string>())
+const collapsedKey: InjectionKey<Ref<Set<string>>> = Symbol.for('tnotes-desk-toc-collapsed')
+const inheritedCollapsed = inject(collapsedKey, null)
+const collapsed = inheritedCollapsed ?? ref(new Set<string>())
+if (!inheritedCollapsed) provide(collapsedKey, collapsed)
+const listHost = ref<HTMLElement | null>(null)
+const focusedNoteUuid = ref<string | null>(null)
 const dropTarget = ref<{ nodeId: string; placement: 'before' | 'after' | 'inside' } | null>(null)
+const draggingNodeId = ref<string | null>(null)
+let expandTimer: ReturnType<typeof setTimeout> | null = null
+
+function parentPathToNote(
+  nodes: DeskTocNode[],
+  noteUuid: string,
+  parents: string[] = []
+): string[] | null {
+  for (const node of nodes) {
+    if (node.type === 'note' && node.uuid === noteUuid) return parents
+    const match = parentPathToNote(node.children, noteUuid, [...parents, node.nodeId])
+    if (match) return match
+  }
+  return null
+}
+
+watch(
+  () => props.focusRequestId,
+  async (requestId) => {
+    if (inheritedCollapsed || !requestId || !props.selectedNoteUuid) return
+    const parents = parentPathToNote(props.nodes, props.selectedNoteUuid)
+    if (!parents) return
+    const next = new Set(collapsed.value)
+    for (const nodeId of parents) next.delete(nodeId)
+    collapsed.value = next
+    focusedNoteUuid.value = props.selectedNoteUuid
+    await nextTick()
+    requestAnimationFrame(() => {
+      const row = [...(listHost.value?.querySelectorAll<HTMLElement>('.toc-row') ?? [])].find(
+        (candidate) => candidate.dataset.noteUuid === props.selectedNoteUuid
+      )
+      row?.scrollIntoView?.({ block: 'nearest' })
+      window.setTimeout(() => {
+        if (focusedNoteUuid.value === props.selectedNoteUuid) focusedNoteUuid.value = null
+      }, 900)
+    })
+  }
+)
 
 function toggle(nodeId: string): void {
   const next = new Set(collapsed.value)
@@ -34,8 +80,21 @@ function toggle(nodeId: string): void {
 
 function dragStart(event: DragEvent, node: DeskTocNode): void {
   if (!event.dataTransfer) return
+  const target = event.target as HTMLElement
+  if (target.closest('.row-menu, .row-action')) {
+    event.preventDefault()
+    return
+  }
+  draggingNodeId.value = node.nodeId
   event.dataTransfer.effectAllowed = 'move'
   event.dataTransfer.setData('application/x-tnotes-toc', JSON.stringify(node))
+  event.dataTransfer.setData('text/plain', node.title)
+  const ghost = document.createElement('div')
+  ghost.className = 'toc-drag-ghost'
+  ghost.textContent = node.type === 'note' ? `${node.noteIndex}  ${node.title}` : node.title
+  document.body.append(ghost)
+  event.dataTransfer.setDragImage(ghost, 18, 16)
+  requestAnimationFrame(() => ghost.remove())
 }
 
 function dragPlacement(event: DragEvent): 'before' | 'after' | 'inside' {
@@ -50,7 +109,38 @@ function dragOver(event: DragEvent, node: DeskTocNode): void {
   if (!event.dataTransfer?.types.includes('application/x-tnotes-toc')) return
   event.preventDefault()
   event.dataTransfer.dropEffect = 'move'
-  dropTarget.value = { nodeId: node.nodeId, placement: dragPlacement(event) }
+  const placement = dragPlacement(event)
+  dropTarget.value = { nodeId: node.nodeId, placement }
+  if (expandTimer) clearTimeout(expandTimer)
+  expandTimer = null
+  if (placement === 'inside' && node.children.length && collapsed.value.has(node.nodeId)) {
+    expandTimer = setTimeout(() => toggle(node.nodeId), 520)
+  }
+  const scroller = (event.currentTarget as HTMLElement).closest<HTMLElement>('.navigator-body')
+  if (scroller) {
+    const bounds = scroller.getBoundingClientRect()
+    if (event.clientY < bounds.top + 44) scroller.scrollTop -= 12
+    else if (event.clientY > bounds.bottom - 44) scroller.scrollTop += 12
+  }
+}
+
+function dragLeave(event: DragEvent, node: DeskTocNode): void {
+  const row = event.currentTarget as HTMLElement
+  if (event.relatedTarget instanceof Node && row.contains(event.relatedTarget)) return
+  if (dropTarget.value?.nodeId === node.nodeId) dropTarget.value = null
+  if (expandTimer) clearTimeout(expandTimer)
+  expandTimer = null
+}
+
+function containsNode(node: DeskTocNode, nodeId: string): boolean {
+  return node.children.some((child) => child.nodeId === nodeId || containsNode(child, nodeId))
+}
+
+function dragEnd(): void {
+  draggingNodeId.value = null
+  dropTarget.value = null
+  if (expandTimer) clearTimeout(expandTimer)
+  expandTimer = null
 }
 
 function drop(event: DragEvent, target: DeskTocNode): void {
@@ -61,27 +151,40 @@ function drop(event: DragEvent, target: DeskTocNode): void {
   if (!raw) return
   try {
     const source = JSON.parse(raw) as DeskTocNode
-    if (source.nodeId !== target.nodeId) emit('move', source, target, placement)
+    if (source.nodeId !== target.nodeId && !containsNode(source, target.nodeId)) {
+      emit('move', source, target, placement)
+    }
   } catch {
     // Ignore drags originating outside the TNotes tree.
+  } finally {
+    dragEnd()
   }
+}
+
+function runMenuAction(event: MouseEvent, action: () => void): void {
+  action()
+  ;(event.currentTarget as HTMLElement).closest('details')?.removeAttribute('open')
 }
 </script>
 
 <template>
-  <ul class="toc-nodes">
+  <ul ref="listHost" class="toc-nodes">
     <li v-for="node in nodes" :key="node.nodeId">
       <div
         class="toc-row"
         :class="{
           active: node.type === 'note' && node.uuid === selectedNoteUuid,
+          focused: node.type === 'note' && node.uuid === focusedNoteUuid,
+          dragging: draggingNodeId === node.nodeId,
           [`drop-${dropTarget?.placement}`]: dropTarget?.nodeId === node.nodeId
         }"
+        :data-note-uuid="node.type === 'note' ? node.uuid : undefined"
         :style="{ '--depth': depth ?? 0 }"
         draggable="true"
         @dragstart.stop="dragStart($event, node)"
+        @dragend.stop="dragEnd"
         @dragover.stop="dragOver($event, node)"
-        @dragleave.self="dropTarget = null"
+        @dragleave="dragLeave($event, node)"
         @drop.stop="drop($event, node)"
         @contextmenu.prevent="node.type === 'note' && emit('openIde', node)"
       >
@@ -89,10 +192,13 @@ function drop(event: DragEvent, target: DeskTocNode): void {
           v-if="node.children.length"
           type="button"
           class="disclosure"
-          :title="collapsed.has(node.nodeId) ? '展开' : '折叠'"
+          :aria-label="collapsed.has(node.nodeId) ? '展开' : '折叠'"
+          :data-tooltip="collapsed.has(node.nodeId) ? '展开' : '折叠'"
           @click="toggle(node.nodeId)"
         >
-          {{ collapsed.has(node.nodeId) ? '›' : '⌄' }}
+          <svg viewBox="0 0 12 12" aria-hidden="true">
+            <path :d="collapsed.has(node.nodeId) ? 'M4 2.5 7.5 6 4 9.5' : 'M2.5 4 6 7.5 9.5 4'" />
+          </svg>
         </button>
         <span v-else class="disclosure spacer" />
 
@@ -111,7 +217,8 @@ function drop(event: DragEvent, target: DeskTocNode): void {
             type="button"
             class="done-toggle"
             :class="{ done: node.completed }"
-            :title="node.completed ? '标记为未完成' : '标记为完成'"
+            :aria-label="node.completed ? '标记为未完成' : '标记为完成'"
+            :data-tooltip="node.completed ? '标记为未完成' : '标记为完成'"
             @click="emit('toggleDone', node)"
           >
             {{ node.completed ? '✓' : '' }}
@@ -120,48 +227,74 @@ function drop(event: DragEvent, target: DeskTocNode): void {
             type="button"
             class="node-label"
             @click="emit('select', node)"
-            @dblclick.stop="emit('requestRename', node)"
+            @dblclick.stop="emit('selectPermanent', node)"
           >
             <span class="note-index">{{ node.noteIndex }}</span>
             <span>{{ node.title }}</span>
           </button>
         </template>
 
-        <details class="create-menu" @click.stop>
-          <summary class="row-action" title="在此处新建笔记">+</summary>
-          <div>
-            <button type="button" @click="emit('requestCreate', node, 'before')">上方</button>
-            <button type="button" @click="emit('requestCreate', node, 'after')">下方</button>
-            <button type="button" @click="emit('requestCreate', node, 'inside')">子笔记</button>
+        <details class="row-menu" @click.stop>
+          <summary class="row-action menu-trigger" aria-label="更多操作" data-tooltip="更多操作">
+            ⋮
+          </summary>
+          <div class="row-menu-popover">
+            <button
+              v-if="node.type === 'note'"
+              type="button"
+              @click="runMenuAction($event, () => emit('selectSplit', node))"
+            >
+              <span>◫</span>在右侧打开
+            </button>
+            <button type="button" @click="runMenuAction($event, () => emit('requestRename', node))">
+              <span>✎</span>重命名
+            </button>
+            <button
+              v-if="node.type === 'note'"
+              type="button"
+              @click="runMenuAction($event, () => emit('toggleDone', node))"
+            >
+              <span>✓</span>{{ node.completed ? '标记为未完成' : '标记为完成' }}
+            </button>
+            <button
+              v-if="node.type === 'note'"
+              type="button"
+              @click="runMenuAction($event, () => emit('openIde', node))"
+            >
+              <span>⌘</span>使用 IDE 打开
+            </button>
+            <hr />
+            <button
+              type="button"
+              @click="runMenuAction($event, () => emit('requestCreate', node, 'before'))"
+            >
+              <span>↑</span>在上方添加
+            </button>
+            <button
+              type="button"
+              @click="runMenuAction($event, () => emit('requestCreate', node, 'after'))"
+            >
+              <span>↓</span>在下方添加
+            </button>
+            <hr />
+            <button
+              type="button"
+              class="danger"
+              @click="runMenuAction($event, () => emit('requestDelete', node))"
+            >
+              <span>×</span>永久删除
+            </button>
           </div>
         </details>
 
         <button
           type="button"
-          class="row-action rename-action"
-          title="重命名"
-          @click="emit('requestRename', node)"
+          class="row-action add-note-action"
+          aria-label="添加子笔记"
+          data-tooltip="添加子笔记"
+          @click="emit('requestCreate', node, 'inside')"
         >
-          ✎
-        </button>
-
-        <button
-          v-if="node.type === 'note'"
-          type="button"
-          class="row-action split-action"
-          title="在右侧打开"
-          @click="emit('selectSplit', node)"
-        >
-          ◫
-        </button>
-
-        <button
-          type="button"
-          class="row-action"
-          title="永久删除"
-          @click="emit('requestDelete', node)"
-        >
-          ×
+          +
         </button>
       </div>
 
@@ -169,8 +302,10 @@ function drop(event: DragEvent, target: DeskTocNode): void {
         v-if="node.children.length && !collapsed.has(node.nodeId)"
         :nodes="node.children"
         :selected-note-uuid="selectedNoteUuid"
+        :focus-request-id="focusRequestId"
         :depth="(depth ?? 0) + 1"
         @select="emit('select', $event)"
+        @select-permanent="emit('selectPermanent', $event)"
         @select-split="emit('selectSplit', $event)"
         @toggle-done="emit('toggleDone', $event)"
         @request-create="(child, placement) => emit('requestCreate', child, placement)"
@@ -191,6 +326,7 @@ function drop(event: DragEvent, target: DeskTocNode): void {
 }
 
 .toc-row {
+  position: relative;
   min-height: 28px;
   display: flex;
   align-items: center;
@@ -209,17 +345,57 @@ function drop(event: DragEvent, target: DeskTocNode): void {
   color: var(--accent-strong);
 }
 
+.toc-row.focused {
+  animation: toc-focus-pulse 0.9s ease-out;
+}
+
+@keyframes toc-focus-pulse {
+  0%,
+  45% {
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 80%, transparent);
+  }
+  100% {
+    box-shadow: inset 0 0 0 1px transparent;
+  }
+}
+
+.toc-row.dragging {
+  opacity: 0.38;
+}
+
 .toc-row.drop-before {
-  box-shadow: inset 0 2px 0 var(--accent);
+  box-shadow: none;
 }
 
 .toc-row.drop-after {
-  box-shadow: inset 0 -2px 0 var(--accent);
+  box-shadow: none;
+}
+
+.toc-row.drop-before::before,
+.toc-row.drop-after::after {
+  content: '';
+  position: absolute;
+  z-index: 2;
+  right: 4px;
+  left: calc(18px + var(--depth) * 12px);
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: -3px 0 0 1px var(--accent);
+}
+
+.toc-row.drop-before::before {
+  top: -1px;
+}
+
+.toc-row.drop-after::after {
+  bottom: -1px;
 }
 
 .toc-row.drop-inside {
   outline: 1px solid var(--accent);
-  background: var(--selected);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--selected) 86%, transparent);
 }
 
 .disclosure,
@@ -235,10 +411,22 @@ function drop(event: DragEvent, target: DeskTocNode): void {
 .disclosure {
   width: 18px;
   height: 20px;
+  display: grid;
+  place-items: center;
   padding: 0;
   flex: none;
   color: var(--muted);
-  font-size: 17px;
+}
+
+.disclosure svg {
+  width: 12px;
+  height: 12px;
+  overflow: visible;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .disclosure.spacer {
@@ -303,72 +491,109 @@ function drop(event: DragEvent, target: DeskTocNode): void {
 }
 
 .toc-row:hover > .row-action,
-.toc-row:hover > .create-menu > .row-action,
-.create-menu[open] > .row-action {
+.toc-row:hover > .row-menu > .row-action,
+.row-menu[open] > .row-action {
   display: block;
 }
 
-.split-action:hover {
+.row-action:hover,
+.menu-trigger:hover,
+.add-note-action:hover {
   background: var(--selected);
   color: var(--accent);
 }
 
-.row-action:hover {
-  background: var(--danger-soft);
-  color: var(--danger);
-}
-
-.rename-action:hover,
-.create-menu > .row-action:hover {
-  background: var(--selected);
-  color: var(--accent);
-}
-
-.create-menu {
+.row-menu {
   position: relative;
   flex: none;
 }
 
-.create-menu > summary {
+.row-menu > summary {
   display: none;
   box-sizing: border-box;
   padding: 1px 0 0;
   text-align: center;
   list-style: none;
+  font-size: 16px;
+  line-height: 18px;
 }
 
-.create-menu > summary::-webkit-details-marker {
+.row-menu > summary::-webkit-details-marker {
   display: none;
 }
 
-.create-menu > div {
+.row-menu-popover {
   position: absolute;
-  z-index: 20;
+  z-index: 30;
   top: 22px;
   right: 0;
-  width: 78px;
+  width: 154px;
   display: flex;
   flex-direction: column;
   border: 1px solid var(--border-strong);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--raised);
-  padding: 3px;
+  padding: 5px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
 }
 
-.create-menu button {
-  height: 25px;
+.row-menu-popover button {
+  min-height: 29px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   border: 0;
-  border-radius: 4px;
+  border-radius: 5px;
   background: transparent;
   color: var(--text);
   text-align: left;
-  padding: 0 7px;
+  padding: 0 8px;
   cursor: pointer;
-  font-size: 10px;
+  font-size: 11px;
 }
 
-.create-menu button:hover {
+.row-menu-popover button > span {
+  width: 16px;
+  flex: none;
+  color: var(--muted);
+  text-align: center;
+  font-family: var(--font-mono);
+}
+
+.row-menu-popover button:hover {
   background: var(--hover);
+}
+
+.row-menu-popover button.danger {
+  color: var(--danger);
+}
+
+.row-menu-popover button.danger:hover {
+  background: var(--danger-soft);
+}
+
+.row-menu-popover hr {
+  width: calc(100% - 8px);
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 4px;
+}
+
+:global(.toc-drag-ghost) {
+  position: fixed;
+  z-index: 9999;
+  top: -100px;
+  left: -100px;
+  max-width: 260px;
+  overflow: hidden;
+  border: 1px solid var(--accent);
+  border-radius: 7px;
+  background: var(--raised);
+  padding: 7px 12px;
+  color: var(--text);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
 }
 </style>

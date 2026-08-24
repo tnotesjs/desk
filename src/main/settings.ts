@@ -20,7 +20,7 @@ const settingsSchema = z.object({
   version: z.literal(1).default(1),
   theme: z.enum(['system', 'light', 'dark']).default('system'),
   density: z.enum(['compact', 'comfortable']).default('comfortable'),
-  defaultNoteView: z.enum(['visual', 'source']).default('visual'),
+  defaultNoteView: z.enum(['visual', 'readonly', 'source']).default('visual'),
   autosave: z
     .object({
       enabled: z.boolean().default(true),
@@ -32,6 +32,13 @@ const settingsSchema = z.object({
   gitPath: z.string().trim().min(1).nullable().default(null),
   nodePath: z.string().trim().min(1).nullable().default(null),
   confirmBeforeCommit: z.boolean().default(false),
+  tabs: z
+    .object({
+      maxOpenCount: z.number().int().min(1).max(30).default(10),
+      wrap: z.boolean().default(true),
+      autoRevealInToc: z.boolean().default(true)
+    })
+    .default({ maxOpenCount: 10, wrap: true, autoRevealInToc: true }),
   imageUpload: z
     .object({
       defaultTarget: z.enum(['local', 'github']).default('local'),
@@ -138,6 +145,7 @@ export function saveSettings(next: Partial<AppSettings>): AppSettings {
     ...current,
     ...next,
     autosave: { ...current.autosave, ...next.autosave },
+    tabs: { ...current.tabs, ...next.tabs },
     imageUpload: {
       ...current.imageUpload,
       ...next.imageUpload,

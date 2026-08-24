@@ -108,6 +108,21 @@ export function activateTab(
   )
 }
 
+export function cycleTab(
+  node: EditorLayoutNode,
+  groupId: string,
+  direction: 'next' | 'previous'
+): EditorLayoutNode {
+  return updateGroup(node, groupId, (group) => {
+    if (group.tabs.length < 2) return group
+    const activeIndex = group.tabs.findIndex((tab) => tab.id === group.activeTabId)
+    const currentIndex = activeIndex >= 0 ? activeIndex : direction === 'next' ? -1 : 0
+    const offset = direction === 'next' ? 1 : -1
+    const nextIndex = (currentIndex + offset + group.tabs.length) % group.tabs.length
+    return { ...group, activeTabId: group.tabs[nextIndex].id }
+  })
+}
+
 export function splitGroupWithTab(
   node: EditorLayoutNode,
   groupId: string,

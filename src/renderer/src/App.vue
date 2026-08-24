@@ -8,7 +8,12 @@ import SettingsPanel from './components/SettingsPanel.vue'
 import { useEditorStore } from './stores/editor'
 import { useWorkspaceStore } from './stores/workspace'
 
-import type { DeletePreviewDto, DeskTocNode, NoteCreateRequest } from '../../shared/contracts'
+import type {
+  DeletePreviewDto,
+  DeskTocNode,
+  NoteCreateRequest,
+  TabShortcutCommand
+} from '../../shared/contracts'
 
 const store = useWorkspaceStore()
 const editor = useEditorStore()
@@ -28,7 +33,9 @@ const pendingPublishState = computed(() =>
 )
 const dialogBusy = ref(false)
 let sessionTimer: ReturnType<typeof setTimeout> | null = null
+let statusTimer: ReturnType<typeof setTimeout> | null = null
 let systemTheme: MediaQueryList | null = null
+let unsubscribeTabShortcut: (() => void) | null = null
 
 const workspaceColumns = computed(() => {
   const knowledgeWidth = editor.knowledgeSidebarCollapsed ? 48 : editor.knowledgeSidebarWidth
@@ -46,6 +53,52 @@ function onKeydown(event: KeyboardEvent): void {
     event.preventDefault()
     void store.saveCurrentDocument().catch(() => undefined)
   }
+}
+
+async function handleTabShortcut(command: TabShortcutCommand): Promise<void> {
+  if (command === 'next-tab' || command === 'previous-tab') {
+    const previous = editor.activeTab
+    if (previous?.type === 'web') {
+      await window.desk.web.layout({ tabId: previous.id, visible: false })
+    }
+    editor.cycleActiveTab(command === 'next-tab' ? 'next' : 'previous')
+    return
+  }
+
+  if (command === 'close-saved-note-tabs') {
+    editor.closeSavedNotes()
+    return
+  }
+  if (command === 'close-all-tabs') {
+    editor.closeAllTabs()
+    return
+  }
+  if (command === 'keep-active-tab-open') {
+    if (editor.activeTab) editor.keepOpen(editor.activeTab.id)
+    return
+  }
+  if (command === 'toggle-pin-active-tab') {
+    if (editor.activeTab) editor.togglePinned(editor.activeTab.id)
+    return
+  }
+  if (command === 'copy-active-note-path') {
+    if (editor.activeTab?.type === 'note') await store.copyNoteDirectoryPath(editor.activeTab)
+    return
+  }
+  if (command === 'reveal-active-note-in-file-manager') {
+    if (editor.activeTab?.type === 'note') await store.revealNoteInFileManager(editor.activeTab)
+    return
+  }
+
+  const group = editor.activeGroup
+  const tab = editor.activeTab
+  if (group && tab) {
+    if (!editor.close(group.id, tab.id)) store.status = '固定标签需要先解除固定才能关闭'
+    return
+  }
+
+  if (store.hasWorkspace) await persistSession()
+  await window.desk.app.closeWindow()
 }
 
 function applyAppearance(): void {
@@ -191,8 +244,24 @@ watch(
 
 watch(() => store.settings, applyAppearance, { deep: true })
 
+watch(
+  () => store.status,
+  (status) => {
+    if (statusTimer) clearTimeout(statusTimer)
+    statusTimer = status
+      ? setTimeout(() => {
+          statusTimer = null
+          if (store.status === status) store.status = null
+        }, 3600)
+      : null
+  }
+)
+
 onMounted(async () => {
   window.addEventListener('keydown', onKeydown)
+  unsubscribeTabShortcut = window.desk.app.onTabShortcut((command) => {
+    void handleTabShortcut(command)
+  })
   systemTheme = window.matchMedia('(prefers-color-scheme: dark)')
   systemTheme.addEventListener('change', applyAppearance)
   await store.initialize()
@@ -202,9 +271,12 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
+  unsubscribeTabShortcut?.()
+  unsubscribeTabShortcut = null
   systemTheme?.removeEventListener('change', applyAppearance)
   systemTheme = null
   if (sessionTimer) clearTimeout(sessionTimer)
+  if (statusTimer) clearTimeout(statusTimer)
   if (store.hasWorkspace) {
     void persistSession()
   }
@@ -226,7 +298,12 @@ onUnmounted(() => {
       <div class="titlebar-actions">
         <span v-if="store.saving" class="sync-state">正在保存</span>
         <span v-else-if="store.dirty" class="sync-state dirty">未保存</span>
-        <button type="button" title="设置" aria-label="打开设置" @click="settingsOpen = true">
+        <button
+          type="button"
+          aria-label="打开设置"
+          data-tooltip="设置"
+          @click="settingsOpen = true"
+        >
           ⚙
         </button>
       </div>

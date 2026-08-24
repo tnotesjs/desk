@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import TocNodeList from './TocNodeList.vue'
+import UiTooltip from './UiTooltip.vue'
 import { useEditorStore } from '../stores/editor'
 import { useWorkspaceStore } from '../stores/workspace'
 
@@ -18,7 +19,17 @@ const store = useWorkspaceStore()
 const editor = useEditorStore()
 const query = ref('')
 const changesExpanded = ref(true)
+const createMenuOpen = ref(false)
+const createMenu = ref<HTMLElement | null>(null)
+const previewBusy = ref(false)
 let searchTimer: ReturnType<typeof setTimeout> | null = null
+
+function closeCreateMenu(event: MouseEvent): void {
+  if (createMenu.value?.contains(event.target as Node)) return
+  createMenuOpen.value = false
+}
+
+onMounted(() => document.addEventListener('mousedown', closeCreateMenu))
 
 function filterNodes(nodes: DeskTocNode[], needle: string): DeskTocNode[] {
   if (!needle) return nodes
@@ -45,6 +56,7 @@ watch([() => query.value, () => store.selectedKnowledgeBaseId], () => {
 
 onUnmounted(() => {
   if (searchTimer) clearTimeout(searchTimer)
+  document.removeEventListener('mousedown', closeCreateMenu)
 })
 
 const previewState = computed(() =>
@@ -55,6 +67,27 @@ const previewState = computed(() =>
 
 const gitState = computed(() =>
   store.selectedKnowledgeBaseId ? (store.gitStates[store.selectedKnowledgeBaseId] ?? null) : null
+)
+const selectedTocNoteUuid = computed(() => {
+  const tab = editor.activeTab
+  return tab?.type === 'note' && tab.knowledgeBaseId === store.selectedKnowledgeBaseId
+    ? tab.noteUuid
+    : null
+})
+const tocFocusRequestId = computed(() => {
+  const request = store.tocFocusRequest
+  return request?.knowledgeBaseId === store.selectedKnowledgeBaseId &&
+    request.noteUuid === selectedTocNoteUuid.value
+    ? request.sequence
+    : undefined
+})
+
+watch(
+  tocFocusRequestId,
+  (requestId) => {
+    if (requestId && query.value) query.value = ''
+  },
+  { flush: 'sync' }
 )
 
 const statusSymbol: Record<string, string> = {
@@ -82,7 +115,8 @@ function showKnowledgeBaseMenu(): void {
 }
 
 async function togglePreview(): Promise<void> {
-  if (!store.selectedKnowledgeBaseId) return
+  if (!store.selectedKnowledgeBaseId || previewBusy.value) return
+  previewBusy.value = true
   try {
     if (previewState.value?.status === 'ready' || previewState.value?.status === 'starting') {
       await editor.stopPreview(store.selectedKnowledgeBaseId)
@@ -95,8 +129,25 @@ async function togglePreview(): Promise<void> {
     }
   } catch (cause) {
     store.error = cause instanceof Error ? cause.message : String(cause)
+  } finally {
+    previewBusy.value = false
   }
 }
+
+function chooseHeaderAction(action: 'group' | 'preview' | 'reveal' | 'ide'): void {
+  createMenuOpen.value = false
+  if (action === 'group') emit('createGroup')
+  else if (action === 'preview') void togglePreview()
+  else if (action === 'reveal') void revealKnowledgeBase()
+  else showKnowledgeBaseMenu()
+}
+
+const previewLabel = computed(() => {
+  if (previewBusy.value || previewState.value?.status === 'starting') return '正在启动站点预览'
+  if (previewState.value?.status === 'ready') return '停止站点预览'
+  if (previewState.value?.status === 'error') return '重新启动站点预览'
+  return '启动站点预览'
+})
 </script>
 
 <template>
@@ -106,41 +157,73 @@ async function togglePreview(): Promise<void> {
         <span>文章</span>
         <strong>{{ store.selectedKnowledgeBase?.displayName ?? '未选择' }}</strong>
       </div>
-      <button
-        type="button"
-        class="new-button"
-        :disabled="!store.knowledgeBase || store.knowledgeBase.health !== 'ready'"
-        title="新建根笔记"
-        @click="emit('createNote')"
-      >
-        +
-      </button>
-      <button
-        type="button"
-        class="group-button"
-        :disabled="!store.knowledgeBase || store.knowledgeBase.health !== 'ready'"
-        title="新建目录分组"
-        @click="emit('createGroup')"
-      >
-        ▱+
-      </button>
-      <button
-        type="button"
-        class="preview-button"
-        :class="previewState?.status"
-        :disabled="!store.knowledgeBase || store.knowledgeBase.health !== 'ready'"
-        :title="
-          previewState?.status === 'ready' || previewState?.status === 'starting'
-            ? '停止站点预览服务'
-            : '启动站点预览'
-        "
-        @click="togglePreview"
-      >
-        {{
-          previewState?.status === 'starting' ? '…' : previewState?.status === 'ready' ? '■' : '▶'
-        }}
-      </button>
+      <div ref="createMenu" class="header-actions" :class="{ open: createMenuOpen }">
+        <UiTooltip label="更多笔记操作">
+          <button
+            type="button"
+            class="menu-button"
+            aria-label="更多笔记操作"
+            :aria-expanded="createMenuOpen"
+            :disabled="!store.knowledgeBase || store.knowledgeBase.health !== 'ready'"
+            @click="createMenuOpen = !createMenuOpen"
+          >
+            ⋯
+          </button>
+        </UiTooltip>
+        <UiTooltip label="添加笔记">
+          <button
+            type="button"
+            class="new-button"
+            aria-label="添加笔记"
+            :disabled="!store.knowledgeBase || store.knowledgeBase.health !== 'ready'"
+            @click="emit('createNote')"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+          </button>
+        </UiTooltip>
+        <div v-if="createMenuOpen" class="create-menu">
+          <button type="button" @click="chooseHeaderAction('group')">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h7l2 2h9v11H3z" /></svg>
+            <span><strong>新建分组</strong><small>整理 TOC.md 目录结构</small></span>
+          </button>
+          <button type="button" @click="chooseHeaderAction('preview')">
+            <svg v-if="previewState?.status === 'ready'" viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="7" y="7" width="10" height="10" rx="1" />
+            </svg>
+            <svg v-else viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 9 6-9 6V6Z" /></svg>
+            <span
+              ><strong>{{ previewLabel }}</strong
+              ><small>在网页标签中查看站点</small></span
+            >
+          </button>
+          <hr />
+          <button type="button" @click="chooseHeaderAction('ide')">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M7 4h10v16H7zM4 8h3M17 8h3" />
+            </svg>
+            <span><strong>使用 IDE 打开</strong><small>跟随设置中的 IDE 配置</small></span>
+          </button>
+          <button type="button" @click="chooseHeaderAction('reveal')">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h7l2 2h9v11H3z" /></svg>
+            <span><strong>打开知识库目录</strong><small>在 Finder 中显示</small></span>
+          </button>
+        </div>
+      </div>
     </header>
+
+    <div
+      v-if="previewBusy || previewState?.status === 'starting' || previewState?.status === 'error'"
+      class="preview-feedback"
+      :class="previewState?.status"
+    >
+      <span v-if="previewBusy || previewState?.status === 'starting'">
+        正在启动 {{ store.selectedKnowledgeBase?.displayName }} 站点预览…
+      </span>
+      <template v-else>
+        <span>预览启动失败：{{ previewState?.error ?? '未知错误' }}</span>
+        <button type="button" @click="togglePreview">重试</button>
+      </template>
+    </div>
 
     <div class="search-wrap">
       <span>⌕</span>
@@ -157,30 +240,36 @@ async function togglePreview(): Promise<void> {
           <span v-if="gitState?.behind" class="behind-state">↓{{ gitState.behind }}</span>
           <em>{{ gitState?.changes.length ?? 0 }}</em>
           <div class="git-actions">
-            <button
-              type="button"
-              title="刷新本地 Git 状态"
-              :disabled="Boolean(gitState?.busy)"
-              @click="store.refreshGit(store.selectedKnowledgeBaseId ?? undefined)"
-            >
-              ↻
-            </button>
-            <button
-              type="button"
-              title="获取并拉取远端更新"
-              :disabled="!gitState?.initialized || Boolean(gitState.busy)"
-              @click="store.pullGit(store.selectedKnowledgeBaseId!)"
-            >
-              ⇣
-            </button>
-            <button
-              type="button"
-              title="提交并推送当前变更"
-              :disabled="!gitState?.initialized || Boolean(gitState.busy)"
-              @click="store.requestGitPublish(store.selectedKnowledgeBaseId!)"
-            >
-              ⇡
-            </button>
+            <UiTooltip label="刷新 Git 状态">
+              <button
+                type="button"
+                aria-label="刷新本地 Git 状态"
+                :disabled="Boolean(gitState?.busy)"
+                @click="store.refreshGit(store.selectedKnowledgeBaseId ?? undefined)"
+              >
+                ↻
+              </button>
+            </UiTooltip>
+            <UiTooltip label="拉取远端更新">
+              <button
+                type="button"
+                aria-label="获取并拉取远端更新"
+                :disabled="!gitState?.initialized || Boolean(gitState.busy)"
+                @click="store.pullGit(store.selectedKnowledgeBaseId!)"
+              >
+                ⇣
+              </button>
+            </UiTooltip>
+            <UiTooltip label="提交并推送">
+              <button
+                type="button"
+                aria-label="提交并推送当前变更"
+                :disabled="!gitState?.initialized || Boolean(gitState.busy)"
+                @click="store.requestGitPublish(store.selectedKnowledgeBaseId!)"
+              >
+                ⇡
+              </button>
+            </UiTooltip>
           </div>
         </div>
         <template v-if="changesExpanded">
@@ -273,8 +362,10 @@ async function togglePreview(): Promise<void> {
         <TocNodeList
           v-if="visibleToc.length"
           :nodes="visibleToc"
-          :selected-note-uuid="store.document?.uuid ?? null"
+          :selected-note-uuid="selectedTocNoteUuid"
+          :focus-request-id="tocFocusRequestId"
           @select="store.selectNote"
+          @select-permanent="store.selectNote($event, undefined, true)"
           @select-split="store.selectNote($event, 'right')"
           @toggle-done="store.toggleDone"
           @request-create="(node, placement) => emit('createNote', node, placement)"
@@ -332,10 +423,9 @@ async function togglePreview(): Promise<void> {
 }
 
 .new-button,
-.group-button,
-.preview-button {
-  width: 28px;
+.menu-button {
   height: 28px;
+  width: 28px;
   border: 1px solid var(--border);
   border-radius: 7px;
   background: var(--raised);
@@ -344,23 +434,157 @@ async function togglePreview(): Promise<void> {
   font-size: 18px;
 }
 
-.new-button:hover:not(:disabled) {
+.new-button {
+  display: grid;
+  place-items: center;
+}
+
+.new-button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.menu-button {
+  line-height: 20px;
+}
+
+.new-button svg,
+.create-menu svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.header-actions {
+  position: relative;
+  display: flex;
+  gap: 6px;
+}
+
+.header-actions.open :deep(.ui-tooltip-popover) {
+  display: none;
+}
+
+.create-menu {
+  position: absolute;
+  z-index: 80;
+  top: 35px;
+  right: 0;
+  width: 184px;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--raised);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.34);
+  padding: 4px;
+}
+
+.create-menu button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  padding: 8px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.create-menu button:hover {
+  background: var(--hover);
+}
+
+.create-menu hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 4px 6px;
+}
+
+.create-menu svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  color: var(--accent-strong);
+}
+
+.create-menu span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.create-menu strong {
+  font-size: 10px;
+  font-weight: 620;
+}
+
+.create-menu small {
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.new-button:hover:not(:disabled),
+.menu-button:hover:not(:disabled) {
   border-color: var(--accent);
   color: var(--accent);
 }
 
-.preview-button {
-  font-size: 10px;
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
-.preview-button.ready,
-.preview-button.starting {
-  border-color: color-mix(in srgb, var(--success) 45%, var(--border));
-  color: var(--success);
-}
-
-.new-button:disabled {
+.new-button:disabled,
+.menu-button:disabled {
   opacity: 0.4;
+}
+
+.preview-feedback {
+  min-height: 30px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+  padding: 5px 10px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.preview-feedback.error {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.preview-feedback > span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  display: -webkit-box;
+  overflow: hidden;
+  line-height: 1.35;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.preview-feedback button {
+  flex: none;
+  border: 1px solid currentColor;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 3px 7px;
+  font-size: 9px;
 }
 
 .search-wrap {

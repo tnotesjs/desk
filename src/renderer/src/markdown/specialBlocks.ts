@@ -147,7 +147,7 @@ async function mountMindmap(
     markdown,
     fileName: 'desk-mindmap-preview.tn-mindmap.md'
   })
-  const theme = document.documentElement.classList.contains('light') ? 'light' : 'dark'
+  const theme = document.documentElement.dataset.theme === 'light' ? 'light' : 'dark'
   const viewer = new CanvasViewer(host, session, {
     theme,
     resolveImageSrc: (src) => {
@@ -175,10 +175,31 @@ async function mountMermaid(root: HTMLElement, block: VisualBlock): Promise<void
     ? root
     : root.querySelector<HTMLElement>('[data-mermaid-content]')
   const content = embeddedHost?.dataset.mermaidContent ?? fenceParts(block.source).content
+  const light = document.documentElement.dataset.theme === 'light'
   mermaid.initialize({
     startOnLoad: false,
     securityLevel: 'strict',
-    theme: document.documentElement.classList.contains('light') ? 'default' : 'dark'
+    theme: light ? 'default' : 'dark',
+    flowchart: { htmlLabels: false },
+    themeVariables: light
+      ? {
+          primaryColor: '#f6f8fa',
+          primaryTextColor: '#24292f',
+          primaryBorderColor: '#57606a',
+          lineColor: '#57606a',
+          secondaryColor: '#ddf4ff',
+          tertiaryColor: '#fff8c5',
+          textColor: '#24292f'
+        }
+      : {
+          primaryColor: '#21262d',
+          primaryTextColor: '#f0f6fc',
+          primaryBorderColor: '#8c959f',
+          lineColor: '#c9d1d9',
+          secondaryColor: '#1f2937',
+          tertiaryColor: '#2d333b',
+          textColor: '#f0f6fc'
+        }
   })
   const id = `tn-mermaid-${crypto.randomUUID()}`
   const rendered = await mermaid.render(id, content)

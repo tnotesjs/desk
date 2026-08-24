@@ -40,14 +40,6 @@ jobs:
         with:
           path: desk
 
-      # Kept for pre-release builds while package.json still uses link:../core.
-      - name: Check out TNotes Core
-        uses: actions/checkout@v4
-        with:
-          repository: tnotesjs/core
-          ref: codex/desk-workspace-api
-          path: core
-
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -59,14 +51,6 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: desk/pnpm-lock.yaml
-
-      - name: Install TNotes Core dependencies
-        working-directory: core
-        run: pnpm install --frozen-lockfile
-
-      - name: Build TNotes Core
-        working-directory: core
-        run: pnpm build
 
       - name: Install dependencies
         working-directory: desk

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   collapseEmptyGroups,
   createGroup,
+  cycleTab,
   findGroup,
   findTab,
   insertTab,
@@ -42,6 +43,16 @@ describe('editor layout model', () => {
 
     const bottom = splitGroupWithTab(right.layout, right.groupId, 'bottom', webTab('three'))
     expect(listGroups(bottom.layout)).toHaveLength(3)
+  })
+
+  it('cycles active tabs in both directions and wraps at the ends', () => {
+    const group = createGroup([webTab('one'), webTab('two'), webTab('three')])
+
+    const previous = cycleTab(group, group.id, 'previous')
+    expect(findGroup(previous, group.id)?.activeTabId).toBe('three')
+
+    const next = cycleTab(previous, group.id, 'next')
+    expect(findGroup(next, group.id)?.activeTabId).toBe('one')
   })
 
   it('collapses empty leaves after the last tab moves away', () => {

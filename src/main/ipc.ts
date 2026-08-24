@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
+import { BrowserWindow, clipboard, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
 import { z } from 'zod'
 
 import { deskLog } from './log'
@@ -53,14 +53,20 @@ const noteTabSchema = z.object({
   noteUuid: z.string().min(1),
   title: z.string(),
   icon: iconSchema,
-  viewMode: z.enum(['visual', 'source'])
+  viewMode: z.enum(['visual', 'readonly', 'source']),
+  preview: z.boolean().optional(),
+  pinned: z.boolean().optional(),
+  openedAt: z.number().finite().optional(),
+  dirty: z.boolean().optional()
 })
 
 const webTabSchema = z.object({
   id: z.string().min(1),
   type: z.literal('web'),
   url: z.string().min(1),
-  title: z.string()
+  title: z.string(),
+  pinned: z.boolean().optional(),
+  openedAt: z.number().finite().optional()
 })
 
 const editorTabSchema = z.discriminatedUnion('type', [noteTabSchema, webTabSchema])
@@ -289,9 +295,18 @@ export function registerIpc(getWindow: () => BrowserWindow | null): () => void {
     return {
       workspace,
       settings: loadSettings(),
+      platform:
+        process.platform === 'darwin' || process.platform === 'win32' ? process.platform : 'linux',
       session: await loadWorkspaceSession(workspace.path),
       recoveries: await loadRecoveries(workspace.path)
     }
+  })
+  handle(IPC_CHANNELS.windowClose, getWindow, noInputSchema, () => {
+    const window = getWindow()
+    if (!window || window.isDestroyed()) return
+    setImmediate(() => {
+      if (!window.isDestroyed()) window.close()
+    })
   })
 
   handle(IPC_CHANNELS.workspaceChoose, getWindow, noInputSchema, async () => {
@@ -431,6 +446,25 @@ export function registerIpc(getWindow: () => BrowserWindow | null): () => void {
   )
   handle(IPC_CHANNELS.noteUpdateConfig, getWindow, noteUpdateConfigSchema, (input) =>
     workspaceManager.updateNoteConfig(input as NoteUpdateConfigRequest)
+  )
+  handle(
+    IPC_CHANNELS.noteCopyDirectoryPath,
+    getWindow,
+    z.object({ knowledgeBaseId: z.string().min(1), noteUuid: z.string().min(1) }),
+    ({ knowledgeBaseId, noteUuid }) => {
+      const directoryPath = workspaceManager.getNoteLocation(knowledgeBaseId, noteUuid)
+      clipboard.writeText(directoryPath)
+      return directoryPath
+    }
+  )
+  handle(
+    IPC_CHANNELS.noteRevealInFileManager,
+    getWindow,
+    z.object({ knowledgeBaseId: z.string().min(1), noteUuid: z.string().min(1) }),
+    async ({ knowledgeBaseId, noteUuid }) => {
+      const note = await workspaceManager.readNote(knowledgeBaseId, noteUuid)
+      shell.showItemInFolder(note.readmePath)
+    }
   )
   handle(IPC_CHANNELS.attachmentWriteLocal, getWindow, attachmentWriteLocalSchema, (input) =>
     workspaceManager.writeLocalAttachment(input as AttachmentWriteLocalRequest)

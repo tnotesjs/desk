@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, Menu, shell } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 
 import icon from '../../resources/icon.png?asset'
@@ -9,13 +9,17 @@ import { registerIpc } from './ipc'
 import { deskLog } from './log'
 import { previewManager } from './preview'
 import { searchManager } from './searchManager'
+import { TabShortcutResolver } from './tabShortcuts'
 import { webContentsManager } from './webContentsManager'
 import { workspaceManager } from './workspaceManager'
+
+import { IPC_CHANNELS, type TabShortcutCommand } from '../shared/contracts'
 
 let mainWindow: BrowserWindow | null = null
 let unregisterIpc: (() => void) | null = null
 let unregisterSearchRefresh: (() => void) | null = null
 let searchRefreshTimer: NodeJS.Timeout | null = null
+const mainTabShortcutResolver = new TabShortcutResolver()
 
 registerAssetScheme()
 
@@ -50,6 +54,68 @@ function isHttpUrl(value: string): boolean {
   }
 }
 
+function sendTabShortcut(window: BrowserWindow, command: TabShortcutCommand): void {
+  if (!window.isDestroyed()) window.webContents.send(IPC_CHANNELS.tabShortcut, command)
+}
+
+function configureApplicationMenu(): void {
+  const template: Electron.MenuItemConstructorOptions[] = []
+  if (process.platform === 'darwin') {
+    template.push({
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' }
+      ]
+    })
+  }
+  template.push(
+    {
+      label: 'File',
+      submenu: [
+        {
+          label: 'Close Tab',
+          accelerator: 'CmdOrCtrl+W',
+          click: () => {
+            if (mainWindow) sendTabShortcut(mainWindow, 'close-active-tab-or-window')
+          }
+        },
+        {
+          label: 'Next Tab',
+          accelerator: 'Ctrl+Tab',
+          click: () => {
+            if (mainWindow) sendTabShortcut(mainWindow, 'next-tab')
+          }
+        },
+        {
+          label: 'Previous Tab',
+          accelerator: 'Ctrl+Shift+Tab',
+          click: () => {
+            if (mainWindow) sendTabShortcut(mainWindow, 'previous-tab')
+          }
+        },
+        ...(process.platform === 'darwin'
+          ? []
+          : ([
+              { type: 'separator' },
+              { role: 'quit' }
+            ] satisfies Electron.MenuItemConstructorOptions[]))
+      ]
+    },
+    { role: 'editMenu' },
+    { role: 'viewMenu' },
+    { role: 'windowMenu' }
+  )
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+}
+
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1360,
@@ -77,6 +143,7 @@ function createWindow(): BrowserWindow {
     }
   })
   webContentsManager.attachWindow(window)
+  webContentsManager.onTabShortcut((command) => sendTabShortcut(window, command))
   window.on('closed', () => {
     if (mainWindow === window) mainWindow = null
   })
@@ -86,6 +153,12 @@ function createWindow(): BrowserWindow {
     if (url === current) return
     event.preventDefault()
     if (isHttpUrl(url)) void shell.openExternal(url)
+  })
+  window.webContents.on('before-input-event', (event, input) => {
+    const resolution = mainTabShortcutResolver.resolve(input)
+    if (!resolution.handled) return
+    event.preventDefault()
+    if (resolution.command) sendTabShortcut(window, resolution.command)
   })
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (isHttpUrl(url)) void shell.openExternal(url)
@@ -116,6 +189,7 @@ if (!hasSingleInstanceLock) {
 
   void app.whenReady().then(async () => {
     electronApp.setAppUserModelId('com.tnotesjs.desk')
+    configureApplicationMenu()
     app.on('browser-window-created', (_, window) => {
       optimizer.watchWindowShortcuts(window)
     })

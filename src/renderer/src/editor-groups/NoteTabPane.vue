@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 
+import UiTooltip from '../components/UiTooltip.vue'
 import MarkdownEditor from '../markdown/MarkdownEditor.vue'
 import { useEditorStore } from '../stores/editor'
 import { useWorkspaceStore } from '../stores/workspace'
@@ -53,6 +54,14 @@ async function pasteImage(file: File, insertAt: number): Promise<void> {
     workspace.error = cause instanceof Error ? cause.message : String(cause)
   }
 }
+
+function openLink(url: string): void {
+  try {
+    editor.openWeb(url)
+  } catch (cause) {
+    workspace.error = cause instanceof Error ? cause.message : String(cause)
+  }
+}
 </script>
 
 <template>
@@ -68,62 +77,114 @@ async function pasteImage(file: File, insertAt: number): Promise<void> {
         {{ session.document.index }} · {{ session.document.title }}
         <span v-if="session.document.readOnly" class="read-only">只读</span>
       </div>
-      <div class="view-switcher">
-        <button
-          type="button"
-          :class="{ active: tab.viewMode === 'visual' }"
-          @click="setMode('visual')"
-        >
-          可视化
-        </button>
-        <button
-          type="button"
-          :class="{ active: tab.viewMode === 'source' }"
-          @click="setMode('source')"
-        >
-          源码
-        </button>
+      <div class="view-switcher" aria-label="笔记视图">
+        <UiTooltip label="可视化编辑">
+          <button
+            type="button"
+            aria-label="可视化编辑"
+            :class="{ active: tab.viewMode === 'visual' }"
+            @click="setMode('visual')"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m4 20 4.2-1 10.6-10.6a2.1 2.1 0 0 0-3-3L5.2 16 4 20Z" />
+              <path d="m14.5 6.7 2.8 2.8" />
+            </svg>
+          </button>
+        </UiTooltip>
+        <UiTooltip label="只读视图">
+          <button
+            type="button"
+            aria-label="只读视图"
+            :class="{ active: tab.viewMode === 'readonly' }"
+            @click="setMode('readonly')"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 5.5A3.5 3.5 0 0 1 7.5 4H11v16H7.5A3.5 3.5 0 0 0 4 21V5.5Z" />
+              <path d="M20 5.5A3.5 3.5 0 0 0 16.5 4H13v16h3.5A3.5 3.5 0 0 1 20 21V5.5Z" />
+            </svg>
+          </button>
+        </UiTooltip>
+        <UiTooltip label="源码视图">
+          <button
+            type="button"
+            aria-label="源码视图"
+            :class="{ active: tab.viewMode === 'source' }"
+            @click="setMode('source')"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m8.5 7-5 5 5 5M15.5 7l5 5-5 5M13.5 4l-3 16" />
+            </svg>
+          </button>
+        </UiTooltip>
       </div>
-      <div class="format-actions" aria-label="Markdown 格式工具栏">
-        <button type="button" title="粗体" @click="markdownEditor?.wrapSelection('**', '**')">
-          B
-        </button>
-        <button type="button" title="斜体" @click="markdownEditor?.wrapSelection('*', '*')">
-          <em>I</em>
-        </button>
-        <button type="button" title="二级标题" @click="markdownEditor?.prefixSelection('## ')">
-          H2
-        </button>
-        <button type="button" title="引用" @click="markdownEditor?.prefixSelection('> ')">❞</button>
-        <button type="button" title="无序列表" @click="markdownEditor?.prefixSelection('- ')">
-          ≡
-        </button>
-        <button
-          type="button"
-          title="链接"
-          @click="markdownEditor?.wrapSelection('[', '](https://)', '链接')"
-        >
-          ↗
-        </button>
-        <button type="button" title="代码块" @click="insertTemplate('\n```ts\n\n```\n')">
-          { }
-        </button>
-        <button
-          type="button"
-          title="表格"
-          @click="insertTemplate('\n| 列 1 | 列 2 |\n| --- | --- |\n| 内容 | 内容 |\n')"
-        >
-          ▦
-        </button>
-      </div>
-      <button
-        type="button"
-        class="save-button"
-        :disabled="!session.dirty || session.saving || session.document.readOnly"
-        @click="workspace.saveDocument(key)"
+      <div
+        v-if="tab.viewMode !== 'readonly'"
+        class="format-actions"
+        aria-label="Markdown 格式工具栏"
       >
-        {{ session.saving ? '保存中…' : '保存' }}
-      </button>
+        <UiTooltip label="粗体" shortcut="⌘ B">
+          <button
+            type="button"
+            aria-label="粗体"
+            @click="markdownEditor?.wrapSelection('**', '**')"
+          >
+            B
+          </button>
+        </UiTooltip>
+        <UiTooltip label="斜体" shortcut="⌘ I">
+          <button type="button" aria-label="斜体" @click="markdownEditor?.wrapSelection('*', '*')">
+            <em>I</em>
+          </button>
+        </UiTooltip>
+        <UiTooltip label="二级标题" shortcut="⌥ ⌘ 2">
+          <button type="button" aria-label="二级标题" @click="markdownEditor?.setLinePrefix('## ')">
+            H2
+          </button>
+        </UiTooltip>
+        <UiTooltip label="引用" shortcut="⇧ ⌘ U">
+          <button type="button" aria-label="引用" @click="markdownEditor?.setLinePrefix('> ')">
+            ❞
+          </button>
+        </UiTooltip>
+        <UiTooltip label="无序列表" shortcut="⇧ ⌘ 8">
+          <button type="button" aria-label="无序列表" @click="markdownEditor?.setLinePrefix('- ')">
+            ≡
+          </button>
+        </UiTooltip>
+        <UiTooltip label="链接">
+          <button
+            type="button"
+            aria-label="链接"
+            @click="markdownEditor?.wrapSelection('[', '](https://)', '链接')"
+          >
+            ↗
+          </button>
+        </UiTooltip>
+        <UiTooltip label="代码块">
+          <button type="button" aria-label="代码块" @click="insertTemplate('\n```ts\n\n```\n')">
+            { }
+          </button>
+        </UiTooltip>
+        <UiTooltip label="表格">
+          <button
+            type="button"
+            aria-label="表格"
+            @click="insertTemplate('\n| 列 1 | 列 2 |\n| --- | --- |\n| 内容 | 内容 |\n')"
+          >
+            ▦
+          </button>
+        </UiTooltip>
+      </div>
+      <UiTooltip label="保存笔记" shortcut="⌘ S">
+        <button
+          type="button"
+          class="save-button"
+          :disabled="!session.dirty || session.saving || session.document.readOnly"
+          @click="workspace.saveDocument(key)"
+        >
+          {{ session.saving ? '保存中…' : '保存' }}
+        </button>
+      </UiTooltip>
     </div>
 
     <MarkdownEditor
@@ -134,8 +195,9 @@ async function pasteImage(file: File, insertAt: number): Promise<void> {
       :read-only="session.document.readOnly"
       :knowledge-base-id="tab.knowledgeBaseId"
       :note-uuid="tab.noteUuid"
+      :active="active"
       @change="updateContent"
-      @open-link="editor.openWeb"
+      @open-link="openLink"
       @open-note="workspace.openNoteByUuid(tab.knowledgeBaseId, $event)"
       @paste-image="pasteImage"
     />
@@ -185,7 +247,8 @@ async function pasteImage(file: File, insertAt: number): Promise<void> {
   display: flex;
   border: 1px solid var(--border);
   border-radius: 6px;
-  overflow: hidden;
+  padding: 2px;
+  gap: 1px;
 }
 
 .view-switcher button,
@@ -205,6 +268,10 @@ async function pasteImage(file: File, insertAt: number): Promise<void> {
   gap: 1px;
 }
 
+.format-actions :deep(.ui-tooltip-host) {
+  flex: none;
+}
+
 .format-actions button {
   min-width: 24px;
   height: 24px;
@@ -218,8 +285,22 @@ async function pasteImage(file: File, insertAt: number): Promise<void> {
 }
 
 .view-switcher button {
-  height: 24px;
-  padding: 0 9px;
+  width: 27px;
+  height: 25px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  padding: 0;
+}
+
+.view-switcher svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .view-switcher button.active {

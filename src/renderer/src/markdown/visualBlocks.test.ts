@@ -1,7 +1,9 @@
 // @vitest-environment happy-dom
 
 import { EditorState } from '@codemirror/state'
-import { describe, expect, it } from 'vitest'
+import { markdown } from '@codemirror/lang-markdown'
+import { EditorView } from '@codemirror/view'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import { collectVisualBlocks, renderVisualBlock } from './visualBlocks'
 import { visualMarkdownExtensions } from './visualExtension'
@@ -9,6 +11,10 @@ import { visualMarkdownExtensions } from './visualExtension'
 const context = { knowledgeBaseId: 'knowledge/base', noteUuid: 'note-1' }
 
 describe('visual Markdown blocks', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
   it('collects generated and editable block types without changing their source', () => {
     const source = [
       '# 0001. 标题',
@@ -52,6 +58,16 @@ describe('visual Markdown blocks', () => {
     expect(html).not.toContain('javascript:')
   })
 
+  it('resolves reference-style links from definitions elsewhere in the document', () => {
+    const source = '- [TNotes][1]\n\n[1]: https://tnotesjs.github.io/TNotes/'
+    const [links] = collectVisualBlocks(source)
+    const html = renderVisualBlock(links, context, source)
+
+    expect(html).toContain('href="https://tnotesjs.github.io/TNotes/"')
+    expect(html).toContain('>TNotes</a>')
+    expect(html).not.toContain('[1]')
+  })
+
   it('protects generated H1 content while allowing ordinary paragraph edits', () => {
     const source = '# 0001. 标题\n\n正文'
     const state = EditorState.create({
@@ -67,6 +83,216 @@ describe('visual Markdown blocks', () => {
       changes: { from: paragraphStart, to: source.length, insert: '更新后的正文' }
     })
     expect(allowed.state.doc.toString()).toContain('更新后的正文')
+  })
+
+  it('keeps headings, paragraphs and lists on stable lines while focus reveals Markdown', () => {
+    const source = '## 标题\n\n这是 **正文**。\n\n- 列表项'
+    const parent = document.createElement('div')
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: source,
+        extensions: [markdown(), visualMarkdownExtensions(context, () => undefined)]
+      })
+    })
+    const heading = parent.querySelector<HTMLElement>('.cm-visual-live-heading')
+    const paragraph = parent.querySelector<HTMLElement>('.cm-visual-live-paragraph')
+    const list = parent.querySelector<HTMLElement>('.cm-visual-live-list')
+
+    expect(parent.querySelector('.cm-visual-block')).toBeNull()
+    expect(heading?.textContent).toBe('标题')
+    expect(paragraph?.textContent).toContain('这是 正文。')
+    expect(list?.textContent).toContain('• 列表项')
+
+    view.dispatch({ selection: { anchor: source.indexOf('标题') } })
+    view.contentDOM.dispatchEvent(new FocusEvent('focus'))
+
+    expect(parent.querySelector('.cm-visual-live-heading')).toBe(heading)
+    expect(parent.querySelector('.cm-visual-live-paragraph')).toBe(paragraph)
+    expect(parent.querySelector('.cm-visual-live-list')).toBe(list)
+    expect(heading?.textContent).toBe('## 标题')
+
+    view.dispatch({ selection: { anchor: source.indexOf('正文') } })
+    expect(parent.querySelector('.cm-visual-live-heading')).toBe(heading)
+    expect(parent.querySelector('.cm-visual-live-paragraph')).toBe(paragraph)
+    expect(paragraph?.textContent).toContain('这是 **正文**。')
+    view.destroy()
+  })
+
+  it('keeps rich blocks rendered when the visual editor receives focus', () => {
+    const source = '```ts\nconst answer = 42\n```'
+    const parent = document.createElement('div')
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: source,
+        extensions: [markdown(), visualMarkdownExtensions(context, () => undefined)]
+      })
+    })
+    const renderedBlock = parent.querySelector<HTMLElement>('.cm-visual-code')
+
+    expect(renderedBlock?.textContent).toContain('const answer = 42')
+    view.dispatch({ selection: { anchor: source.indexOf('answer') } })
+    view.contentDOM.dispatchEvent(new FocusEvent('focus'))
+
+    expect(parent.querySelector('.cm-visual-code')).toBe(renderedBlock)
+    expect(parent.querySelector('.cm-visual-code')?.textContent).toContain('const answer = 42')
+    view.destroy()
+  })
+
+  it('navigates generated TOC links to the matching heading', () => {
+    const source =
+      '<!-- region:toc -->\n- [2. 评价](#2-评价)\n<!-- endregion:toc -->\n\n## 2. 评价\n\n正文'
+    const parent = document.createElement('div')
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: source,
+        extensions: [
+          markdown(),
+          visualMarkdownExtensions(context, () => undefined, undefined, false)
+        ]
+      })
+    })
+    const anchor = parent.querySelector<HTMLAnchorElement>('a')!
+
+    anchor.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+
+    expect(view.state.selection.main.from).toBe(source.indexOf('## 2. 评价'))
+    view.destroy()
+  })
+
+  it('renders a compact generated TOC that can be collapsed and restores its state', () => {
+    const source =
+      '<!-- region:toc -->\n- [1. 本节内容](#1-本节内容)\n  - [1.1. 子标题](#11-子标题)\n<!-- endregion:toc -->\n\n## 1. 本节内容\n\n正文'
+    const mount = (): { parent: HTMLElement; view: EditorView } => {
+      const parent = document.createElement('div')
+      const view = new EditorView({
+        parent,
+        state: EditorState.create({
+          doc: source,
+          extensions: [markdown(), visualMarkdownExtensions(context, () => undefined)]
+        })
+      })
+      return { parent, view }
+    }
+    const first = mount()
+    const header = first.parent.querySelector<HTMLButtonElement>('.cm-visual-toc-header')!
+    const content = first.parent.querySelector<HTMLElement>('.cm-visual-toc-content')!
+
+    expect(first.parent.querySelectorAll('.cm-visual-toc-item')).toHaveLength(2)
+    expect(first.parent.querySelector('.cm-visual-toc-content ul')).toBeNull()
+    expect(content.hidden).toBe(false)
+    expect(header.getAttribute('aria-expanded')).toBe('true')
+    header.click()
+    expect(content.hidden).toBe(true)
+    expect(header.getAttribute('aria-expanded')).toBe('false')
+    first.view.destroy()
+
+    const restored = mount()
+    expect(restored.parent.querySelector<HTMLElement>('.cm-visual-toc-content')?.hidden).toBe(true)
+    restored.view.destroy()
+  })
+
+  it('folds H2 content from the left-side control without changing Markdown', () => {
+    const source =
+      '## 1. 第一节\n\n第一节正文\n\n### 1.1. 子标题\n\n子标题正文\n\n## 2. 第二节\n\n第二节正文'
+    const parent = document.createElement('div')
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: source,
+        extensions: [markdown(), visualMarkdownExtensions(context, () => undefined)]
+      })
+    })
+    const fold = parent.querySelector<HTMLButtonElement>('.cm-visual-h2-fold')!
+
+    expect(parent.textContent).toContain('第一节正文')
+    fold.click()
+    expect(parent.textContent).not.toContain('第一节正文')
+    expect(parent.textContent).toContain('2. 第二节')
+    expect(view.state.doc.toString()).toBe(source)
+
+    parent.querySelector<HTMLButtonElement>('.cm-visual-h2-fold')!.click()
+    expect(parent.textContent).toContain('第一节正文')
+    view.destroy()
+  })
+
+  it('uses the entire H2 row as the read-only folding hot area', () => {
+    const source = '## 1. 第一节\n\n第一节正文\n\n## 2. 第二节\n\n第二节正文'
+    const parent = document.createElement('div')
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: source,
+        extensions: [
+          markdown(),
+          visualMarkdownExtensions(context, () => undefined, undefined, false)
+        ]
+      })
+    })
+    const heading = parent.querySelector<HTMLElement>('.cm-visual-h2-foldable')!
+
+    expect(parent.querySelector('.cm-visual-h2-fold')).toBeNull()
+    expect(parent.textContent).toContain('第一节正文')
+    heading.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(parent.textContent).not.toContain('第一节正文')
+    expect(parent.textContent).toContain('2. 第二节')
+    view.destroy()
+  })
+
+  it('expands a folded H2 before navigating to a nested TOC target', () => {
+    const source =
+      '<!-- region:toc -->\n- [1. 第一节](#1-第一节)\n  - [1.1. 子标题](#11-子标题)\n<!-- endregion:toc -->\n\n## 1. 第一节\n\n### 1.1. 子标题\n\n子标题正文\n\n## 2. 第二节\n\n第二节正文'
+    const parent = document.createElement('div')
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: source,
+        extensions: [
+          markdown(),
+          visualMarkdownExtensions(context, () => undefined, undefined, false)
+        ]
+      })
+    })
+
+    parent
+      .querySelector<HTMLElement>('.cm-visual-h2-foldable')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(parent.textContent).not.toContain('子标题正文')
+
+    ;[...parent.querySelectorAll<HTMLAnchorElement>('.cm-visual-toc-item a')]
+      .find((anchor) => anchor.textContent?.includes('1.1. 子标题'))!
+      .dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+
+    expect(parent.textContent).toContain('子标题正文')
+    expect(view.state.selection.main.from).toBe(source.indexOf('### 1.1. 子标题'))
+    view.destroy()
+  })
+
+  it('edits a TNotes component without leaving visual mode', () => {
+    const source = '<B id="BV1QR4y1y7GG" />'
+    const parent = document.createElement('div')
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: source,
+        extensions: [markdown(), visualMarkdownExtensions(context, () => undefined)]
+      })
+    })
+    const editor = parent.querySelector<HTMLElement>('.tn-visual-block-editor')!
+    const toggle = editor.querySelector<HTMLButtonElement>('.tn-visual-block-toggle')!
+    const textarea = editor.querySelector<HTMLTextAreaElement>('textarea')!
+
+    toggle.click()
+    textarea.value = '<B id="BV1NEW" />'
+    textarea.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    ;[...editor.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent === '应用')!
+      .click()
+
+    expect(view.state.doc.toString()).toBe('<B id="BV1NEW" />')
+    view.destroy()
   })
 
   it('renders TNotes swiper, code-group, mindmap and note-reference surfaces', () => {

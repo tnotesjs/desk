@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import KnowledgeBaseIcon from './KnowledgeBaseIcon.vue'
 import { useWorkspaceStore } from '../stores/workspace'
 
 const store = useWorkspaceStore()
@@ -18,7 +19,8 @@ function showContextMenu(knowledgeBaseId: string): void {
       <button
         type="button"
         class="icon-button"
-        title="重新扫描"
+        aria-label="重新扫描知识库"
+        data-tooltip="重新扫描知识库"
         :disabled="store.loading"
         @click="store.refreshWorkspace"
       >
@@ -37,8 +39,7 @@ function showContextMenu(knowledgeBaseId: string): void {
         @contextmenu.prevent="showContextMenu(item.id)"
       >
         <span class="knowledge-icon">
-          <img v-if="item.icon?.src" :src="item.icon.src" alt="" />
-          <span v-else>{{ item.displayName.slice(0, 1).toUpperCase() }}</span>
+          <KnowledgeBaseIcon :icon="item.icon" :fallback="item.displayName" />
         </span>
         <span class="knowledge-copy">
           <strong>{{ item.displayName }}</strong>
@@ -156,12 +157,6 @@ function showContextMenu(knowledgeBaseId: string): void {
   color: var(--accent);
   font-size: 12px;
   font-weight: 700;
-}
-
-.knowledge-icon img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
 }
 
 .knowledge-copy {

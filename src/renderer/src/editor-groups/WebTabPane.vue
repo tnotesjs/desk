@@ -110,22 +110,53 @@ onBeforeUnmount(() => {
   resizeObserver?.disconnect()
   resizeObserver = null
   window.removeEventListener('resize', onWindowResize)
-  void window.desk.web.layout({ tabId: props.tab.id, visible: false })
+  if (ready.value) void window.desk.web.layout({ tabId: props.tab.id, visible: false })
 })
 </script>
 
 <template>
   <div class="web-pane">
     <form class="browser-toolbar" @submit.prevent="navigate">
-      <button type="button" title="后退" :disabled="!state?.canGoBack" @click="goBack">←</button>
-      <button type="button" title="前进" :disabled="!state?.canGoForward" @click="goForward">
+      <button
+        type="button"
+        aria-label="后退"
+        data-tooltip="后退"
+        :disabled="!state?.canGoBack"
+        @click="goBack"
+      >
+        ←
+      </button>
+      <button
+        type="button"
+        aria-label="前进"
+        data-tooltip="前进"
+        :disabled="!state?.canGoForward"
+        @click="goForward"
+      >
         →
       </button>
-      <button v-if="state?.loading" type="button" title="停止" @click="stop">×</button>
-      <button v-else type="button" title="刷新" @click="reload">↻</button>
+      <button
+        v-if="state?.loading"
+        type="button"
+        aria-label="停止加载"
+        data-tooltip="停止加载"
+        @click="stop"
+      >
+        ×
+      </button>
+      <button v-else type="button" aria-label="刷新网页" data-tooltip="刷新网页" @click="reload">
+        ↻
+      </button>
       <input v-model="address" aria-label="网页地址" spellcheck="false" />
-      <button type="submit" title="打开地址">前往</button>
-      <button type="button" title="使用系统浏览器打开" @click="openExternal">↗</button>
+      <button type="submit" aria-label="打开地址" data-tooltip="打开地址">前往</button>
+      <button
+        type="button"
+        aria-label="使用系统浏览器打开"
+        data-tooltip="使用系统浏览器打开"
+        @click="openExternal"
+      >
+        ↗
+      </button>
     </form>
     <div v-if="error || state?.error" class="web-error">
       {{ error ?? state?.error }}

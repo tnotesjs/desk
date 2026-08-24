@@ -3,6 +3,8 @@ allowBuilds:
   electron-winstaller: true
   esbuild: true
   vue-demi: true
+minimumReleaseAgeExclude:
+  - '@tnotesjs/core@0.6.0'
 onlyBuiltDependencies:
   - electron
   - esbuild

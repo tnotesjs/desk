@@ -1,8 +1,14 @@
 import { BrowserWindow, session, shell, WebContentsView } from 'electron'
 
 import { deskLog } from './log'
+import { TabShortcutResolver } from './tabShortcuts'
 
-import type { WebBounds, WebOpenRequestedEvent, WebTabState } from '../shared/contracts'
+import type {
+  TabShortcutCommand,
+  WebBounds,
+  WebOpenRequestedEvent,
+  WebTabState
+} from '../shared/contracts'
 
 const WEB_PARTITION = 'persist:tnotes-desk-web'
 
@@ -36,6 +42,7 @@ export class WebContentsManager {
   private mainWindow: BrowserWindow | null = null
   private stateListener: ((state: WebTabState) => void) | null = null
   private openRequestedListener: ((event: WebOpenRequestedEvent) => void) | null = null
+  private shortcutListener: ((command: TabShortcutCommand) => void) | null = null
   private sessionConfigured = false
 
   private configureSession(): void {
@@ -72,6 +79,13 @@ export class WebContentsManager {
     this.openRequestedListener = listener
     return () => {
       if (this.openRequestedListener === listener) this.openRequestedListener = null
+    }
+  }
+
+  onTabShortcut(listener: (command: TabShortcutCommand) => void): () => void {
+    this.shortcutListener = listener
+    return () => {
+      if (this.shortcutListener === listener) this.shortcutListener = null
     }
   }
 
@@ -121,6 +135,9 @@ export class WebContentsManager {
     const handle = this.getHandle(tabId)
     if (!visible) {
       handle.view.setVisible(false)
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+        this.mainWindow.webContents.focus()
+      }
       return
     }
     if (!bounds) throw new Error('显示网页标签时缺少布局区域')
@@ -193,6 +210,7 @@ export class WebContentsManager {
     this.closeAll()
     this.stateListener = null
     this.openRequestedListener = null
+    this.shortcutListener = null
   }
 
   private requireWindow(): BrowserWindow {
@@ -208,6 +226,7 @@ export class WebContentsManager {
 
   private bindWebContents(handle: WebHandle): void {
     const contents = handle.view.webContents
+    const shortcutResolver = new TabShortcutResolver()
     const refresh = (): void => {
       if (contents.isDestroyed()) return
       const navigation = contents.navigationHistory
@@ -257,6 +276,12 @@ export class WebContentsManager {
         error: description
       }
       this.emitState(handle)
+    })
+    contents.on('before-input-event', (event, input) => {
+      const resolution = shortcutResolver.resolve(input)
+      if (!resolution.handled) return
+      event.preventDefault()
+      if (resolution.command) this.shortcutListener?.(resolution.command)
     })
     contents.on('render-process-gone', (_event, details) => {
       handle.state = { ...handle.state, loading: false, error: `网页进程已退出：${details.reason}` }

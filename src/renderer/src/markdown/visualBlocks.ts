@@ -238,8 +238,16 @@ function inlineComponents(source: string): string {
   )
 }
 
-function renderMarkdown(source: string, context: MarkdownRenderContext): string {
-  return markdown.render(inlineComponents(source), context)
+function referenceDefinitions(source: string): string {
+  return source
+    .split('\n')
+    .filter((line) => /^\s{0,3}\[[^\]]+\]:\s+\S+/.test(line))
+    .join('\n')
+}
+
+function renderMarkdown(source: string, context: MarkdownRenderContext, definitions = ''): string {
+  const markdownSource = definitions ? `${source}\n\n${definitions}` : source
+  return markdown.render(inlineComponents(markdownSource), context)
 }
 
 function codeGroupSource(source: string): string {
@@ -384,7 +392,7 @@ function componentSource(source: string, context: MarkdownRenderContext): string
   return `<aside class="tn-component-placeholder"><strong>${markdown.utils.escapeHtml(name)}</strong><span>${label}</span></aside>`
 }
 
-function containerSource(source: string, context: MarkdownRenderContext): string {
+function containerSource(source: string, context: MarkdownRenderContext, definitions = ''): string {
   const match = source.match(/^\s*:::\s*([\w-]+)(?:\s+([^\n]+))?\n([\s\S]*?)\n?\s*:::\s*$/)
   if (!match) return source
   const kind = match[1]
@@ -392,15 +400,20 @@ function containerSource(source: string, context: MarkdownRenderContext): string
   if (kind === 'swiper') return swiperSource(source, context)
   if (kind === 'code-group') return codeGroupSource(source)
   if (kind === 'details') {
-    return `<details class="tn-container tn-container-details"><summary>${markdown.utils.escapeHtml(title)}</summary>${renderMarkdown(match[3], context)}</details>`
+    return `<details class="tn-container tn-container-details"><summary>${markdown.utils.escapeHtml(title)}</summary>${renderMarkdown(match[3], context, definitions)}</details>`
   }
-  return `<aside class="tn-container tn-container-${kind}"><strong>${markdown.utils.escapeHtml(title)}</strong>${renderMarkdown(match[3], context)}</aside>`
+  return `<aside class="tn-container tn-container-${kind}"><strong>${markdown.utils.escapeHtml(title)}</strong>${renderMarkdown(match[3], context, definitions)}</aside>`
 }
 
-export function renderVisualBlock(block: VisualBlock, context: MarkdownRenderContext): string {
+export function renderVisualBlock(
+  block: VisualBlock,
+  context: MarkdownRenderContext,
+  documentSource = block.source
+): string {
+  const definitions = referenceDefinitions(documentSource)
   const rawHtml =
     block.kind === 'container'
-      ? containerSource(block.source, context)
+      ? containerSource(block.source, context, definitions)
       : block.kind === 'component'
         ? `<div class="tn-component-host">${componentSource(block.source, context)}</div>`
         : block.kind === 'math'
@@ -414,7 +427,8 @@ export function renderVisualBlock(block: VisualBlock, context: MarkdownRenderCon
               ? '<section class="tn-mermaid"><div class="tn-special-loading">正在绘制 Mermaid…</div></section>'
               : renderMarkdown(
                   block.source.replace(/<!--\s*(?:end)?region:toc\s*-->/g, ''),
-                  context
+                  context,
+                  definitions
                 )
   return DOMPurify.sanitize(rawHtml, {
     USE_PROFILES: { html: true, mathMl: true },

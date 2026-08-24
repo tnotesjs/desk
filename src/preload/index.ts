@@ -29,6 +29,7 @@ import type {
   RecoveryDeleteRequest,
   RecoveryWriteRequest,
   SearchResultDto,
+  TabShortcutCommand,
   TocCreateGroupRequest,
   TocDeleteRequest,
   TocEntryRefDto,
@@ -46,6 +47,15 @@ function invoke<T>(channel: string, input?: unknown): Promise<DeskResult<T>> {
 
 const api: DeskApi = {
   bootstrap: () => invoke<BootstrapPayload>(IPC_CHANNELS.bootstrap),
+  app: {
+    closeWindow: () => invoke<void>(IPC_CHANNELS.windowClose),
+    onTabShortcut: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, command: TabShortcutCommand): void =>
+        callback(command)
+      ipcRenderer.on(IPC_CHANNELS.tabShortcut, listener)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.tabShortcut, listener)
+    }
+  },
   workspace: {
     choose: () => invoke<WorkspaceOverview>(IPC_CHANNELS.workspaceChoose),
     set: (path) => invoke<WorkspaceOverview>(IPC_CHANNELS.workspaceSet, path),
@@ -83,6 +93,10 @@ const api: DeskApi = {
       invoke<NoteMutationDto>(IPC_CHANNELS.noteRename, request),
     updateConfig: (request: NoteUpdateConfigRequest) =>
       invoke<NoteMutationDto>(IPC_CHANNELS.noteUpdateConfig, request),
+    copyDirectoryPath: (knowledgeBaseId, noteUuid) =>
+      invoke<string>(IPC_CHANNELS.noteCopyDirectoryPath, { knowledgeBaseId, noteUuid }),
+    revealInFileManager: (knowledgeBaseId, noteUuid) =>
+      invoke<void>(IPC_CHANNELS.noteRevealInFileManager, { knowledgeBaseId, noteUuid }),
     onExternalChanged: (callback) => {
       const listener = (
         _event: Electron.IpcRendererEvent,
