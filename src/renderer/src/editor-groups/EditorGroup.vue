@@ -47,13 +47,21 @@ function beginDrag(event: DragEvent, tab: EditorTab): void {
   if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
 }
 
+function isTabDrag(event: DragEvent): boolean {
+  // `getData` is unavailable during dragenter/dragover, so gate on the transfer
+  // type list. Interior editor drags (e.g. Milkdown block reordering) never carry
+  // this MIME type, so they must not activate the split-drop overlay.
+  return Array.from(event.dataTransfer?.types ?? []).includes('text/x-tnotes-desk-tab')
+}
+
 function draggedTabId(event: DragEvent): string | null {
   return event.dataTransfer?.getData('text/x-tnotes-desk-tab') || null
 }
 
 function dropInGroup(event: DragEvent, index?: number): void {
-  event.preventDefault()
   dragOver.value = false
+  if (!isTabDrag(event)) return
+  event.preventDefault()
   const tabId = draggedTabId(event)
   if (tabId) editor.moveTab(tabId, props.group.id, index)
 }
@@ -69,11 +77,22 @@ function dropInRow(event: DragEvent, pinned: boolean, index?: number): void {
 }
 
 function dropSplit(event: DragEvent, placement: SplitPlacement): void {
+  if (!isTabDrag(event)) return
   event.preventDefault()
   event.stopPropagation()
   dragOver.value = false
   const tabId = draggedTabId(event)
   if (tabId) editor.splitTab(tabId, props.group.id, placement)
+}
+
+function handleGroupDragOver(event: DragEvent): void {
+  if (!isTabDrag(event)) return
+  event.preventDefault()
+}
+
+function handleGroupDragEnter(event: DragEvent): void {
+  if (!isTabDrag(event)) return
+  dragOver.value = true
 }
 
 function isDirty(tab: EditorTab): boolean {
@@ -138,9 +157,9 @@ async function runTabAction(
     class="editor-group"
     :class="{ active: editor.activeGroupId === group.id, 'drag-over': dragOver }"
     @mousedown="editor.activeGroupId = group.id"
-    @dragenter.prevent="dragOver = true"
+    @dragenter.prevent="handleGroupDragEnter"
     @dragleave.self="dragOver = false"
-    @dragover.prevent
+    @dragover="handleGroupDragOver"
     @drop="dropInGroup"
   >
     <div class="tabs-bar" :class="{ 'has-pinned': pinnedTabs.length, wrap: editor.wrapTabs }">

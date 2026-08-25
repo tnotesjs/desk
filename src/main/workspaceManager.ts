@@ -6,6 +6,7 @@ import path from 'node:path'
 import { createWorkspace } from '@tnotesjs/core/workspace'
 
 import { deskLog } from './log'
+import { resolvePathInsideDirectory } from './noteAssetPath'
 import { loadSettings, settingsForKnowledgeBase } from './settings'
 import { loadWorkspace, saveWorkspace } from './workspace'
 
@@ -482,20 +483,7 @@ export class WorkspaceManager {
   ): Promise<string> {
     const handle = this.getHandle(knowledgeBaseId)
     const note = await handle.workspace.notes.read(noteUuid)
-    if (
-      !requestedPath ||
-      /^(?:[a-z]+:|\/\/)/i.test(requestedPath) ||
-      requestedPath.split(/[\\/]/).includes('.git')
-    ) {
-      throw new Error('引用路径无效')
-    }
-    const noteRoot = await fs.realpath(note.directoryPath)
-    const candidate = path.resolve(noteRoot, requestedPath)
-    const absolutePath = await fs.realpath(candidate)
-    if (absolutePath !== noteRoot && !absolutePath.startsWith(`${noteRoot}${path.sep}`)) {
-      throw new Error('引用路径超出当前笔记目录')
-    }
-    return absolutePath
+    return resolvePathInsideDirectory(note.directoryPath, requestedPath)
   }
 
   private async noteMutation(

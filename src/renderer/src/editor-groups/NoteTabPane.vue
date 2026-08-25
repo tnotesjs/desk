@@ -1,12 +1,23 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
 
 import UiTooltip from '../components/UiTooltip.vue'
-import MarkdownEditor from '../markdown/MarkdownEditor.vue'
+import MarkdownSourceEditor from '../markdown/MarkdownSourceEditor.vue'
 import { useEditorStore } from '../stores/editor'
 import { useWorkspaceStore } from '../stores/workspace'
 
 import type { NoteEditorTab, NoteViewMode } from '../../../shared/contracts'
+
+interface MarkdownEditorHandle {
+  insertTextAt(text: string, position?: number): void
+  wrapSelection(prefix: string, suffix: string, placeholder?: string): void
+  prefixSelection(prefix: string): void
+  setLinePrefix(prefix: string): void
+}
+
+const MilkdownMarkdownEditor = defineAsyncComponent(
+  () => import('../markdown/MilkdownMarkdownEditor.vue')
+)
 
 const props = defineProps<{ tab: NoteEditorTab; groupId: string; active: boolean }>()
 const editor = useEditorStore()
@@ -15,7 +26,13 @@ const key = computed(() => `${props.tab.knowledgeBaseId}:${props.tab.noteUuid}`)
 const session = computed(() =>
   workspace.getDocumentSession(props.tab.knowledgeBaseId, props.tab.noteUuid)
 )
-const markdownEditor = ref<InstanceType<typeof MarkdownEditor> | null>(null)
+const milkdownMarkdownEditor = ref<MarkdownEditorHandle | null>(null)
+const markdownSourceEditor = ref<MarkdownEditorHandle | null>(null)
+const milkdownFailed = ref(false)
+const milkdownMountKey = ref(0)
+const markdownEditor = computed(() =>
+  props.tab.viewMode === 'source' ? markdownSourceEditor.value : milkdownMarkdownEditor.value
+)
 
 onMounted(() => {
   void workspace.ensureDocument(props.tab.knowledgeBaseId, props.tab.noteUuid)
@@ -26,7 +43,7 @@ function setMode(mode: NoteViewMode): void {
 }
 
 function updateContent(content: string): void {
-  workspace.updateDocumentContent(key.value, content)
+  workspace.updateDocumentContent(key.value, content, props.tab.viewMode === 'visual')
 }
 
 function activate(): void {
@@ -38,6 +55,7 @@ function insertTemplate(text: string): void {
 }
 
 async function pasteImage(file: File, insertAt: number): Promise<void> {
+  const targetEditor = markdownSourceEditor.value
   try {
     const attachment = await workspace.uploadImage(
       props.tab.knowledgeBaseId,
@@ -49,10 +67,39 @@ async function pasteImage(file: File, insertAt: number): Promise<void> {
         .replace(/\.[^.]+$/, '')
         .replaceAll('[', '')
         .replaceAll(']', '') || 'image'
-    markdownEditor.value?.insertTextAt(`![${alt}](${attachment.markdownPath})`, insertAt)
+    targetEditor?.insertTextAt(`![${alt}](${attachment.markdownPath})`, insertAt)
   } catch (cause) {
     workspace.error = cause instanceof Error ? cause.message : String(cause)
   }
+}
+
+async function uploadVisualImage(file: File): Promise<{ src: string; alt: string }> {
+  try {
+    const attachment = await workspace.uploadImage(
+      props.tab.knowledgeBaseId,
+      props.tab.noteUuid,
+      file
+    )
+    const alt =
+      file.name
+        .replace(/\.[^.]+$/, '')
+        .replaceAll('[', '')
+        .replaceAll(']', '') || 'image'
+    return { src: attachment.markdownPath, alt }
+  } catch (cause) {
+    workspace.error = cause instanceof Error ? cause.message : String(cause)
+    throw cause
+  }
+}
+
+function handleMilkdownFatal(message: string): void {
+  milkdownFailed.value = true
+  workspace.error = `Milkdown 无法打开这篇笔记：${message}`
+}
+
+function retryMilkdown(): void {
+  milkdownMountKey.value += 1
+  milkdownFailed.value = false
 }
 
 function openLink(url: string): void {
@@ -187,8 +234,34 @@ function openLink(url: string): void {
       </UiTooltip>
     </div>
 
-    <MarkdownEditor
-      ref="markdownEditor"
+    <MilkdownMarkdownEditor
+      v-if="tab.viewMode !== 'source' && !milkdownFailed"
+      :key="milkdownMountKey"
+      ref="milkdownMarkdownEditor"
+      class="editor-surface"
+      :content="session.content"
+      :mode="tab.viewMode"
+      :read-only="session.document.readOnly"
+      :knowledge-base-id="tab.knowledgeBaseId"
+      :note-uuid="tab.noteUuid"
+      :active="active"
+      :upload-image="uploadVisualImage"
+      @change="updateContent"
+      @open-link="openLink"
+      @open-note="workspace.openNoteByUuid(tab.knowledgeBaseId, $event)"
+      @fatal="handleMilkdownFatal"
+    />
+    <div v-else-if="tab.viewMode !== 'source'" class="editor-fatal" role="alert">
+      <strong>可视化编辑器加载失败</strong>
+      <span>内容没有被修改。你可以重试，或切换到源码视图继续编辑。</span>
+      <div>
+        <button type="button" @click="retryMilkdown">重试</button>
+        <button type="button" @click="setMode('source')">打开源码视图</button>
+      </div>
+    </div>
+    <MarkdownSourceEditor
+      v-else
+      ref="markdownSourceEditor"
       class="editor-surface"
       :content="session.content"
       :mode="tab.viewMode"
@@ -197,8 +270,6 @@ function openLink(url: string): void {
       :note-uuid="tab.noteUuid"
       :active="active"
       @change="updateContent"
-      @open-link="openLink"
-      @open-note="workspace.openNoteByUuid(tab.knowledgeBaseId, $event)"
       @paste-image="pasteImage"
     />
   </div>
@@ -350,6 +421,37 @@ function openLink(url: string): void {
 .editor-surface {
   flex: 1;
   min-height: 0;
+}
+
+.editor-fatal {
+  flex: 1;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  padding: 28px;
+  color: var(--muted);
+  text-align: center;
+  font-size: 12px;
+}
+
+.editor-fatal strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.editor-fatal > div {
+  display: flex;
+  gap: 8px;
+}
+
+.editor-fatal button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
 }
 
 .loading-note {

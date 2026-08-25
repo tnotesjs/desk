@@ -1,6 +1,6 @@
 # TNotes Desk
 
-TNotes 的本地优先桌面客户端，使用 Electron、Vue 3、TypeScript 和 CodeMirror 6 构建。
+TNotes 的本地优先桌面客户端，使用 Electron、Vue 3、TypeScript、Milkdown / Crepe 和 CodeMirror 6 构建。
 
 > Desk 当前处于开发预览阶段，功能和交互仍会持续调整。当前完成度、已知限制和提交约定见[开发进度说明](./docs/development-status.md)。
 
@@ -8,8 +8,9 @@ TNotes 的本地优先桌面客户端，使用 Electron、Vue 3、TypeScript 和
 
 - 选择一个父目录并扫描其直接子目录中的 `TNotes.*` 知识库；配置异常的知识库仍会显示诊断信息
 - 三栏导航：知识库、当前知识库的目录与 Git 变更、可拆分的编辑区域
-- 笔记标签支持可视化编辑、只读和 Markdown 源码三种视图；标题、目录和笔记编号规则复用 `@tnotesjs/core`
-- 支持 GFM、任务列表、表格、代码高亮、KaTeX、Mermaid、思维导图，以及 TNotes 的特殊组件语法
+- 笔记标签支持 Milkdown / Crepe 可视化编辑、只读和 CodeMirror Markdown 源码三种视图；标题、目录和笔记编号规则复用 `@tnotesjs/core`
+- 可视化编辑支持传统 Markdown、GFM、任务列表、表格、代码块和 KaTeX；TNotes 特殊组件以只读原子卡片保留，Mermaid 和思维导图暂按代码块编辑，专用交互后续迭代
+- 未编辑内容保存时保持字节级不变；编辑普通块时只更新目标块，避免 Git 中出现整篇格式化 diff
 - 网页标签与笔记标签相互独立，可访问普通网页，也可启动 `pnpm tn:dev` 后打开本地站点
 - 全文搜索使用后台 Worker 和持久化增量索引
 - Git 状态、ahead/behind、变更分组、拉取、提交推送、空闲自动推送和冲突 IDE 引导

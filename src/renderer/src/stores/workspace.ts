@@ -26,6 +26,8 @@ interface DocumentSession {
   document: NoteDocumentDto
   content: string
   dirty: boolean
+  /** At least one unsaved edit came from the source-preserving visual editor. */
+  preserveSourceOnSave: boolean
   externalConflict: boolean
   saving: boolean
 }
@@ -468,6 +470,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       document: next,
       content: next.content,
       dirty: false,
+      preserveSourceOnSave: false,
       externalConflict: false,
       saving: false
     }
@@ -515,11 +518,22 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     await syncToActiveTab()
   }
 
-  function updateDocumentContent(key: string, content: string): void {
+  function updateDocumentContent(key: string, content: string, preserveSource = false): void {
     const session = documents.value[key]
     if (!session || session.document.readOnly) return
     const dirty = content !== session.document.content
-    setDocumentSession(key, { ...session, content, dirty, externalConflict: false })
+    const preserveSourceOnSave = dirty
+      ? session.preserveSourceOnSave || preserveSource
+      : session.saving
+        ? session.preserveSourceOnSave || preserveSource
+        : false
+    setDocumentSession(key, {
+      ...session,
+      content,
+      dirty,
+      preserveSourceOnSave,
+      externalConflict: false
+    })
     editor.setNoteDirty(session.document.knowledgeBaseId, session.document.uuid, dirty)
     const currentTimer = autosaveTimers.get(key)
     if (currentTimer) clearTimeout(currentTimer)
@@ -554,6 +568,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   async function saveDocument(key: string): Promise<void> {
     const session = documents.value[key]
     if (!session || !session.dirty || session.document.readOnly || session.saving) return
+    const contentToSave = session.content
     setDocumentSession(key, { ...session, saving: true })
     const recoveryTimer = recoveryTimers.get(key)
     if (recoveryTimer) clearTimeout(recoveryTimer)
@@ -564,21 +579,54 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         await window.desk.notes.save({
           knowledgeBaseId: session.document.knowledgeBaseId,
           noteUuid: session.document.uuid,
-          content: session.content,
-          expectedRevision: session.document.revision
+          content: contentToSave,
+          expectedRevision: session.document.revision,
+          // Core still owns generated title/TOC updates. Only visual edits opt
+          // out of whole-document Prettier so unrelated source remains intact.
+          ...(session.preserveSourceOnSave ? { prettier: false } : {})
         })
       )
-      setDocumentSession(key, {
-        document: mutation.note,
-        content: mutation.note.content,
-        dirty: false,
-        externalConflict: false,
-        saving: false
-      })
-      editor.setNoteDirty(mutation.note.knowledgeBaseId, mutation.note.uuid, false)
+      const current = documents.value[key]
+      const changedWhileSaving = Boolean(current && current.content !== contentToSave)
+      if (changedWhileSaving && current) {
+        const stillDirty = current.content !== mutation.note.content
+        setDocumentSession(key, {
+          document: mutation.note,
+          content: current.content,
+          dirty: stillDirty,
+          preserveSourceOnSave: stillDirty && current.preserveSourceOnSave,
+          externalConflict: false,
+          saving: false
+        })
+        editor.setNoteDirty(mutation.note.knowledgeBaseId, mutation.note.uuid, stillDirty)
+      } else {
+        setDocumentSession(key, {
+          document: mutation.note,
+          content: mutation.note.content,
+          dirty: false,
+          preserveSourceOnSave: false,
+          externalConflict: false,
+          saving: false
+        })
+        editor.setNoteDirty(mutation.note.knowledgeBaseId, mutation.note.uuid, false)
+      }
       applyDetail(mutation.knowledgeBase)
-      deleteRecovery(mutation.note.knowledgeBaseId, mutation.note.uuid)
-      status.value = '已保存'
+      const remaining = documents.value[key]
+      if (!remaining?.dirty) {
+        deleteRecovery(mutation.note.knowledgeBaseId, mutation.note.uuid)
+        status.value = '已保存'
+      } else {
+        status.value = '已保存先前修改，仍有未保存内容'
+        if (settings.value?.autosave.enabled && !autosaveTimers.has(key)) {
+          autosaveTimers.set(
+            key,
+            setTimeout(() => {
+              autosaveTimers.delete(key)
+              void saveDocument(key).catch(() => undefined)
+            }, settings.value.autosave.delayMs)
+          )
+        }
+      }
     } catch (cause) {
       const current = documents.value[key] ?? session
       const isConflict = (cause as { code?: string }).code === 'REVISION_CONFLICT'
@@ -669,6 +717,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       document: next,
       content: next.content,
       dirty: false,
+      preserveSourceOnSave: false,
       externalConflict: false,
       saving: false
     })
@@ -683,6 +732,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       ...loaded,
       content: record.content,
       dirty: record.content !== loaded.document.content,
+      preserveSourceOnSave: record.content !== loaded.document.content,
       externalConflict: false
     })
     editor.setNoteDirty(
@@ -737,6 +787,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       document: next,
       content: session.content,
       dirty: session.content !== next.content,
+      preserveSourceOnSave: session.content !== next.content && session.preserveSourceOnSave,
       externalConflict: false,
       saving: false
     })
@@ -763,6 +814,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       document: mutation.note,
       content: mutation.note.content,
       dirty: false,
+      preserveSourceOnSave: false,
       externalConflict: false,
       saving: false
     })
@@ -831,6 +883,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
           document: mutation.note,
           content: mutation.note.content,
           dirty: false,
+          preserveSourceOnSave: false,
           externalConflict: false,
           saving: false
         })
@@ -890,6 +943,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       document: mutation.note,
       content: mutation.note.content,
       dirty: false,
+      preserveSourceOnSave: false,
       externalConflict: false,
       saving: false
     })
