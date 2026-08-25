@@ -48,7 +48,7 @@ describe('visual Markdown blocks', () => {
 
   it('rewrites local images through the restricted asset protocol and sanitizes HTML', () => {
     const [block] = collectVisualBlocks(
-      '![示例](./assets/demo.png)\n\n<img src="javascript:alert(1)" onerror="alert(1)">'
+      '![示例](./assets/demo.png)\n\n<img src="javascript:alert(1)" onerror="alert(1)" style="color: red">'
     )
     const html = renderVisualBlock(block, context)
 
@@ -56,6 +56,7 @@ describe('visual Markdown blocks', () => {
     expect(html).toContain('knowledgeBaseId=knowledge%2Fbase')
     expect(html).not.toContain('onerror')
     expect(html).not.toContain('javascript:')
+    expect(html).not.toContain('style=')
   })
 
   it('resolves reference-style links from definitions elsewhere in the document', () => {
@@ -345,5 +346,49 @@ describe('visual Markdown blocks', () => {
     expect(renderVisualBlock(blocks[0], context)).toContain('class="katex"')
     expect(renderVisualBlock(blocks[1], context)).toContain('tn-math-inline')
     expect(blocks.map((block) => block.source).join('\n\n')).toBe(source)
+  })
+
+  it('preserves KaTeX layout markup inside Markdown table cells', () => {
+    const source = [
+      '| equation | description |',
+      '| --- | --- |',
+      '| $x=\\frac{-b\\pm\\sqrt{b^2-4ac}}{2a}$ | quadratic formula |'
+    ].join('\n')
+    const [table] = collectVisualBlocks(source)
+    const html = renderVisualBlock(table, context)
+
+    expect(table.kind).toBe('table')
+    expect(html).toContain('<thead>')
+    expect(html).toContain('tn-math-inline')
+    expect(html).toContain('class="vlist-t"')
+    expect(html).toMatch(/style="height:[^"]+"/)
+  })
+
+  it('opens and applies a block formula editor without leaving visual mode', () => {
+    const source = '$$ x = 1 $$'
+    const parent = document.createElement('div')
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: source,
+        extensions: [markdown(), visualMarkdownExtensions(context, () => undefined)]
+      })
+    })
+    const preview = parent.querySelector<HTMLElement>('.tn-formula-preview')
+    const panel = parent.querySelector<HTMLElement>('.tn-formula-panel')
+    const textarea = parent.querySelector<HTMLTextAreaElement>('.tn-formula-source')
+
+    expect(preview).toBeTruthy()
+    expect(panel?.hidden).toBe(true)
+    preview?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(panel?.hidden).toBe(false)
+    expect(textarea?.value).toBe('x = 1')
+
+    textarea!.value = 'x = 2'
+    textarea?.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true })
+    )
+    expect(view.state.doc.toString()).toBe('$$ x = 2 $$')
+    view.destroy()
   })
 })

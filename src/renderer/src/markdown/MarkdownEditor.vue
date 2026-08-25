@@ -29,6 +29,7 @@ import DOMPurify from 'dompurify'
 import TurndownService from 'turndown'
 
 import { externalDocumentSync, visualMarkdownExtensions } from './visualExtension'
+import { createSlashCommandSource } from './slashCommands'
 
 import type { NoteViewMode } from '../../../shared/contracts'
 
@@ -123,6 +124,27 @@ function handlePaste(event: ClipboardEvent, editorView: EditorView): boolean {
   return true
 }
 
+function requestImageAt(position: number): void {
+  if (!view || isEffectivelyReadOnly()) return
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = 'image/*'
+  input.hidden = true
+  input.addEventListener(
+    'change',
+    () => {
+      const file = input.files?.[0]
+      input.remove()
+      if (file) emit('pasteImage', file, position)
+    },
+    { once: true }
+  )
+  document.body.append(input)
+  input.click()
+}
+
+const slashCommandSource = createSlashCommandSource(requestImageAt)
+
 function insertTextAt(text: string, position?: number): void {
   if (!view || isEffectivelyReadOnly()) return
   const target = Math.max(
@@ -211,7 +233,17 @@ function baseExtensions(): Extension[] {
     rectangularSelection(),
     crosshairCursor(),
     highlightActiveLine(),
-    autocompletion(),
+    autocompletion({
+      activateOnTyping: true,
+      icons: false,
+      maxRenderedOptions: 60,
+      override: [
+        (context) => {
+          if (props.mode !== 'visual' || props.readOnly) return null
+          return slashCommandSource(context)
+        }
+      ]
+    }),
     syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
     markdown(),
     EditorState.allowMultipleSelections.of(true),
@@ -819,6 +851,11 @@ onBeforeUnmount(() => {
   transition: background 120ms ease;
 }
 
+.markdown-editor.mode-readonly :deep(.cm-visual-live-h2.cm-visual-h2-foldable) {
+  padding-top: 16px;
+  padding-bottom: 16px;
+}
+
 .markdown-editor.mode-readonly :deep(.cm-visual-h2-foldable:hover),
 .markdown-editor.mode-readonly :deep(.cm-visual-h2-foldable:focus-visible),
 .markdown-editor.mode-readonly :deep(.cm-visual-h2-collapsed) {
@@ -896,15 +933,16 @@ onBeforeUnmount(() => {
   padding: 0;
 }
 
-.markdown-editor.mode-visual :deep(.cm-visual-block table) {
+.markdown-editor.mode-visual :deep(.cm-visual-block > table) {
   width: 100%;
   border-collapse: collapse;
   margin: 12px 0;
   font-size: 13px;
 }
 
-.markdown-editor.mode-visual :deep(.cm-visual-block th),
-.markdown-editor.mode-visual :deep(.cm-visual-block td) {
+.markdown-editor.mode-visual :deep(.cm-visual-block > table > thead > tr > th),
+.markdown-editor.mode-visual :deep(.cm-visual-block > table > tbody > tr > td),
+.markdown-editor.mode-visual :deep(.cm-visual-block > table > tfoot > tr > td) {
   border: 1px solid var(--border-strong);
   padding: 7px 9px;
   text-align: left;
@@ -919,18 +957,181 @@ onBeforeUnmount(() => {
 }
 
 .markdown-editor.mode-visual :deep(.tn-math-inline) {
+  max-width: 100%;
   margin: 0 0.08em;
 }
 
 .markdown-editor.mode-visual :deep(.tn-math-block) {
+  max-width: 100%;
+  min-width: 0;
   overflow-x: auto;
+  overflow-y: hidden;
   padding: 12px 8px;
   text-align: center;
+}
+
+.markdown-editor.mode-visual :deep(.tn-math-block > .katex-display) {
+  margin: 0.75em 0;
 }
 
 .markdown-editor.mode-visual :deep(.katex) {
   color: var(--document-text);
   font-size: 1.05em;
+}
+
+.markdown-editor.mode-visual :deep(.tn-formula-editor) {
+  margin: 12px 0;
+  border-radius: 9px;
+}
+
+.markdown-editor.mode-visual :deep(.tn-formula-preview) {
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease;
+}
+
+.markdown-editor.mode-visual :deep(.tn-formula-preview:hover),
+.markdown-editor.mode-visual :deep(.tn-formula-preview:focus-visible),
+.markdown-editor.mode-visual :deep(.tn-formula-editor.is-editing .tn-formula-preview) {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--border));
+  background: color-mix(in srgb, var(--selected) 62%, transparent);
+  outline: none;
+}
+
+.markdown-editor.mode-visual :deep(.tn-formula-preview-host) {
+  width: 100%;
+  min-width: 0;
+}
+
+.markdown-editor.mode-visual :deep(.tn-formula-panel) {
+  margin-top: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--panel);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.2);
+}
+
+.markdown-editor.mode-visual :deep(.tn-formula-panel[hidden]) {
+  display: none;
+}
+
+.markdown-editor.mode-visual :deep(.tn-formula-source) {
+  width: 100%;
+  min-height: 142px;
+  display: block;
+  resize: vertical;
+  border: 0;
+  background: color-mix(in srgb, var(--raised) 70%, var(--document-bg));
+  padding: 16px;
+  color: var(--document-text);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.65;
+  outline: none;
+}
+
+.markdown-editor.mode-visual :deep(.tn-formula-panel > footer) {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  padding: 7px 10px;
+}
+
+.markdown-editor.mode-visual :deep(.tn-formula-panel > footer > div) {
+  display: flex;
+  gap: 8px;
+}
+
+.markdown-editor.mode-visual :deep(.tn-formula-panel button) {
+  min-height: 32px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  padding: 0 10px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.markdown-editor.mode-visual :deep(.tn-formula-panel button:hover) {
+  border-color: var(--border);
+  background: var(--hover);
+  color: var(--document-text);
+}
+
+.markdown-editor.mode-visual :deep(.tn-formula-panel button.primary) {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--border));
+  background: var(--accent);
+  color: #fff;
+}
+
+.markdown-editor.mode-visual :deep(.cm-tooltip-autocomplete) {
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.28);
+  color: var(--document-text);
+}
+
+.markdown-editor.mode-visual :deep(.cm-tooltip-autocomplete > ul) {
+  min-width: min(360px, calc(100vw - 40px));
+  max-width: 420px;
+  max-height: min(520px, calc(100vh - 180px));
+  padding: 8px;
+  font-family: var(--font-sans);
+}
+
+.markdown-editor.mode-visual :deep(.cm-tooltip-autocomplete > ul > li) {
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-content: center;
+  column-gap: 12px;
+  border-radius: 7px;
+  padding: 6px 10px;
+}
+
+.markdown-editor.mode-visual :deep(.cm-tooltip-autocomplete > ul > li[aria-selected='true']) {
+  background: color-mix(in srgb, var(--selected) 82%, var(--raised));
+  color: var(--document-text);
+}
+
+.markdown-editor.mode-visual :deep(.cm-completionSection) {
+  padding: 10px 10px 5px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.markdown-editor.mode-visual :deep(.cm-completionLabel) {
+  overflow: hidden;
+  color: inherit;
+  font-size: 14px;
+  font-weight: 620;
+  text-overflow: ellipsis;
+}
+
+.markdown-editor.mode-visual :deep(.cm-completionDetail) {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.markdown-editor.mode-visual :deep(.cm-completionMatchedText) {
+  color: var(--accent-strong);
+  text-decoration: none;
 }
 
 .markdown-editor.mode-visual :deep(.cm-visual-generated) {

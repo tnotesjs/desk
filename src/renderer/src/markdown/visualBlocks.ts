@@ -55,6 +55,50 @@ function renderMath(source: string, displayMode: boolean): string {
   })
 }
 
+const KATEX_LAYOUT_STYLE =
+  /^(?:(?:height|vertical-align|top|margin-right|width|min-width):\s*-?(?:\d+(?:\.\d+)?|\.\d+)(?:em|ex|px|%)?;?\s*)+$/
+
+function sanitizeVisualHtml(rawHtml: string): string {
+  const preserveKatexLayout = (
+    node: Node,
+    data: { attrName: string; attrValue: string; keepAttr: boolean }
+  ): void => {
+    if (data.attrName !== 'style') return
+    const element = node as Element
+    const belongsToKatex =
+      typeof element.closest === 'function' && element.closest('.katex') !== null
+    data.keepAttr = belongsToKatex && KATEX_LAYOUT_STYLE.test(data.attrValue)
+  }
+
+  DOMPurify.addHook('uponSanitizeAttribute', preserveKatexLayout)
+  try {
+    return DOMPurify.sanitize(rawHtml, {
+      USE_PROFILES: { html: true, mathMl: true },
+      ADD_TAGS: ['section', 'article'],
+      ADD_ATTR: [
+        'class',
+        'disabled',
+        'data-code-tab',
+        'data-code-panel',
+        'data-reference',
+        'data-language',
+        'data-swiper-slide',
+        'data-swiper-action',
+        'data-swiper-status',
+        'data-note-ids',
+        'data-tooltip',
+        'data-mindmap-content',
+        'data-mermaid-content'
+      ],
+      FORBID_TAGS: ['script', 'style', 'iframe', 'form', 'object', 'embed'],
+      ALLOWED_URI_REGEXP:
+        /^(?:(?:https?|tnotes-asset):|(?:\.|\/|#)|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i
+    })
+  } finally {
+    DOMPurify.removeHook('uponSanitizeAttribute', preserveKatexLayout)
+  }
+}
+
 markdown.inline.ruler.before('escape', 'math_inline', (state, silent) => {
   if (state.src[state.pos] !== '$' || state.src[state.pos + 1] === '$') return false
   if (/\s/.test(state.src[state.pos + 1] ?? '')) return false
@@ -430,27 +474,5 @@ export function renderVisualBlock(
                   context,
                   definitions
                 )
-  return DOMPurify.sanitize(rawHtml, {
-    USE_PROFILES: { html: true, mathMl: true },
-    ADD_TAGS: ['section', 'article'],
-    ADD_ATTR: [
-      'class',
-      'disabled',
-      'data-code-tab',
-      'data-code-panel',
-      'data-reference',
-      'data-language',
-      'data-swiper-slide',
-      'data-swiper-action',
-      'data-swiper-status',
-      'data-note-ids',
-      'data-tooltip',
-      'data-mindmap-content',
-      'data-mermaid-content'
-    ],
-    FORBID_TAGS: ['script', 'style', 'iframe', 'form', 'object', 'embed'],
-    FORBID_ATTR: ['style'],
-    ALLOWED_URI_REGEXP:
-      /^(?:(?:https?|tnotes-asset):|(?:\.|\/|#)|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i
-  })
+  return sanitizeVisualHtml(rawHtml)
 }

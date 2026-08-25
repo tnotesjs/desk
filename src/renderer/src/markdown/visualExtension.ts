@@ -216,6 +216,9 @@ class VisualBlockWidget extends WidgetType {
   toDOM(view: EditorView): HTMLElement {
     const container = document.createElement('div')
     container.className = `cm-visual-block cm-visual-${this.block.kind}${this.block.generated ? ' cm-visual-generated' : ''}`
+    if (this.editable && this.block.kind === 'math') {
+      return this.editableMathBlockDOM(view, container)
+    }
     if (this.editable && supportsInlineVisualEditing(this.block)) {
       return this.editableSpecialBlockDOM(view, container)
     }
@@ -240,6 +243,137 @@ class VisualBlockWidget extends WidgetType {
     container.addEventListener('tn-destroy', cleanup, { once: true })
     this.installInteractions(container, view)
     return container
+  }
+
+  private editableMathBlockDOM(view: EditorView, container: HTMLElement): HTMLElement {
+    container.classList.add('tn-formula-editor')
+    const preview = document.createElement('div')
+    preview.className = 'tn-formula-preview'
+    preview.tabIndex = 0
+    preview.setAttribute('role', 'button')
+    preview.setAttribute('aria-label', '编辑公式')
+    preview.setAttribute('aria-expanded', 'false')
+    const previewHost = document.createElement('div')
+    previewHost.className = 'tn-formula-preview-host'
+    previewHost.innerHTML = this.html
+    preview.append(previewHost)
+
+    const panel = document.createElement('div')
+    panel.className = 'tn-formula-panel'
+    panel.hidden = true
+    const textarea = document.createElement('textarea')
+    textarea.className = 'tn-formula-source'
+    textarea.spellcheck = false
+    textarea.setAttribute('aria-label', 'LaTeX 公式源码')
+    textarea.value = this.formulaBody(this.block.source)
+    const footer = document.createElement('footer')
+    const help = document.createElement('button')
+    help.type = 'button'
+    help.className = 'tn-formula-help'
+    help.textContent = '?  LaTeX 语法帮助'
+    const actions = document.createElement('div')
+    const cancel = document.createElement('button')
+    cancel.type = 'button'
+    cancel.textContent = '取消'
+    const apply = document.createElement('button')
+    apply.type = 'button'
+    apply.className = 'primary'
+    apply.textContent = '确定（⌘ Enter）'
+    actions.append(cancel, apply)
+    footer.append(help, actions)
+    panel.append(textarea, footer)
+    container.append(preview, panel)
+
+    let previewTimer: ReturnType<typeof setTimeout> | null = null
+    const formulaSource = (body: string): string => {
+      const normalized = body.trim()
+      return this.block.source.includes('\n') ? `$$\n${normalized}\n$$` : `$$ ${normalized} $$`
+    }
+    const renderPreview = (): void => {
+      const source = formulaSource(textarea.value)
+      previewHost.innerHTML = renderVisualBlock({ ...this.block, source }, this.context)
+      requestAnimationFrame(() => view.requestMeasure())
+    }
+    const setEditing = (editing: boolean): void => {
+      container.classList.toggle('is-editing', editing)
+      panel.hidden = !editing
+      preview.setAttribute('aria-expanded', String(editing))
+      if (editing) {
+        requestAnimationFrame(() => {
+          textarea.focus()
+          textarea.setSelectionRange(textarea.value.length, textarea.value.length)
+          view.requestMeasure()
+        })
+      } else {
+        requestAnimationFrame(() => view.requestMeasure())
+      }
+    }
+    const cancelEditing = (): void => {
+      if (previewTimer) clearTimeout(previewTimer)
+      previewTimer = null
+      textarea.value = this.formulaBody(this.block.source)
+      previewHost.innerHTML = this.html
+      setEditing(false)
+    }
+    const applyFormula = (): void => {
+      const source = formulaSource(textarea.value)
+      if (!textarea.value.trim()) return
+      if (previewTimer) clearTimeout(previewTimer)
+      previewTimer = null
+      view.dispatch({
+        changes: { from: this.block.from, to: this.block.to, insert: source },
+        selection: { anchor: this.block.from + source.length }
+      })
+      requestAnimationFrame(() => view.focus())
+    }
+    const openEditor = (event: Event): void => {
+      event.preventDefault()
+      event.stopPropagation()
+      setEditing(true)
+    }
+
+    preview.addEventListener('mousedown', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+    })
+    preview.addEventListener('click', openEditor)
+    preview.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return
+      openEditor(event)
+    })
+    textarea.addEventListener('input', () => {
+      if (previewTimer) clearTimeout(previewTimer)
+      previewTimer = setTimeout(renderPreview, 140)
+    })
+    textarea.addEventListener('keydown', (event) => {
+      event.stopPropagation()
+      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+        event.preventDefault()
+        applyFormula()
+      } else if (event.key === 'Escape') {
+        event.preventDefault()
+        cancelEditing()
+      }
+    })
+    panel.addEventListener('mousedown', (event) => event.stopPropagation())
+    help.addEventListener('click', () => this.openLink('https://katex.org/docs/supported.html'))
+    cancel.addEventListener('click', cancelEditing)
+    apply.addEventListener('click', applyFormula)
+    container.addEventListener(
+      'tn-destroy',
+      () => {
+        if (previewTimer) clearTimeout(previewTimer)
+      },
+      { once: true }
+    )
+    return container
+  }
+
+  private formulaBody(source: string): string {
+    return source
+      .replace(/^\s*\$\$\s*/, '')
+      .replace(/\s*\$\$\s*$/, '')
+      .trim()
   }
 
   private installGeneratedToc(container: HTMLElement, view: EditorView): void {
