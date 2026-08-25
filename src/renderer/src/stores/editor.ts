@@ -1,6 +1,18 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 
+export const KNOWLEDGE_SIDEBAR_MIN = 52
+export const KNOWLEDGE_SIDEBAR_DEFAULT = 218
+export const KNOWLEDGE_SIDEBAR_MAX = 380
+export const KNOWLEDGE_SIDEBAR_COMPACT = 104
+export const NAVIGATOR_SIDEBAR_MIN = 200
+export const NAVIGATOR_SIDEBAR_DEFAULT = 292
+export const NAVIGATOR_SIDEBAR_MAX = 480
+
+export function clampSidebarWidth(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
 import {
   activateTab as activateTabInLayout,
   collapseEmptyGroups,
@@ -83,8 +95,8 @@ export const useEditorStore = defineStore('editor', () => {
   const activeGroupId = ref(firstGroup.id)
   const webStates = ref<Record<string, WebTabState>>({})
   const previewStates = ref<Record<string, PreviewStateDto>>({})
-  const knowledgeSidebarWidth = ref(218)
-  const navigatorSidebarWidth = ref(292)
+  const knowledgeSidebarWidth = ref(KNOWLEDGE_SIDEBAR_DEFAULT)
+  const navigatorSidebarWidth = ref(NAVIGATOR_SIDEBAR_DEFAULT)
   const knowledgeSidebarCollapsed = ref(false)
   const navigatorSidebarCollapsed = ref(false)
   const expandedTocNodes = ref<Record<string, string[]>>({})

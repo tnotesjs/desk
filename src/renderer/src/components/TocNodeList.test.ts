@@ -1,10 +1,15 @@
 // @vitest-environment happy-dom
 
 import { mount } from '@vue/test-utils'
-import { describe, expect, it, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { DeskTocNode } from '../../../shared/contracts'
 import TocNodeList from './TocNodeList.vue'
+
+beforeEach(() => {
+  setActivePinia(createPinia())
+})
 
 const sourceNote: Extract<DeskTocNode, { type: 'note' }> = {
   type: 'note',
@@ -124,6 +129,22 @@ describe('TocNodeList', () => {
     await wrapper.find('.node-label:not(.group)').trigger('dblclick')
 
     expect(wrapper.emitted('selectPermanent')).toEqual([[sourceNote]])
+    expect(wrapper.emitted('requestRename')).toBeUndefined()
+  })
+
+  it('does not request a rename when double-clicking a group', async () => {
+    const group: Extract<DeskTocNode, { type: 'group' }> = {
+      type: 'group',
+      title: '分组',
+      tocLineIndex: 0,
+      nodeId: 'group-a',
+      folderPath: ['分组'],
+      children: [sourceNote]
+    }
+    const wrapper = mountList([group])
+
+    await wrapper.find('.node-label.group').trigger('dblclick')
+
     expect(wrapper.emitted('requestRename')).toBeUndefined()
   })
 

@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import TocNodeList from './TocNodeList.vue'
 import UiTooltip from './UiTooltip.vue'
+import { classifyChangePath } from './changeCategory'
 import { useEditorStore } from '../stores/editor'
 import { useWorkspaceStore } from '../stores/workspace'
 
@@ -18,7 +19,12 @@ const emit = defineEmits<{
 const store = useWorkspaceStore()
 const editor = useEditorStore()
 const query = ref('')
-const changesExpanded = ref(true)
+const changesExpanded = ref(!(store.settings?.toc?.changesCollapsedByDefault ?? true))
+const tocExpanded = ref(true)
+const noteFileExpanded = ref(true)
+const configFileExpanded = ref(true)
+const otherFileExpanded = ref(true)
+const tocListRef = ref<InstanceType<typeof TocNodeList> | null>(null)
 const createMenuOpen = ref(false)
 const createMenu = ref<HTMLElement | null>(null)
 const previewBusy = ref(false)
@@ -68,6 +74,21 @@ const previewState = computed(() =>
 const gitState = computed(() =>
   store.selectedKnowledgeBaseId ? (store.gitStates[store.selectedKnowledgeBaseId] ?? null) : null
 )
+const tocShowIndex = computed(() => store.settings?.toc?.showNoteIndex !== false)
+
+const noteFileChanges = computed(() =>
+  (gitState.value?.changes ?? []).filter((change) => classifyChangePath(change.path) === 'noteFile')
+)
+const configFileChanges = computed(() =>
+  (gitState.value?.changes ?? []).filter(
+    (change) => classifyChangePath(change.path) === 'configFile'
+  )
+)
+const otherFileChanges = computed(() =>
+  (gitState.value?.changes ?? []).filter(
+    (change) => classifyChangePath(change.path) === 'otherFile'
+  )
+)
 const selectedTocNoteUuid = computed(() => {
   const tab = editor.activeTab
   return tab?.type === 'note' && tab.knowledgeBaseId === store.selectedKnowledgeBaseId
@@ -102,6 +123,15 @@ const statusSymbol: Record<string, string> = {
 function showNoteMenu(noteUuid: string): void {
   if (!store.selectedKnowledgeBaseId) return
   void window.desk.ide.showNoteMenu(store.selectedKnowledgeBaseId, noteUuid)
+}
+
+function showFilePathMenu(path: string): void {
+  if (!store.selectedKnowledgeBaseId) return
+  void window.desk.ide.showFileMenu(store.selectedKnowledgeBaseId, path)
+}
+
+function toggleTocBatch(): void {
+  tocListRef.value?.toggleAllCollapsed()
 }
 
 async function revealKnowledgeBase(): Promise<void> {
@@ -152,10 +182,10 @@ const previewLabel = computed(() => {
 
 <template>
   <aside class="navigator-sidebar">
-    <header class="navigator-header">
-      <div class="navigator-title">
-        <span>文章</span>
-        <strong>{{ store.selectedKnowledgeBase?.displayName ?? '未选择' }}</strong>
+    <div class="navigator-top">
+      <div class="search-wrap">
+        <span>⌕</span>
+        <input v-model="query" type="search" placeholder="搜索标题和正文" />
       </div>
       <div ref="createMenu" class="header-actions" :class="{ open: createMenuOpen }">
         <UiTooltip label="更多笔记操作">
@@ -178,38 +208,20 @@ const previewLabel = computed(() => {
             :disabled="!store.knowledgeBase || store.knowledgeBase.health !== 'ready'"
             @click="emit('createNote')"
           >
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
           </button>
         </UiTooltip>
         <div v-if="createMenuOpen" class="create-menu">
-          <button type="button" @click="chooseHeaderAction('group')">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h7l2 2h9v11H3z" /></svg>
-            <span><strong>新建分组</strong><small>整理 TOC.md 目录结构</small></span>
-          </button>
-          <button type="button" @click="chooseHeaderAction('preview')">
-            <svg v-if="previewState?.status === 'ready'" viewBox="0 0 24 24" aria-hidden="true">
-              <rect x="7" y="7" width="10" height="10" rx="1" />
-            </svg>
-            <svg v-else viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 9 6-9 6V6Z" /></svg>
-            <span
-              ><strong>{{ previewLabel }}</strong
-              ><small>在网页标签中查看站点</small></span
-            >
-          </button>
+          <button type="button" @click="chooseHeaderAction('group')">新建分组</button>
+          <button type="button" @click="chooseHeaderAction('preview')">{{ previewLabel }}</button>
           <hr />
-          <button type="button" @click="chooseHeaderAction('ide')">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M7 4h10v16H7zM4 8h3M17 8h3" />
-            </svg>
-            <span><strong>使用 IDE 打开</strong><small>跟随设置中的 IDE 配置</small></span>
-          </button>
-          <button type="button" @click="chooseHeaderAction('reveal')">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h7l2 2h9v11H3z" /></svg>
-            <span><strong>打开知识库目录</strong><small>在 Finder 中显示</small></span>
-          </button>
+          <button type="button" @click="chooseHeaderAction('ide')">使用 IDE 打开</button>
+          <button type="button" @click="chooseHeaderAction('reveal')">打开知识库目录</button>
         </div>
       </div>
-    </header>
+    </div>
 
     <div
       v-if="previewBusy || previewState?.status === 'starting' || previewState?.status === 'error'"
@@ -225,19 +237,34 @@ const previewLabel = computed(() => {
       </template>
     </div>
 
-    <div class="search-wrap">
-      <span>⌕</span>
-      <input v-model="query" type="search" placeholder="搜索标题和正文" />
-    </div>
-
     <div v-if="store.knowledgeBase" class="navigator-body">
       <section class="changes-section">
         <div class="section-heading git-heading">
-          <button type="button" class="change-toggle" @click="changesExpanded = !changesExpanded">
-            {{ changesExpanded ? '⌄' : '›' }}
+          <button
+            type="button"
+            class="section-toggle"
+            :aria-expanded="changesExpanded"
+            :aria-label="changesExpanded ? '折叠变更列表' : '展开变更列表'"
+            @click="changesExpanded = !changesExpanded"
+          >
+            <svg
+              class="chevron"
+              :class="{ collapsed: !changesExpanded }"
+              viewBox="0 0 16 16"
+              aria-hidden="true"
+            >
+              <path
+                d="M4 6l4 4 4-4"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <strong>变更</strong>
+            <span v-if="gitState?.behind" class="behind-state">↓{{ gitState.behind }}</span>
           </button>
-          <strong>变更</strong>
-          <span v-if="gitState?.behind" class="behind-state">↓{{ gitState.behind }}</span>
           <em>{{ gitState?.changes.length ?? 0 }}</em>
           <div class="git-actions">
             <UiTooltip label="刷新 Git 状态">
@@ -273,26 +300,142 @@ const previewLabel = computed(() => {
           </div>
         </div>
         <template v-if="changesExpanded">
-          <button
-            v-for="change in gitState?.changes ?? []"
-            :key="`${change.status}:${change.path}`"
-            type="button"
-            class="change-item"
-            :class="change.status"
-            :disabled="!change.noteUuid"
-            @click="
-              change.noteUuid &&
-              store.openNoteByUuid(store.selectedKnowledgeBaseId!, change.noteUuid)
-            "
-            @contextmenu.prevent="change.noteUuid && showNoteMenu(change.noteUuid)"
-          >
-            <span>{{ statusSymbol[change.status] }}</span>
-            <span>
-              <strong v-if="change.noteUuid">{{ change.noteIndex }} {{ change.noteTitle }}</strong>
-              <strong v-else>{{ change.path }}</strong>
-              <small v-if="change.noteUuid">{{ change.path }}</small>
-            </span>
-          </button>
+          <template v-if="noteFileChanges.length">
+            <button
+              type="button"
+              class="change-group-toggle"
+              :aria-expanded="noteFileExpanded"
+              :aria-label="noteFileExpanded ? '折叠笔记文件' : '展开笔记文件'"
+              @click="noteFileExpanded = !noteFileExpanded"
+            >
+              <svg
+                class="chevron"
+                :class="{ collapsed: !noteFileExpanded }"
+                viewBox="0 0 16 16"
+                aria-hidden="true"
+              >
+                <path
+                  d="M4 6l4 4 4-4"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              <strong>笔记文件</strong>
+              <em>{{ noteFileChanges.length }}</em>
+            </button>
+            <div v-show="noteFileExpanded">
+              <button
+                v-for="change in noteFileChanges"
+                :key="`note-file:${change.status}:${change.path}`"
+                type="button"
+                class="change-item"
+                :class="change.status"
+                :disabled="!change.noteUuid"
+                @click="store.openNoteByUuid(store.selectedKnowledgeBaseId!, change.noteUuid!)"
+                @contextmenu.prevent="showNoteMenu(change.noteUuid!)"
+              >
+                <span class="change-item__label">
+                  <strong v-if="change.noteUuid"
+                    ><template v-if="tocShowIndex">{{ change.noteIndex }} </template
+                    >{{ change.noteTitle }}</strong
+                  >
+                  <strong v-else>{{ change.path }}</strong>
+                  <small v-if="change.noteUuid">{{ change.path }}</small>
+                </span>
+                <span class="change-item__status">{{ statusSymbol[change.status] }}</span>
+              </button>
+            </div>
+          </template>
+
+          <template v-if="configFileChanges.length">
+            <button
+              type="button"
+              class="change-group-toggle"
+              :aria-expanded="configFileExpanded"
+              :aria-label="configFileExpanded ? '折叠笔记配置' : '展开笔记配置'"
+              @click="configFileExpanded = !configFileExpanded"
+            >
+              <svg
+                class="chevron"
+                :class="{ collapsed: !configFileExpanded }"
+                viewBox="0 0 16 16"
+                aria-hidden="true"
+              >
+                <path
+                  d="M4 6l4 4 4-4"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              <strong>笔记配置</strong>
+              <em>{{ configFileChanges.length }}</em>
+            </button>
+            <div v-show="configFileExpanded">
+              <button
+                v-for="change in configFileChanges"
+                :key="`config:${change.status}:${change.path}`"
+                type="button"
+                class="change-item"
+                :class="change.status"
+                @contextmenu.prevent="showFilePathMenu(change.path)"
+              >
+                <span class="change-item__label">
+                  <strong>{{ change.path }}</strong>
+                </span>
+                <span class="change-item__status">{{ statusSymbol[change.status] }}</span>
+              </button>
+            </div>
+          </template>
+
+          <template v-if="otherFileChanges.length">
+            <button
+              type="button"
+              class="change-group-toggle"
+              :aria-expanded="otherFileExpanded"
+              :aria-label="otherFileExpanded ? '折叠其它文件' : '展开其它文件'"
+              @click="otherFileExpanded = !otherFileExpanded"
+            >
+              <svg
+                class="chevron"
+                :class="{ collapsed: !otherFileExpanded }"
+                viewBox="0 0 16 16"
+                aria-hidden="true"
+              >
+                <path
+                  d="M4 6l4 4 4-4"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              <strong>其它文件</strong>
+              <em>{{ otherFileChanges.length }}</em>
+            </button>
+            <div v-show="otherFileExpanded">
+              <button
+                v-for="change in otherFileChanges"
+                :key="`other:${change.status}:${change.path}`"
+                type="button"
+                class="change-item"
+                :class="change.status"
+                @contextmenu.prevent="showFilePathMenu(change.path)"
+              >
+                <span class="change-item__label">
+                  <strong>{{ change.path }}</strong>
+                </span>
+                <span class="change-item__status">{{ statusSymbol[change.status] }}</span>
+              </button>
+            </div>
+          </template>
+
           <div v-if="gitState?.busy" class="changes-empty">
             {{
               gitState.busy === 'publish'
@@ -354,27 +497,67 @@ const previewLabel = computed(() => {
       </section>
 
       <section v-else class="toc-section">
-        <div class="section-heading static">
-          <span>⌄</span>
-          <strong>目录</strong>
+        <div class="section-heading toc-heading">
+          <button
+            type="button"
+            class="section-toggle"
+            :aria-expanded="tocExpanded"
+            :aria-label="tocExpanded ? '折叠目录' : '展开目录'"
+            @click="tocExpanded = !tocExpanded"
+          >
+            <svg
+              class="chevron"
+              :class="{ collapsed: !tocExpanded }"
+              viewBox="0 0 16 16"
+              aria-hidden="true"
+            >
+              <path
+                d="M4 6l4 4 4-4"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <strong>目录</strong>
+          </button>
+          <UiTooltip label="折叠/展开全部">
+            <button
+              type="button"
+              class="toc-batch-toggle"
+              aria-label="折叠/展开全部"
+              @click="toggleTocBatch"
+            >
+              <svg class="toc-batch-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  fill="currentColor"
+                  d="M2 4h20v2H2zm0 5.57L5.887 12L2 14.43zM7 11h15v2H7zm-5 7h20v2H2z"
+                />
+              </svg>
+            </button>
+          </UiTooltip>
           <em>{{ store.knowledgeBase.noteCount }}</em>
         </div>
-        <TocNodeList
-          v-if="visibleToc.length"
-          :nodes="visibleToc"
-          :selected-note-uuid="selectedTocNoteUuid"
-          :focus-request-id="tocFocusRequestId"
-          @select="store.selectNote"
-          @select-permanent="store.selectNote($event, undefined, true)"
-          @select-split="store.selectNote($event, 'right')"
-          @toggle-done="store.toggleDone"
-          @request-create="(node, placement) => emit('createNote', node, placement)"
-          @request-rename="emit('requestRename', $event)"
-          @request-delete="emit('requestDelete', $event)"
-          @move="store.moveTocNode"
-          @open-ide="showNoteMenu($event.uuid)"
-        />
-        <div v-else class="toc-empty">{{ query ? '没有匹配项' : 'TOC.md 中没有条目' }}</div>
+        <div v-show="tocExpanded">
+          <TocNodeList
+            v-if="visibleToc.length"
+            ref="tocListRef"
+            :nodes="visibleToc"
+            :selected-note-uuid="selectedTocNoteUuid"
+            :focus-request-id="tocFocusRequestId"
+            @select="store.selectNote"
+            @select-permanent="store.selectNote($event, undefined, true)"
+            @select-split="store.selectNote($event, 'right')"
+            @toggle-done="store.toggleDone"
+            @request-create="(node, placement) => emit('createNote', node, placement)"
+            @request-rename="emit('requestRename', $event)"
+            @request-delete="emit('requestDelete', $event)"
+            @move="store.moveTocNode"
+            @open-ide="showNoteMenu($event.uuid)"
+          />
+          <div v-else class="toc-empty">{{ query ? '没有匹配项' : 'TOC.md 中没有条目' }}</div>
+        </div>
       </section>
     </div>
 
@@ -392,158 +575,10 @@ const previewLabel = computed(() => {
   border-right: 1px solid var(--border);
 }
 
-.navigator-header {
-  height: 64px;
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 10px 8px 13px;
-  border-bottom: 1px solid var(--border);
-}
-
-.navigator-title {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.navigator-title span {
-  color: var(--muted);
-  font-size: 10px;
-}
-
-.navigator-title strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.new-button,
-.menu-button {
-  height: 28px;
-  width: 28px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--raised);
-  color: var(--text);
-  cursor: pointer;
-  font-size: 18px;
-}
-
-.new-button {
-  display: grid;
-  place-items: center;
-}
-
-.new-button svg {
-  width: 15px;
-  height: 15px;
-}
-
-.menu-button {
-  line-height: 20px;
-}
-
-.new-button svg,
-.create-menu svg {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.header-actions {
-  position: relative;
-  display: flex;
-  gap: 6px;
-}
-
-.header-actions.open :deep(.ui-tooltip-popover) {
-  display: none;
-}
-
-.create-menu {
-  position: absolute;
-  z-index: 80;
-  top: 35px;
-  right: 0;
-  width: 184px;
-  overflow: hidden;
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  background: var(--raised);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.34);
-  padding: 4px;
-}
-
-.create-menu button {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text);
-  padding: 8px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.create-menu button:hover {
-  background: var(--hover);
-}
-
-.create-menu hr {
-  border: 0;
-  border-top: 1px solid var(--border);
-  margin: 4px 6px;
-}
-
-.create-menu svg {
-  width: 18px;
-  height: 18px;
-  flex: none;
-  color: var(--accent-strong);
-}
-
-.create-menu span {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.create-menu strong {
-  font-size: 10px;
-  font-weight: 620;
-}
-
-.create-menu small {
-  color: var(--muted);
-  font-size: 8px;
-}
-
-.new-button:hover:not(:disabled),
-.menu-button:hover:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
 @keyframes spin {
   to {
     transform: rotate(360deg);
   }
-}
-
-.new-button:disabled,
-.menu-button:disabled {
-  opacity: 0.4;
 }
 
 .preview-feedback {
@@ -585,6 +620,117 @@ const previewLabel = computed(() => {
   cursor: pointer;
   padding: 3px 7px;
   font-size: 9px;
+}
+
+.navigator-top {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--border);
+}
+
+.navigator-top .search-wrap {
+  height: auto;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border-bottom: 0;
+}
+
+.header-actions {
+  flex: none;
+  position: relative;
+  display: flex;
+  gap: 6px;
+}
+
+.header-actions.open > .ui-tooltip-host :deep(.ui-tooltip-popover) {
+  display: none;
+}
+
+.new-button,
+.menu-button {
+  height: 28px;
+  width: 28px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--raised);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 18px;
+}
+
+.new-button {
+  display: grid;
+  place-items: center;
+}
+
+.new-button svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.new-button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.menu-button {
+  line-height: 20px;
+}
+
+.new-button:hover:not(:disabled),
+.menu-button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.new-button:disabled,
+.menu-button:disabled {
+  opacity: 0.4;
+}
+
+.create-menu {
+  position: absolute;
+  z-index: 80;
+  top: 35px;
+  right: 0;
+  width: 184px;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--raised);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.34);
+  padding: 4px;
+}
+
+.create-menu button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  padding: 8px;
+  font-size: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.create-menu button:hover {
+  background: var(--hover);
+}
+
+.create-menu hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 4px 6px;
 }
 
 .search-wrap {
@@ -670,7 +816,6 @@ const previewLabel = computed(() => {
   letter-spacing: 0;
 }
 
-.change-toggle,
 .git-actions button {
   border: 0;
   border-radius: 4px;
@@ -679,10 +824,68 @@ const previewLabel = computed(() => {
   cursor: pointer;
 }
 
-.change-toggle {
-  width: 18px;
+.section-toggle {
+  align-self: stretch;
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   padding: 0;
-  font-size: 15px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+
+.chevron {
+  flex: none;
+  width: 18px;
+  height: 12px;
+  transition: transform 120ms ease;
+}
+
+.chevron.collapsed {
+  transform: rotate(-90deg);
+}
+
+.toc-batch-toggle {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.toc-batch-toggle:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.toc-batch-toggle:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 1px;
+}
+
+.toc-batch-icon {
+  width: 14px;
+  height: 14px;
+}
+
+button.section-heading {
+  font-family: inherit;
+  appearance: none;
+  cursor: pointer;
 }
 
 .git-actions {
@@ -713,6 +916,46 @@ const previewLabel = computed(() => {
   font-weight: 700;
 }
 
+.change-group-toggle {
+  align-self: stretch;
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px 3px 22px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-align: left;
+}
+
+.change-group-toggle:hover {
+  color: var(--text);
+}
+
+.change-group-toggle strong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.change-group-toggle em {
+  min-width: 18px;
+  border-radius: 9px;
+  background: var(--raised);
+  padding: 1px 5px;
+  text-align: center;
+  font-style: normal;
+  font-size: 9px;
+}
+
 .change-item {
   width: 100%;
   display: flex;
@@ -722,7 +965,7 @@ const previewLabel = computed(() => {
   border-radius: 5px;
   background: transparent;
   color: var(--text);
-  padding: 5px 7px 5px 12px;
+  padding: 5px 7px 5px 45px;
   text-align: left;
 }
 
@@ -734,38 +977,41 @@ const previewLabel = computed(() => {
   background: var(--hover);
 }
 
-.change-item > span:first-child {
-  width: 11px;
-  flex: none;
-  color: var(--warning);
-  font-family: var(--font-mono);
-  font-size: 9px;
-  font-weight: 750;
-}
-
-.change-item.conflicted > span:first-child {
-  color: var(--danger);
-}
-
-.change-item > span:last-child {
+.change-item__label {
+  flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
 }
 
-.change-item strong,
-.change-item small {
+.change-item__status {
+  flex: none;
+  min-width: 18px;
+  padding: 1px 5px;
+  color: var(--warning);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 750;
+  text-align: center;
+}
+
+.change-item.conflicted > .change-item__status {
+  color: var(--danger);
+}
+
+.change-item__label strong,
+.change-item__label small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.change-item strong {
+.change-item__label strong {
   font-size: 10px;
   font-weight: 560;
 }
 
-.change-item small {
+.change-item__label small {
   color: var(--muted);
   font-size: 8px;
 }

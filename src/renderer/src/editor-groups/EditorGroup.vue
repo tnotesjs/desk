@@ -357,15 +357,10 @@ async function runTabAction(
 
 .tabs-bar {
   flex: none;
-  max-height: 140px;
   overflow-x: hidden;
-  overflow-y: auto;
+  overflow-y: hidden;
   border-bottom: 1px solid var(--border);
   background: var(--tabs-bg);
-}
-
-.tabs-bar:not(.wrap) {
-  overflow-y: hidden;
 }
 
 .tabs-row {

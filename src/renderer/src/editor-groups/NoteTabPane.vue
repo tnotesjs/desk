@@ -286,6 +286,7 @@ function openLink(url: string): void {
 }
 
 .document-toolbar {
+  position: relative;
   height: 40px;
   flex: none;
   display: flex;
@@ -315,8 +316,10 @@ function openLink(url: string): void {
 }
 
 .view-switcher {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
-  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 2px;
   gap: 1px;

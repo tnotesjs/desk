@@ -434,6 +434,29 @@ onBeforeUnmount(() => {
   --crepe-color-hover: var(--hover);
   --crepe-color-selected: color-mix(in srgb, var(--accent) 45%, transparent);
   --crepe-color-inline-area: var(--border);
+  --crepe-shadow-1: 0 6px 18px rgba(0, 0, 0, 0.28);
+  --crepe-shadow-2: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-toolbar) {
+  background: var(--raised);
+  border: 1px solid var(--border);
+  box-shadow: var(--crepe-shadow-1);
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-toolbar .toolbar-item svg) {
+  color: var(--editor-text);
+  fill: var(--editor-text);
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-toolbar .toolbar-item:hover svg) {
+  color: var(--text);
+  fill: var(--text);
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-toolbar .toolbar-item.active svg) {
+  color: var(--accent-strong);
+  fill: var(--accent-strong);
 }
 
 .milkdown-markdown-editor :deep(.ProseMirror) {
@@ -540,14 +563,14 @@ onBeforeUnmount(() => {
 .milkdown-markdown-editor :deep(.desk-generated-toc__toggle-icon) {
   width: 0;
   height: 0;
-  border-left: 5px solid currentColor;
-  border-top: 4px solid transparent;
-  border-bottom: 4px solid transparent;
+  border-top: 5px solid currentColor;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
   transition: transform 120ms ease;
 }
 
 .milkdown-markdown-editor :deep(.desk-generated-toc.is-collapsed .desk-generated-toc__toggle-icon) {
-  transform: rotate(90deg);
+  transform: rotate(-90deg);
 }
 
 .milkdown-markdown-editor :deep(.desk-generated-toc__list) {
@@ -577,8 +600,18 @@ onBeforeUnmount(() => {
 }
 
 .milkdown-markdown-editor :deep(.desk-generated-toc.ProseMirror-selectednode) {
-  outline: 2px solid var(--accent-strong);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-generated-toc::selection),
+.milkdown-markdown-editor :deep(.desk-generated-toc *::selection),
+.milkdown-markdown-editor :deep(.desk-generated-title::selection),
+.milkdown-markdown-editor :deep(.desk-generated-title *::selection),
+.milkdown-markdown-editor :deep(.desk-raw-block::selection),
+.milkdown-markdown-editor :deep(.desk-raw-block *::selection) {
+  background: transparent;
+  color: inherit;
 }
 
 .milkdown-markdown-editor :deep(.milkdown-code-block .language-picker) {

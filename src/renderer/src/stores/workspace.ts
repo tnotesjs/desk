@@ -683,6 +683,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     return updated
   }
 
+  function applySettings(next: AppSettings): void {
+    settings.value = next
+    editor.configure(next)
+  }
+
   async function copyNoteDirectoryPath(tab: NoteEditorTab): Promise<void> {
     const result = await window.desk.notes.copyDirectoryPath(tab.knowledgeBaseId, tab.noteUuid)
     if (!result.ok) {
@@ -1033,6 +1038,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     writeLocalAttachment,
     uploadImage,
     updateSettings,
+    applySettings,
     copyNoteDirectoryPath,
     revealNoteInFileManager,
     reloadCurrentDocument,

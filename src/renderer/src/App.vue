@@ -5,7 +5,16 @@ import EditorPane from './components/EditorPane.vue'
 import KnowledgeSidebar from './components/KnowledgeSidebar.vue'
 import NavigatorSidebar from './components/NavigatorSidebar.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
+import ToastHost from './components/ToastHost.vue'
 import { useEditorStore } from './stores/editor'
+import {
+  clampSidebarWidth,
+  KNOWLEDGE_SIDEBAR_MAX,
+  KNOWLEDGE_SIDEBAR_MIN,
+  NAVIGATOR_SIDEBAR_MAX,
+  NAVIGATOR_SIDEBAR_MIN
+} from './stores/editor'
+import { pushToast } from './stores/toast'
 import { useWorkspaceStore } from './stores/workspace'
 
 import type {
@@ -21,7 +30,7 @@ const createDialogOpen = ref(false)
 const settingsOpen = ref(false)
 const createTitle = ref('')
 const createPlacement = ref<NoteCreateRequest['placement']>({ type: 'root', placement: 'end' })
-const createLocationLabel = ref('添加到目录根节点')
+const createRootPosition = ref<'top' | 'end'>('top')
 const groupDialogOpen = ref(false)
 const groupTitle = ref('')
 const renameNode = ref<DeskTocNode | null>(null)
@@ -40,8 +49,56 @@ let unsubscribeTabShortcut: (() => void) | null = null
 const workspaceColumns = computed(() => {
   const knowledgeWidth = editor.knowledgeSidebarCollapsed ? 48 : editor.knowledgeSidebarWidth
   const navigatorWidth = editor.navigatorSidebarCollapsed ? 0 : editor.navigatorSidebarWidth
-  return `${knowledgeWidth}px ${navigatorWidth}px minmax(0, 1fr)`
+  const reversed = store.settings?.workspaceLayout === 'content-dir-kb'
+  return reversed
+    ? `minmax(0, 1fr) 6px ${navigatorWidth}px 6px ${knowledgeWidth}px`
+    : `${knowledgeWidth}px 6px ${navigatorWidth}px 6px minmax(0, 1fr)`
 })
+
+const workspaceAreas = computed(() =>
+  store.settings?.workspaceLayout === 'content-dir-kb' ? '"i5 i4 i3 i2 i1"' : '"i1 i2 i3 i4 i5"'
+)
+
+let resizeTarget: 'knowledge' | 'navigator' | null = null
+let resizeStartX = 0
+let resizeStartWidth = 0
+
+function startResize(target: 'knowledge' | 'navigator', event: MouseEvent): void {
+  resizeTarget = target
+  resizeStartX = event.clientX
+  resizeStartWidth =
+    target === 'knowledge' ? editor.knowledgeSidebarWidth : editor.navigatorSidebarWidth
+  window.addEventListener('mousemove', onResizeMove)
+  window.addEventListener('mouseup', onResizeEnd)
+  document.body.classList.add('is-resizing')
+}
+
+function onResizeMove(event: MouseEvent): void {
+  if (!resizeTarget) return
+  const reversed = store.settings?.workspaceLayout === 'content-dir-kb'
+  const delta = (event.clientX - resizeStartX) * (reversed ? -1 : 1)
+  if (resizeTarget === 'knowledge') {
+    editor.knowledgeSidebarWidth = clampSidebarWidth(
+      resizeStartWidth + delta,
+      KNOWLEDGE_SIDEBAR_MIN,
+      KNOWLEDGE_SIDEBAR_MAX
+    )
+  } else {
+    editor.navigatorSidebarWidth = clampSidebarWidth(
+      resizeStartWidth + delta,
+      NAVIGATOR_SIDEBAR_MIN,
+      NAVIGATOR_SIDEBAR_MAX
+    )
+  }
+}
+
+function onResizeEnd(): void {
+  resizeTarget = null
+  window.removeEventListener('mousemove', onResizeMove)
+  window.removeEventListener('mouseup', onResizeEnd)
+  document.body.classList.remove('is-resizing')
+  void persistSession()
+}
 
 async function persistSession(): Promise<void> {
   const result = await window.desk.session.save(editor.toSession(store.selectedKnowledgeBaseId))
@@ -114,18 +171,15 @@ function openCreateDialog(
 ): void {
   createTitle.value = ''
   if (!node) {
-    createPlacement.value = { type: 'root', placement: 'end' }
-    createLocationLabel.value = '添加到目录根节点'
+    createRootPosition.value = store.settings?.createNotePosition ?? 'top'
+    createPlacement.value = {
+      type: 'root',
+      placement: createRootPosition.value === 'top' ? 'start' : 'end'
+    }
   } else if (node.type === 'note') {
     createPlacement.value = { type: 'note', targetNoteUuid: node.uuid, placement }
-    createLocationLabel.value = `${node.noteIndex}. ${node.title} · ${
-      placement === 'before' ? '上方' : placement === 'after' ? '下方' : '子笔记'
-    }`
   } else {
     createPlacement.value = { type: 'folder', folderPath: [...node.folderPath], placement }
-    createLocationLabel.value = `${node.title} · ${
-      placement === 'before' ? '上方' : placement === 'after' ? '下方' : '组内'
-    }`
   }
   createDialogOpen.value = true
 }
@@ -135,7 +189,14 @@ async function confirmCreate(): Promise<void> {
   if (!title || dialogBusy.value) return
   dialogBusy.value = true
   try {
-    await store.createNote(title, createPlacement.value)
+    const placement =
+      createPlacement.value?.type === 'root'
+        ? ({
+            type: 'root',
+            placement: createRootPosition.value === 'top' ? 'start' : 'end'
+          } as NoteCreateRequest['placement'])
+        : createPlacement.value
+    await store.createNote(title, placement)
     createDialogOpen.value = false
   } finally {
     dialogBusy.value = false
@@ -247,6 +308,7 @@ watch(() => store.settings, applyAppearance, { deep: true })
 watch(
   () => store.status,
   (status) => {
+    if (status) pushToast(status, 'success')
     if (statusTimer) clearTimeout(statusTimer)
     statusTimer = status
       ? setTimeout(() => {
@@ -254,6 +316,16 @@ watch(
           if (store.status === status) store.status = null
         }, 3600)
       : null
+  }
+)
+
+watch(
+  () => store.error,
+  (error) => {
+    if (error) {
+      pushToast(error, 'error')
+      store.error = null
+    }
   }
 )
 
@@ -288,13 +360,6 @@ onUnmounted(() => {
   <div class="desk-shell">
     <header class="titlebar">
       <div class="traffic-space" />
-      <div class="brand">
-        <span class="brand-mark">T</span>
-        <strong>TNotes Desk</strong>
-      </div>
-      <div class="workspace-name" :title="store.overview.path ?? ''">
-        {{ store.overview.path ?? '未选择工作区' }}
-      </div>
       <div class="titlebar-actions">
         <span v-if="store.saving" class="sync-state">正在保存</span>
         <span v-else-if="store.dirty" class="sync-state dirty">未保存</span>
@@ -309,28 +374,34 @@ onUnmounted(() => {
       </div>
     </header>
 
-    <div v-if="store.error" class="global-banner error">
-      <span>{{ store.error }}</span>
-      <button type="button" @click="store.error = null">×</button>
-    </div>
-    <div v-else-if="store.status" class="global-banner status">
-      <span>{{ store.status }}</span>
-      <button type="button" @click="store.status = null">×</button>
-    </div>
-
     <main
       v-if="store.hasWorkspace"
       class="workspace-layout"
-      :style="{ gridTemplateColumns: workspaceColumns }"
+      :style="{ gridTemplateColumns: workspaceColumns, gridTemplateAreas: workspaceAreas }"
     >
-      <KnowledgeSidebar />
+      <KnowledgeSidebar style="grid-area: i1" />
+      <div
+        class="resize-handle"
+        role="separator"
+        aria-orientation="vertical"
+        style="grid-area: i2"
+        @mousedown="startResize('knowledge', $event)"
+      />
       <NavigatorSidebar
+        style="grid-area: i3"
         @create-note="openCreateDialog"
         @create-group="openGroupDialog"
         @request-rename="openRenameDialog"
         @request-delete="requestDelete"
       />
-      <EditorPane />
+      <div
+        class="resize-handle"
+        role="separator"
+        aria-orientation="vertical"
+        style="grid-area: i4"
+        @mousedown="startResize('navigator', $event)"
+      />
+      <EditorPane style="grid-area: i5" />
     </main>
 
     <main v-else class="welcome">
@@ -348,18 +419,19 @@ onUnmounted(() => {
     <div v-if="createDialogOpen" class="dialog-backdrop" @mousedown.self="createDialogOpen = false">
       <form class="dialog" @submit.prevent="confirmCreate">
         <header>
-          <div>
-            <span>新建笔记</span>
-            <strong>{{ createLocationLabel }}</strong>
-          </div>
+          <strong>新增笔记</strong>
           <button type="button" @click="createDialogOpen = false">×</button>
         </header>
         <label>
-          <span>标题</span>
-          <input v-model="createTitle" autofocus placeholder="例如：Desk 使用说明" />
+          <input v-model="createTitle" autofocus placeholder="请输入笔记标题" />
         </label>
         <footer>
-          <button type="button" class="secondary" @click="createDialogOpen = false">取消</button>
+          <label v-if="createPlacement?.type === 'root'" class="position-field">
+            <select v-model="createRootPosition">
+              <option value="top">顶部新增</option>
+              <option value="end">末尾追加</option>
+            </select>
+          </label>
           <button
             type="button"
             class="primary"
@@ -565,6 +637,8 @@ onUnmounted(() => {
       </section>
     </div>
   </div>
+
+  <ToastHost />
 </template>
 
 <style scoped>
@@ -608,18 +682,6 @@ onUnmounted(() => {
   flex: none;
 }
 
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 11px;
-}
-
-.brand strong {
-  font-weight: 650;
-}
-
-.brand-mark,
 .welcome-mark {
   display: grid;
   place-items: center;
@@ -629,24 +691,9 @@ onUnmounted(() => {
   font-weight: 800;
 }
 
-.brand-mark {
-  width: 21px;
-  height: 21px;
-  font-size: 11px;
-}
-
-.workspace-name {
-  flex: 1;
-  overflow: hidden;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--muted);
-  font-size: 10px;
-}
-
 .titlebar-actions {
   width: 130px;
+  margin-left: auto;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -684,6 +731,34 @@ onUnmounted(() => {
   min-height: 0;
   display: grid;
   grid-template-columns: 218px 292px minmax(0, 1fr);
+}
+
+.workspace-layout .resize-handle {
+  position: relative;
+  cursor: col-resize;
+  background: transparent;
+}
+
+.workspace-layout .resize-handle::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: transparent;
+  transition: background 120ms ease;
+}
+
+.workspace-layout .resize-handle:hover::before,
+body.is-resizing .workspace-layout .resize-handle::before {
+  background: var(--accent);
+}
+
+body.is-resizing {
+  cursor: col-resize;
+  user-select: none;
 }
 
 .global-banner {
@@ -813,6 +888,7 @@ onUnmounted(() => {
 }
 
 .dialog header strong {
+  flex: 1;
   font-size: 13px;
   font-weight: 650;
 }
@@ -864,6 +940,35 @@ onUnmounted(() => {
   padding: 0 12px;
   cursor: pointer;
   font-size: 11px;
+}
+
+.dialog footer .position-field {
+  display: flex;
+  align-items: center;
+  padding: 0;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.dialog select {
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--input-bg)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4' fill='none' stroke='%2391a0b5' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    no-repeat right 9px center / 12px 12px;
+  color: var(--text);
+  padding: 0 26px 0 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.dialog select:focus {
+  border-color: var(--accent);
 }
 
 .dialog footer .secondary {

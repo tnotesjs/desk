@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { inject, nextTick, provide, ref, watch } from 'vue'
+import { computed, inject, nextTick, provide, ref, watch } from 'vue'
 
+import { useWorkspaceStore } from '../stores/workspace'
 import type { DeskTocNode } from '../../../shared/contracts'
 import type { InjectionKey, Ref } from 'vue'
 
@@ -34,6 +35,12 @@ const focusedNoteUuid = ref<string | null>(null)
 const dropTarget = ref<{ nodeId: string; placement: 'before' | 'after' | 'inside' } | null>(null)
 const draggingNodeId = ref<string | null>(null)
 let expandTimer: ReturnType<typeof setTimeout> | null = null
+
+const store = useWorkspaceStore()
+const tocShowIndex = computed(() => store.settings?.toc?.showNoteIndex !== false)
+const tocShowStatus = computed(() => store.settings?.toc?.showNoteStatus !== false)
+const tocDoneEmoji = computed(() => store.settings?.toc?.doneEmoji ?? '✅')
+const tocUndoneEmoji = computed(() => store.settings?.toc?.undoneEmoji ?? '⏰')
 
 function parentPathToNote(
   nodes: DeskTocNode[],
@@ -165,6 +172,25 @@ function runMenuAction(event: MouseEvent, action: () => void): void {
   action()
   ;(event.currentTarget as HTMLElement).closest('details')?.removeAttribute('open')
 }
+function collectBranchIds(nodes: DeskTocNode[]): string[] {
+  const ids: string[] = []
+  for (const node of nodes) {
+    if (node.children.length) {
+      ids.push(node.nodeId)
+      ids.push(...collectBranchIds(node.children))
+    }
+  }
+  return ids
+}
+
+function toggleAllCollapsed(): void {
+  const branchIds = collectBranchIds(props.nodes)
+  const allCollapsed =
+    branchIds.length > 0 && branchIds.every((nodeId) => collapsed.value.has(nodeId))
+  collapsed.value = allCollapsed ? new Set<string>() : new Set(branchIds)
+}
+
+defineExpose({ toggleAllCollapsed })
 </script>
 
 <template>
@@ -203,25 +229,20 @@ function runMenuAction(event: MouseEvent, action: () => void): void {
         <span v-else class="disclosure spacer" />
 
         <template v-if="node.type === 'group'">
-          <button
-            type="button"
-            class="node-label group"
-            @click="toggle(node.nodeId)"
-            @dblclick.stop="emit('requestRename', node)"
-          >
+          <button type="button" class="node-label group" @click="toggle(node.nodeId)">
             {{ node.title }}
           </button>
         </template>
         <template v-else>
           <button
+            v-if="tocShowStatus"
             type="button"
             class="done-toggle"
             :class="{ done: node.completed }"
             :aria-label="node.completed ? '标记为未完成' : '标记为完成'"
-            :data-tooltip="node.completed ? '标记为未完成' : '标记为完成'"
             @click="emit('toggleDone', node)"
           >
-            {{ node.completed ? '✓' : '' }}
+            {{ node.completed ? tocDoneEmoji : tocUndoneEmoji }}
           </button>
           <button
             type="button"
@@ -229,7 +250,7 @@ function runMenuAction(event: MouseEvent, action: () => void): void {
             @click="emit('select', node)"
             @dblclick.stop="emit('selectPermanent', node)"
           >
-            <span class="note-index">{{ node.noteIndex }}</span>
+            <span v-if="tocShowIndex" class="note-index">{{ node.noteIndex }}</span>
             <span>{{ node.title }}</span>
           </button>
         </template>

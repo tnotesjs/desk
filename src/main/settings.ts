@@ -27,6 +27,8 @@ const settingsSchema = z.object({
       delayMs: z.number().int().min(250).max(30_000).default(1000)
     })
     .default({ enabled: true, delayMs: 1000 }),
+  createNotePosition: z.enum(['top', 'end']).default('top'),
+  workspaceLayout: z.enum(['kb-dir-content', 'content-dir-kb']).default('kb-dir-content'),
   prettier: z.boolean().default(true),
   ide: z.enum(['vscode', 'cursor']).default('vscode'),
   gitPath: z.string().trim().min(1).nullable().default(null),
@@ -39,6 +41,21 @@ const settingsSchema = z.object({
       autoRevealInToc: z.boolean().default(true)
     })
     .default({ maxOpenCount: 10, wrap: true, autoRevealInToc: true }),
+  toc: z
+    .object({
+      showNoteIndex: z.boolean().default(true),
+      showNoteStatus: z.boolean().default(true),
+      doneEmoji: z.string().default('✅'),
+      undoneEmoji: z.string().default('⏰'),
+      changesCollapsedByDefault: z.boolean().default(true)
+    })
+    .default({
+      showNoteIndex: true,
+      showNoteStatus: true,
+      doneEmoji: '✅',
+      undoneEmoji: '⏰',
+      changesCollapsedByDefault: true
+    }),
   imageUpload: z
     .object({
       defaultTarget: z.enum(['local', 'github']).default('local'),
@@ -82,11 +99,15 @@ const DEFAULT_SETTINGS: AppSettings = settingsSchema.parse({})
 function settingsPath(): string {
   const dir = app.getPath('userData')
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  return join(dir, 'settings.v1.json')
+  return join(dir, '.tn-desk-config.json')
 }
 
 function legacySettingsPath(): string {
   return join(app.getPath('userData'), 'settings.json')
+}
+
+function legacyV1SettingsPath(): string {
+  return join(app.getPath('userData'), 'settings.v1.json')
 }
 
 function uniqueSorted(values: string[]): string[] {
@@ -131,12 +152,26 @@ export function loadSettings(): AppSettings {
   try {
     return normalize(JSON.parse(readFileSync(settingsPath(), 'utf8')))
   } catch {
-    const legacyHidden = readLegacyHiddenNames()
-    return {
-      ...DEFAULT_SETTINGS,
-      hiddenKnowledgeBases: uniqueSorted(legacyHidden)
+    try {
+      const migrated = normalize(JSON.parse(readFileSync(legacyV1SettingsPath(), 'utf8')))
+      writeSettingsFile(migrated)
+      return migrated
+    } catch {
+      const legacyHidden = readLegacyHiddenNames()
+      return {
+        ...DEFAULT_SETTINGS,
+        hiddenKnowledgeBases: uniqueSorted(legacyHidden)
+      }
     }
   }
+}
+
+function writeSettingsFile(settings: AppSettings): AppSettings {
+  const target = settingsPath()
+  const temporary = `${target}.tmp`
+  writeFileSync(temporary, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
+  renameSync(temporary, target)
+  return settings
 }
 
 export function saveSettings(next: Partial<AppSettings>): AppSettings {
@@ -153,11 +188,32 @@ export function saveSettings(next: Partial<AppSettings>): AppSettings {
     },
     knowledgeBases: { ...current.knowledgeBases, ...next.knowledgeBases }
   })
-  const target = settingsPath()
-  const temporary = `${target}.tmp`
-  writeFileSync(temporary, `${JSON.stringify(merged, null, 2)}\n`, 'utf8')
-  renameSync(temporary, target)
-  return merged
+  return writeSettingsFile(merged)
+}
+
+export function resetSettings(): AppSettings {
+  return writeSettingsFile(DEFAULT_SETTINGS)
+}
+
+export function readSettingsFile(): string {
+  return `${JSON.stringify(loadSettings(), null, 2)}\n`
+}
+
+export function importSettings(content: string): AppSettings {
+  const parsed = JSON.parse(content) as unknown
+  return writeSettingsFile(normalize(parsed))
+}
+
+export function writeSettingsRaw(json: string): AppSettings {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(json)
+  } catch (cause) {
+    throw new Error(
+      `配置文件不是合法的 JSON：${cause instanceof Error ? cause.message : String(cause)}`
+    )
+  }
+  return writeSettingsFile(normalize(parsed))
 }
 
 export function settingsForKnowledgeBase(

@@ -63,7 +63,7 @@ withDefaults(
 }
 
 .ui-tooltip-host:hover .ui-tooltip-popover,
-.ui-tooltip-host:focus-within .ui-tooltip-popover {
+.ui-tooltip-host:has(:focus-visible) .ui-tooltip-popover {
   visibility: visible;
   opacity: 1;
   transform: translateX(-50%) translateY(0);

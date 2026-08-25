@@ -8,6 +8,11 @@ export const IPC_CHANNELS = {
   workspaceRevealKnowledgeBase: 'workspace:reveal-knowledge-base',
   knowledgeBaseRead: 'knowledge-base:read',
   settingsUpdate: 'settings:update',
+  settingsExport: 'settings:export',
+  settingsImport: 'settings:import',
+  settingsReset: 'settings:reset',
+  settingsReadRaw: 'settings:read-raw',
+  settingsWriteRaw: 'settings:write-raw',
   noteRead: 'note:read',
   noteSave: 'note:save',
   noteCreate: 'note:create',
@@ -29,6 +34,7 @@ export const IPC_CHANNELS = {
   gitPublish: 'git:publish',
   ideShowKnowledgeBaseMenu: 'ide:show-knowledge-base-menu',
   ideShowNoteMenu: 'ide:show-note-menu',
+  ideShowFileMenu: 'ide:show-file-menu',
   ideOpenKnowledgeBase: 'ide:open-knowledge-base',
   ideOpenNote: 'ide:open-note',
   tocMove: 'toc:move',
@@ -175,6 +181,8 @@ export interface AppSettings {
     enabled: boolean
     delayMs: number
   }
+  createNotePosition: 'top' | 'end'
+  workspaceLayout: 'kb-dir-content' | 'content-dir-kb'
   prettier: boolean
   ide: IdeKind
   gitPath: string | null
@@ -184,6 +192,13 @@ export interface AppSettings {
     maxOpenCount: number
     wrap: boolean
     autoRevealInToc: boolean
+  }
+  toc: {
+    showNoteIndex: boolean
+    showNoteStatus: boolean
+    doneEmoji: string
+    undoneEmoji: string
+    changesCollapsedByDefault: boolean
   }
   imageUpload: ImageUploadSettings
   hiddenKnowledgeBases: string[]
@@ -573,6 +588,11 @@ export interface DeskApi {
   }
   settings: {
     update(next: Partial<AppSettings>): Promise<DeskResult<AppSettings>>
+    export(): Promise<DeskResult<void>>
+    import(): Promise<DeskResult<AppSettings>>
+    reset(): Promise<DeskResult<AppSettings>>
+    readRaw(): Promise<DeskResult<string>>
+    writeRaw(json: string): Promise<DeskResult<AppSettings>>
     imageTokenStatus(): Promise<DeskResult<ImageTokenStatus>>
     updateImageToken(request: ImageTokenUpdateRequest): Promise<DeskResult<ImageTokenStatus>>
     validateImageSettings(
@@ -611,6 +631,7 @@ export interface DeskApi {
   ide: {
     showKnowledgeBaseMenu(knowledgeBaseId: string): Promise<DeskResult<void>>
     showNoteMenu(knowledgeBaseId: string, noteUuid: string): Promise<DeskResult<void>>
+    showFileMenu(knowledgeBaseId: string, path: string): Promise<DeskResult<void>>
     openKnowledgeBase(knowledgeBaseId: string): Promise<DeskResult<void>>
     openNote(knowledgeBaseId: string, noteUuid: string): Promise<DeskResult<void>>
   }

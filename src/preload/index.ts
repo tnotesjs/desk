@@ -71,6 +71,11 @@ const api: DeskApi = {
   },
   settings: {
     update: (next) => invoke<AppSettings>(IPC_CHANNELS.settingsUpdate, next),
+    export: () => invoke<void>(IPC_CHANNELS.settingsExport),
+    import: () => invoke<AppSettings>(IPC_CHANNELS.settingsImport),
+    reset: () => invoke<AppSettings>(IPC_CHANNELS.settingsReset),
+    readRaw: () => invoke<string>(IPC_CHANNELS.settingsReadRaw),
+    writeRaw: (json) => invoke<AppSettings>(IPC_CHANNELS.settingsWriteRaw, json),
     imageTokenStatus: () => invoke<ImageTokenStatus>(IPC_CHANNELS.imageTokenStatus),
     updateImageToken: (request) => invoke<ImageTokenStatus>(IPC_CHANNELS.imageTokenUpdate, request),
     validateImageSettings: (request) =>
@@ -135,6 +140,8 @@ const api: DeskApi = {
       invoke<void>(IPC_CHANNELS.ideShowKnowledgeBaseMenu, knowledgeBaseId),
     showNoteMenu: (knowledgeBaseId, noteUuid) =>
       invoke<void>(IPC_CHANNELS.ideShowNoteMenu, { knowledgeBaseId, noteUuid }),
+    showFileMenu: (knowledgeBaseId, path) =>
+      invoke<void>(IPC_CHANNELS.ideShowFileMenu, { knowledgeBaseId, path }),
     openKnowledgeBase: (knowledgeBaseId) =>
       invoke<void>(IPC_CHANNELS.ideOpenKnowledgeBase, knowledgeBaseId),
     openNote: (knowledgeBaseId, noteUuid) =>

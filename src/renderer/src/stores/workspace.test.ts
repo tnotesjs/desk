@@ -22,12 +22,21 @@ const autosaveSettings: AppSettings = {
   density: 'comfortable',
   defaultNoteView: 'visual',
   autosave: { enabled: true, delayMs: 50 },
+  createNotePosition: 'top',
+  workspaceLayout: 'kb-dir-content',
   prettier: true,
   ide: 'vscode',
   gitPath: null,
   nodePath: null,
   confirmBeforeCommit: false,
   tabs: { maxOpenCount: 10, wrap: true, autoRevealInToc: true },
+  toc: {
+    showNoteIndex: true,
+    showNoteStatus: true,
+    doneEmoji: '✅',
+    undoneEmoji: '⏰',
+    changesCollapsedByDefault: true
+  },
   imageUpload: {
     defaultTarget: 'local',
     github: {

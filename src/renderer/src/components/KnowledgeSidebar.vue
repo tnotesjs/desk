@@ -1,8 +1,13 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+
 import KnowledgeBaseIcon from './KnowledgeBaseIcon.vue'
+import { useEditorStore, KNOWLEDGE_SIDEBAR_COMPACT } from '../stores/editor'
 import { useWorkspaceStore } from '../stores/workspace'
 
 const store = useWorkspaceStore()
+const editor = useEditorStore()
+const compact = computed(() => editor.knowledgeSidebarWidth <= KNOWLEDGE_SIDEBAR_COMPACT)
 
 function showContextMenu(knowledgeBaseId: string): void {
   void window.desk.ide.showKnowledgeBaseMenu(knowledgeBaseId)
@@ -10,10 +15,9 @@ function showContextMenu(knowledgeBaseId: string): void {
 </script>
 
 <template>
-  <aside class="knowledge-sidebar">
+  <aside class="knowledge-sidebar" :class="{ compact }">
     <header class="column-header">
-      <div>
-        <span class="eyebrow">工作区</span>
+      <div v-if="!compact">
         <strong>知识库</strong>
       </div>
       <button
@@ -41,28 +45,8 @@ function showContextMenu(knowledgeBaseId: string): void {
         <span class="knowledge-icon">
           <KnowledgeBaseIcon :icon="item.icon" :fallback="item.displayName" />
         </span>
-        <span class="knowledge-copy">
+        <span v-if="!compact" class="knowledge-copy">
           <strong>{{ item.displayName }}</strong>
-          <small>{{ item.name }}</small>
-        </span>
-        <span class="knowledge-state">
-          <small v-if="store.gitStates[item.id]?.behind" class="behind" title="本地落后于远端">
-            ↓{{ store.gitStates[item.id].behind }}
-          </small>
-          <span
-            class="knowledge-badge"
-            :class="{
-              danger: item.health !== 'ready' || store.gitStates[item.id]?.conflict,
-              changed: Boolean(store.gitStates[item.id]?.changes.length)
-            }"
-            :title="
-              item.health === 'ready'
-                ? `${store.gitStates[item.id]?.changes.length ?? 0} 个变更文件`
-                : item.diagnostics.map((diagnostic) => diagnostic.message).join('\n')
-            "
-          >
-            {{ item.health === 'ready' ? (store.gitStates[item.id]?.changes.length ?? 0) : '!' }}
-          </span>
         </span>
       </button>
     </div>
@@ -72,7 +56,7 @@ function showContextMenu(knowledgeBaseId: string): void {
     </div>
 
     <footer class="workspace-footer" :title="store.overview.path ?? ''">
-      <span>{{ store.overview.path ?? '尚未选择工作区' }}</span>
+      <span v-if="!compact">{{ store.overview.path ?? '尚未选择工作区' }}</span>
       <button type="button" class="link-button" @click="store.chooseWorkspace">更换</button>
     </footer>
   </aside>
@@ -89,12 +73,12 @@ function showContextMenu(knowledgeBaseId: string): void {
 }
 
 .column-header {
-  height: 64px;
+  height: 42px;
   flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px 9px 14px;
+  padding: 0 12px 0 14px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -109,13 +93,6 @@ function showContextMenu(knowledgeBaseId: string): void {
   font-weight: 650;
 }
 
-.eyebrow {
-  color: var(--muted);
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 .knowledge-list {
   flex: 1;
   min-height: 0;
@@ -125,14 +102,15 @@ function showContextMenu(knowledgeBaseId: string): void {
 
 .knowledge-item {
   width: 100%;
+  min-height: 28px;
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 7px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 6px;
   background: transparent;
   color: var(--text);
-  padding: 7px;
+  padding: 2px 5px;
   text-align: left;
   cursor: pointer;
 }
@@ -146,16 +124,16 @@ function showContextMenu(knowledgeBaseId: string): void {
 }
 
 .knowledge-icon {
-  width: 28px;
-  height: 28px;
+  width: 20px;
+  height: 20px;
   flex: none;
   display: grid;
   place-items: center;
-  border-radius: 7px;
+  border-radius: 5px;
   overflow: hidden;
   background: var(--raised);
   color: var(--accent);
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 700;
 }
 
@@ -163,55 +141,24 @@ function showContextMenu(knowledgeBaseId: string): void {
   flex: 1;
   min-width: 0;
   display: flex;
-  flex-direction: column;
-}
-
-.knowledge-copy strong,
-.knowledge-copy small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  align-items: center;
 }
 
 .knowledge-copy strong {
-  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
   font-weight: 600;
 }
 
-.knowledge-copy small {
-  color: var(--muted);
-  font-size: 10px;
+.knowledge-sidebar.compact .column-header {
+  justify-content: center;
 }
 
-.knowledge-badge {
-  min-width: 19px;
-  height: 19px;
-  padding: 0 5px;
-  border-radius: 9px;
-  display: inline-grid;
-  place-items: center;
-  background: var(--raised);
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.knowledge-state {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.knowledge-state .behind {
-  color: var(--warning);
-  font-size: 9px;
-  font-weight: 700;
-}
-
-.knowledge-badge.changed {
-  background: var(--warning-soft);
-  color: var(--warning);
+.knowledge-sidebar.compact .knowledge-item {
+  justify-content: center;
+  gap: 0;
 }
 
 .knowledge-badge.danger {

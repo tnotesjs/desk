@@ -307,7 +307,7 @@ export const rawBlockSchema = $nodeSchema('deskRawBlock', () => ({
   atom: true,
   group: 'block',
   isolating: true,
-  selectable: true,
+  selectable: false,
   attrs: {
     kind: { default: 'html', validate: 'string' },
     source: { default: '', validate: 'string' },

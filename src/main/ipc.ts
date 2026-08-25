@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { readFileSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
 import { BrowserWindow, clipboard, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
 import { z } from 'zod'
 
@@ -10,7 +12,14 @@ import { openInConfiguredIde, showIdeContextMenu } from './ide'
 import { previewManager } from './preview'
 import { deleteRecovery, loadRecoveries, writeRecovery } from './recovery'
 import { loadWorkspaceSession, saveWorkspaceSession } from './session'
-import { loadSettings, saveSettings } from './settings'
+import {
+  importSettings,
+  loadSettings,
+  readSettingsFile,
+  resetSettings,
+  saveSettings,
+  writeSettingsRaw
+} from './settings'
 import { searchManager } from './searchManager'
 import { webContentsManager } from './webContentsManager'
 import { workspaceManager } from './workspaceManager'
@@ -354,6 +363,41 @@ export function registerIpc(getWindow: () => BrowserWindow | null): () => void {
     gitManager.applyAutoPushSchedules(true)
     return settings
   })
+  handle(IPC_CHANNELS.settingsExport, getWindow, noInputSchema, async () => {
+    const window = getWindow()
+    if (!window) throw new Error('Desk 主窗口不可用')
+    const { canceled, filePath } = await dialog.showSaveDialog(window, {
+      title: '导出配置',
+      defaultPath: '.tn-desk-config.json',
+      filters: [{ name: 'JSON', extensions: ['json'] }]
+    })
+    if (canceled || !filePath) return
+    writeFileSync(filePath, readSettingsFile(), 'utf8')
+  })
+  handle(IPC_CHANNELS.settingsImport, getWindow, noInputSchema, async () => {
+    const window = getWindow()
+    if (!window) throw new Error('Desk 主窗口不可用')
+    const { canceled, filePaths } = await dialog.showOpenDialog(window, {
+      title: '导入配置',
+      properties: ['openFile'],
+      filters: [{ name: 'JSON', extensions: ['json'] }]
+    })
+    if (canceled || !filePaths[0]) throw new Error('未选择配置文件')
+    const settings = importSettings(readFileSync(filePaths[0], 'utf8'))
+    gitManager.applyAutoPushSchedules(true)
+    return settings
+  })
+  handle(IPC_CHANNELS.settingsReset, getWindow, noInputSchema, () => {
+    const settings = resetSettings()
+    gitManager.applyAutoPushSchedules(true)
+    return settings
+  })
+  handle(IPC_CHANNELS.settingsReadRaw, getWindow, noInputSchema, () => readSettingsFile())
+  handle(IPC_CHANNELS.settingsWriteRaw, getWindow, z.string(), (json) => {
+    const settings = writeSettingsRaw(json)
+    gitManager.applyAutoPushSchedules(true)
+    return settings
+  })
   handle(IPC_CHANNELS.imageTokenStatus, getWindow, noInputSchema, () => imageTokenStatus())
   handle(
     IPC_CHANNELS.imageTokenUpdate,
@@ -413,6 +457,21 @@ export function registerIpc(getWindow: () => BrowserWindow | null): () => void {
       const window = getWindow()
       if (!window) throw new Error('Desk 主窗口不可用')
       showIdeContextMenu(window, workspaceManager.getNoteLocation(knowledgeBaseId, noteUuid))
+    }
+  )
+  handle(
+    IPC_CHANNELS.ideShowFileMenu,
+    getWindow,
+    z.object({ knowledgeBaseId: z.string().min(1), path: z.string().min(1) }),
+    ({ knowledgeBaseId, path: relativePath }) => {
+      const window = getWindow()
+      if (!window) throw new Error('Desk 主窗口不可用')
+      const rootPath = workspaceManager.getLocation(knowledgeBaseId).rootPath
+      const targetPath = path.resolve(rootPath, relativePath)
+      if (targetPath !== rootPath && !targetPath.startsWith(`${rootPath}${path.sep}`)) {
+        throw new Error('变更路径超出知识库')
+      }
+      showIdeContextMenu(window, targetPath)
     }
   )
   handle(IPC_CHANNELS.ideOpenKnowledgeBase, getWindow, z.string().min(1), (knowledgeBaseId) =>
