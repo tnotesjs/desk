@@ -12,7 +12,6 @@ const PROFILE = '/tmp/desk-e2e-profile'
 const SHOTS = join(DESK_DIR, 'scripts/shots')
 mkdirSync(SHOTS, { recursive: true })
 
-const probe = process.argv.includes('--probe')
 const docsMode = process.argv.includes('--docs')
 const mindmapMode = process.argv.includes('--mindmap')
 const codeblocksMode = process.argv.includes('--codeblocks')
@@ -83,7 +82,8 @@ try {
     const analysis = await win.evaluate(() => {
       const host = document.querySelector('.desk-diagram__mindmap')
       const canvas = host?.querySelector('canvas')
-      if (!host || !canvas) return { error: 'host/canvas missing', html: host?.outerHTML?.slice(0, 400) }
+      if (!host || !canvas)
+        return { error: 'host/canvas missing', html: host?.outerHTML?.slice(0, 400) }
       const hostRect = host.getBoundingClientRect()
       const canvasRect = canvas.getBoundingClientRect()
       const style = getComputedStyle(canvas)
@@ -92,12 +92,21 @@ try {
       const bh = canvas.height
       const data = ctx.getImageData(0, 0, bw, bh).data
       const bg = [data[0], data[1], data[2]]
-      let minX = bw, minY = bh, maxX = -1, maxY = -1, count = 0
+      let minX = bw,
+        minY = bh,
+        maxX = -1,
+        maxY = -1,
+        count = 0
       for (let y = 0; y < bh; y++) {
         let row = y * bw * 4
         for (let x = 0; x < bw; x++) {
           const i = row + x * 4
-          if (Math.abs(data[i] - bg[0]) + Math.abs(data[i + 1] - bg[1]) + Math.abs(data[i + 2] - bg[2]) > 40) {
+          if (
+            Math.abs(data[i] - bg[0]) +
+              Math.abs(data[i + 1] - bg[1]) +
+              Math.abs(data[i + 2] - bg[2]) >
+            40
+          ) {
             if (x < minX) minX = x
             if (x > maxX) maxX = x
             if (y < minY) minY = y
@@ -109,7 +118,12 @@ try {
       const drawn = count > 0
       // visible-region relationship: does the host clip the oversized canvas?
       const hostOverflow = getComputedStyle(host).overflow
-      const hostClient = { cw: host.clientWidth, ch: host.clientHeight, sw: host.scrollWidth, sh: host.scrollHeight }
+      const hostClient = {
+        cw: host.clientWidth,
+        ch: host.clientHeight,
+        sw: host.scrollWidth,
+        sh: host.scrollHeight
+      }
       let parent = canvas.parentElement
       let parentInfo = []
       while (parent && parent !== host) {
@@ -122,9 +136,19 @@ try {
         })
         parent = parent.parentElement
       }
-      const canvasOffset = { left: canvas.offsetLeft, top: canvas.offsetTop, parent: canvas.offsetParent?.className }
+      const canvasOffset = {
+        left: canvas.offsetLeft,
+        top: canvas.offsetTop,
+        parent: canvas.offsetParent?.className
+      }
       return {
-        host: { w: hostRect.width, h: hostRect.height, overflow: hostOverflow, ...hostClient, class: host.className },
+        host: {
+          w: hostRect.width,
+          h: hostRect.height,
+          overflow: hostOverflow,
+          ...hostClient,
+          class: host.className
+        },
         canvas: {
           bitmap: `${bw}x${bh}`,
           cssSize: `${canvasRect.width.toFixed(1)}x${canvasRect.height.toFixed(1)}`,
@@ -150,7 +174,10 @@ try {
     console.log('MINDMAP ANALYSIS:')
     console.log(JSON.stringify(analysis, null, 2))
 
-    await win.locator('.desk-diagram__mindmap').first().screenshot({ path: join(SHOTS, '03-mindmap.png') })
+    await win
+      .locator('.desk-diagram__mindmap')
+      .first()
+      .screenshot({ path: join(SHOTS, '03-mindmap.png') })
     console.log('screenshot -> scripts/shots/03-mindmap.png')
   }
 
@@ -188,10 +215,12 @@ try {
         totalActiveLines: document.querySelectorAll('.cm-activeLine').length,
         visibleCodeEditors: visible.length,
         // does the whole editor (milkdown root) have focus?
-        milkdownHasFocus: document.querySelector('.milkdown') === document.activeElement ||
+        milkdownHasFocus:
+          document.querySelector('.milkdown') === document.activeElement ||
           !!document.querySelector('.milkdown:focus'),
         activeLineSamples: [...document.querySelectorAll('.cm-activeLine')]
-          .map((l) => l.textContent.slice(0, 24)).slice(0, 8)
+          .map((l) => l.textContent.slice(0, 24))
+          .slice(0, 8)
       }
     })
     console.log('CODEBLOCK STATS (desk-032):')
@@ -205,12 +234,12 @@ try {
         const otherLine = e.querySelector('.cm-line:not(.cm-activeLine)')
         const bg = activeLine ? getComputedStyle(activeLine).backgroundColor : null
         const otherBg = otherLine ? getComputedStyle(otherLine).backgroundColor : null
-        const theme = getComputedStyle(e).colorScheme
         return {
           code: activeLine?.textContent?.slice(0, 24) ?? '',
           activeLineBg: bg,
           normalLineBg: otherBg,
-          highlightIsRendered: bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent' && bg !== otherBg
+          highlightIsRendered:
+            bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent' && bg !== otherBg
         }
       })
       return { active, highlightRenderedCount: active.filter((a) => a.highlightIsRendered).length }
@@ -235,7 +264,10 @@ try {
     // High-res crop of the first code editor to make the first-line highlight unmistakable
     await win.locator('.cm-editor').first().scrollIntoViewIfNeeded()
     await win.waitForTimeout(300)
-    await win.locator('.cm-editor').first().screenshot({ path: join(SHOTS, '05-code-editor-highres.png') })
+    await win
+      .locator('.cm-editor')
+      .first()
+      .screenshot({ path: join(SHOTS, '05-code-editor-highres.png') })
     console.log('screenshot -> scripts/shots/05-code-editor-highres.png')
 
     // Scroll a batch of code blocks into view and screenshot the working window
