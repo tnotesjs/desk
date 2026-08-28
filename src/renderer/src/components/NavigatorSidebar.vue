@@ -537,6 +537,23 @@ const previewLabel = computed(() => {
               </svg>
             </button>
           </UiTooltip>
+          <UiTooltip label="手动刷新目录">
+            <button
+              type="button"
+              class="toc-batch-toggle"
+              :disabled="store.loading"
+              aria-label="手动刷新目录"
+              data-tooltip="手动刷新目录"
+              @click="store.reloadKnowledgeBase"
+            >
+              <svg class="toc-batch-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  fill="currentColor"
+                  d="M12 4a8 8 0 108 8h-2a6 6 0 11-6-6v3l5-4-5-4z"
+                />
+              </svg>
+            </button>
+          </UiTooltip>
           <em>{{ store.knowledgeBase.noteCount }}</em>
         </div>
         <div v-show="tocExpanded">

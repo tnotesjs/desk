@@ -1018,6 +1018,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     dispose,
     chooseWorkspace,
     refreshWorkspace,
+    reloadKnowledgeBase,
     selectKnowledgeBase,
     searchNotes,
     refreshGit,
