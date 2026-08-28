@@ -370,7 +370,7 @@ export interface NoteMutationDto {
   knowledgeBase: KnowledgeBaseDetail
   changedFiles: Array<{
     path: string
-    kind: 'created' | 'updated' | 'deleted' | 'renamed'
+    kind: 'created' | 'updated' | 'deleted' | 'renamed' | 'trashed'
     previousPath?: string
   }>
 }

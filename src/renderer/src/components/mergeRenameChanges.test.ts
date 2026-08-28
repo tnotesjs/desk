@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { mergeRenameChanges } from './mergeRenameChanges'
 import type { GitFileChangeDto } from '../../../shared/contracts'
 
-function change(partial: Partial<GitFileChangeDto> & { path: string; status: GitFileChangeDto['status'] }): GitFileChangeDto {
+function change(
+  partial: Partial<GitFileChangeDto> & { path: string; status: GitFileChangeDto['status'] }
+): GitFileChangeDto {
   return { staged: false, worktree: true, ...partial }
 }
 
@@ -67,5 +69,19 @@ describe('mergeRenameChanges', () => {
     ]
     const merged = mergeRenameChanges(raw)
     expect(merged[0]).toMatchObject({ noteUuid: 'uuid-1', noteIndex: '0016', noteTitle: '新' })
+  })
+
+  it('软删（旧目录 D + .trash 下同索引 U）合并为一条 renamed', () => {
+    const raw = [
+      change({ path: 'notes/0005. Broken/README.md', status: 'deleted' }),
+      change({ path: 'notes/.trash/0005. Broken/README.md', status: 'untracked' })
+    ]
+    const merged = mergeRenameChanges(raw)
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({
+      path: 'notes/.trash/0005. Broken/README.md',
+      previousPath: 'notes/0005. Broken/README.md',
+      status: 'renamed'
+    })
   })
 })

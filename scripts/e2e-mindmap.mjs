@@ -189,18 +189,42 @@ try {
     await win.waitForTimeout(1500)
     await win.locator('.milkdown').first().waitFor({ timeout: 30000 })
     await win.waitForTimeout(1500)
-    // CodeMirror code-block editors lazy-mount: scroll to the bottom to force them in.
-    for (let i = 0; i < 30; i++) {
-      if ((await win.locator('.cm-editor').count()) > 0) break
-      await win.evaluate(() => {
-        let el = document.querySelector('.milkdown')
-        while (el && el.scrollHeight <= el.clientHeight) el = el.parentElement
-        if (el) el.scrollTop = el.scrollHeight
-      })
-      await win.waitForTimeout(200)
+    // CodeMirror code-block editors may lazy-mount on interaction; click the
+    // first code block to force creation, then measure all mounted editors.
+    try {
+      await win.locator('.milkdown pre, .milkdown code').first().click({ timeout: 8000 })
+    } catch {
+      // fall through; measure whatever is mounted
     }
-    await win.locator('.cm-editor').first().waitFor({ timeout: 30000 })
+    await win.waitForTimeout(1500)
+    await win
+      .locator('.cm-editor:visible')
+      .first()
+      .waitFor({ timeout: 15000 })
+      .catch(() => {})
     await win.waitForTimeout(2000)
+
+    // Diagnostic dump when no visible editor mounts
+    const diag = await win.evaluate(() => {
+      const milkdown = document.querySelector('.milkdown')
+      const editors = [...document.querySelectorAll('.cm-editor')]
+      const visibleEditors = editors.filter((e) => {
+        const r = e.getBoundingClientRect()
+        return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < innerHeight
+      })
+      return {
+        hasMilkdown: !!milkdown,
+        milkdownText: milkdown?.textContent?.slice(0, 80) ?? '',
+        editorCount: editors.length,
+        visibleEditorCount: visibleEditors.length,
+        preCount: document.querySelectorAll('pre').length,
+        codeBlockCount: document.querySelectorAll(
+          '.code-block, [class*="code-block"], .ProseMirror pre'
+        ).length
+      }
+    })
+    if (diag.editorCount === 0)
+      console.log('DIAG (no code editors):', JSON.stringify(diag, null, 2))
 
     const stats = await win.evaluate(() => {
       const editors = [...document.querySelectorAll('.cm-editor')]
@@ -271,7 +295,10 @@ try {
     console.log('screenshot -> scripts/shots/05-code-editor-highres.png')
 
     // Scroll a batch of code blocks into view and screenshot the working window
-    await win.locator('.cm-editor').nth(2).scrollIntoViewIfNeeded()
+    await win
+      .locator('.cm-editor')
+      .nth(Math.min(0, (await win.locator('.cm-editor').count()) - 1))
+      .scrollIntoViewIfNeeded()
     await win.waitForTimeout(600)
     await win.screenshot({ path: join(SHOTS, '04-codeblocks.png') })
     console.log('screenshot -> scripts/shots/04-codeblocks.png')

@@ -1,10 +1,11 @@
 allowBuilds:
+  '@parcel/watcher': true
   electron: true
   electron-winstaller: true
   esbuild: true
   vue-demi: true
 minimumReleaseAgeExclude:
-  - '@tnotesjs/core@0.6.0 || 0.6.1'
+  - '@tnotesjs/core@0.6.0 || 0.6.1 || 0.7.0'
   - '@tnotesjs/mindmap-core@0.2.1'
 onlyBuiltDependencies:
   - electron

@@ -533,6 +533,25 @@ export class WorkspaceManager {
     await this.scanTail
   }
 
+  /** 笔记配置缺失/损坏 → 触发 files→TOC 对齐（0004）。 */
+  private async reconcileIfNeeded(handle: KnowledgeBaseHandle): Promise<void> {
+    const snapshot = handle.snapshot
+    const hasConfigDiagnostics = snapshot.health.diagnostics.some(
+      (d) => d.code === 'NOTE_CONFIG_MISSING' || d.code === 'NOTE_CONFIG_INVALID'
+    )
+    if (!hasConfigDiagnostics) return
+    try {
+      const result = await handle.workspace.toc.reconcileFromFiles()
+      handle.snapshot = result.value
+    } catch (error) {
+      deskLog(
+        'workspace',
+        'reconcile failed',
+        error instanceof Error ? error.message : String(error)
+      )
+    }
+  }
+
   private async scan(): Promise<void> {
     if (!this.workspacePath) return
     const entries = await fs.readdir(this.workspacePath, { withFileTypes: true })
@@ -551,13 +570,17 @@ export class WorkspaceManager {
       const snapshot = await workspace.inspect()
       let id = existing?.id ?? snapshot.id
       if (next.has(id)) id = `${snapshot.id}:${stablePathSuffix(rootPath)}`
-      next.set(id, {
+      const handle = {
         id,
         name: candidate.name,
         rootPath,
         workspace,
         snapshot
-      })
+      }
+      next.set(id, handle)
+      // 0004：文件系统为准——笔记配置缺失/损坏时先做 files→TOC 对齐
+      // （自动软删无效笔记到 notes/.trash/ 并恢复健康）。
+      await this.reconcileIfNeeded(handle)
       previousByPath.delete(rootPath)
     }
 

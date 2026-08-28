@@ -556,10 +556,7 @@ const previewLabel = computed(() => {
               @click="store.reloadKnowledgeBase"
             >
               <svg class="toc-batch-icon" viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  fill="currentColor"
-                  d="M12 4a8 8 0 108 8h-2a6 6 0 11-6-6v3l5-4-5-4z"
-                />
+                <path fill="currentColor" d="M12 4a8 8 0 108 8h-2a6 6 0 11-6-6v3l5-4-5-4z" />
               </svg>
             </button>
           </UiTooltip>
