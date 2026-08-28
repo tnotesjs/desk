@@ -2,6 +2,7 @@ import { Plugin } from '@milkdown/kit/prose/state'
 import { $nodeSchema, $prose, $remark } from '@milkdown/kit/utils'
 import { codeBlockSchema } from '@milkdown/kit/preset/commonmark'
 
+import { renderContainerFromSource, type ResolveImage } from './containerBody'
 import {
   parseMarkdownSource,
   serializeMarkdownSource,
@@ -12,7 +13,7 @@ import {
 import type { MilkdownPlugin } from '@milkdown/kit/ctx'
 import type { MarkdownNode } from '@milkdown/kit/transformer'
 
-export type ProjectedRawBlockKind = Extract<
+type SourceProjectedKind = Extract<
   MarkdownSourceBlockKind,
   | 'raw-frontmatter'
   | 'raw-container'
@@ -24,6 +25,8 @@ export type ProjectedRawBlockKind = Extract<
   | 'table'
   | 'html'
 >
+
+export type ProjectedRawBlockKind = SourceProjectedKind | 'raw-diagram'
 
 export interface ProjectedRawBlock {
   kind: ProjectedRawBlockKind
@@ -39,14 +42,16 @@ const PROJECTED_KINDS = new Set<ProjectedRawBlockKind>([
   'raw-reference-definition',
   'raw-generated-title',
   'raw-generated-toc',
+  'raw-diagram',
   'table',
   'html'
 ])
 
 const MARKER =
-  /^<!--desk-raw-block:v1:(raw-frontmatter|raw-container|raw-include|raw-component|raw-reference-definition|raw-generated-title|raw-generated-toc|table|html):([01]):([A-Za-z0-9+/]*={0,2})-->$/
+  /^<!--desk-raw-block:v1:(raw-frontmatter|raw-container|raw-include|raw-component|raw-reference-definition|raw-generated-title|raw-generated-toc|raw-diagram|table|html):([01]):([A-Za-z0-9+/]*={0,2})-->$/
 const REGION_COMMENT = /^ {0,3}<!--\s*(?:end)?region(?::[\s\S]*?)?\s*-->\s*$/i
 const HTML_TAG = /<\/?[A-Za-z][\w.-]*(?=[\s/>])/
+const DIAGRAM_LANGUAGES = new Set(['mermaid', 'mindmap', 'markmap'])
 
 interface ProjectionMarkdownNode extends MarkdownNode {
   type: string
@@ -76,12 +81,12 @@ function decodeBase64(value: string): string {
   return new TextDecoder().decode(bytes)
 }
 
-function isProjectedKind(kind: MarkdownSourceBlockKind): kind is ProjectedRawBlockKind {
-  return PROJECTED_KINDS.has(kind as ProjectedRawBlockKind)
+function isProjectedKind(kind: MarkdownSourceBlockKind): kind is SourceProjectedKind {
+  return PROJECTED_KINDS.has(kind as SourceProjectedKind)
 }
 
 function shouldProjectBlock(block: MarkdownSourceBlock): block is MarkdownSourceBlock & {
-  kind: ProjectedRawBlockKind
+  kind: SourceProjectedKind
 } {
   if (!isProjectedKind(block.kind)) return false
   return block.kind !== 'table' || HTML_TAG.test(block.source)
@@ -89,6 +94,14 @@ function shouldProjectBlock(block: MarkdownSourceBlock): block is MarkdownSource
 
 function isRegionComment(block: MarkdownSourceBlock): boolean {
   return block.kind === 'html' && REGION_COMMENT.test(block.source)
+}
+
+function fenceLanguage(source: string): string {
+  return source.match(/^ {0,3}(?:`{3,}|~{3,})\s*([^\s]+)/)?.[1]?.toLowerCase() ?? ''
+}
+
+function isDiagramFence(block: MarkdownSourceBlock): boolean {
+  return block.kind === 'raw-fence' && DIAGRAM_LANGUAGES.has(fenceLanguage(block.source))
 }
 
 export function createProjectedRawBlockMarker(block: ProjectedRawBlock): string {
@@ -118,6 +131,17 @@ export function projectRawBlocksForMilkdown(source: string): string {
   const replacements = new Map<string, string>()
 
   document.blocks.forEach((block) => {
+    if (isDiagramFence(block)) {
+      replacements.set(
+        block.id,
+        createProjectedRawBlockMarker({
+          kind: 'raw-diagram',
+          source: block.source,
+          hidden: false
+        })
+      )
+      return
+    }
     if (!shouldProjectBlock(block)) return
     const marker = createProjectedRawBlockMarker({
       kind: block.kind,
@@ -145,6 +169,10 @@ function rawBlockLabel(block: ProjectedRawBlock): string {
   if (block.kind === 'raw-generated-toc') return '自动生成目录'
   if (block.kind === 'raw-include') return '文件引用'
   if (block.kind === 'raw-reference-definition') return '链接定义'
+  if (block.kind === 'raw-diagram') {
+    const lang = fenceLanguage(block.source)
+    return lang ? `图表 · ${lang}` : '图表'
+  }
   if (block.kind === 'table') return '表格 · HTML'
   if (block.kind === 'raw-container') {
     const name = block.source.match(/^ {0,3}:{3,}\s+([^\s]+)/)?.[1]
@@ -275,6 +303,84 @@ function renderGeneratedTocNode(source: string): HTMLElement {
   return container
 }
 
+/**
+ * Builds the DOM that backs a projected raw-block atom. `raw-container` renders
+ * its enclosed markdown as a faithful read-only VitePress-style container; every
+ * other kind keeps the immutable source-card presentation. `resolveImage` lets
+ * the hosting editor rewrite note-local relative image paths; when omitted
+ * relative paths are dropped defensively.
+ */
+export function renderDeskRawBlockElement(
+  block: ProjectedRawBlock,
+  resolveImage?: ResolveImage
+): HTMLElement {
+  if (block.kind === 'raw-diagram' && !block.hidden) {
+    const wrapper = document.createElement('div')
+    wrapper.dataset.type = 'desk-raw-block'
+    wrapper.dataset.kind = 'raw-diagram'
+    wrapper.dataset.source = encodeBase64(block.source)
+    wrapper.dataset.hidden = 'false'
+    wrapper.contentEditable = 'false'
+    wrapper.className = 'desk-raw-block desk-raw-block--diagram'
+    const diagram = document.createElement('div')
+    diagram.className = 'desk-diagram'
+    wrapper.append(diagram)
+    return wrapper
+  }
+  if (block.kind === 'raw-container' && !block.hidden) {
+    const container = renderContainerFromSource(block.source, resolveImage)
+    const wrapper = document.createElement('div')
+    wrapper.dataset.type = 'desk-raw-block'
+    wrapper.dataset.kind = 'raw-container'
+    wrapper.dataset.source = encodeBase64(block.source)
+    wrapper.dataset.hidden = 'false'
+    wrapper.contentEditable = 'false'
+    wrapper.className = 'desk-raw-block desk-raw-block--container'
+    wrapper.append(container)
+    return wrapper
+  }
+  if (block.kind === 'raw-generated-title') {
+    const rendered = renderGeneratedTitleNode(block.source)
+    rendered.dataset.type = 'desk-raw-block'
+    rendered.dataset.kind = block.kind
+    rendered.dataset.source = encodeBase64(block.source)
+    rendered.dataset.hidden = 'false'
+    return rendered
+  }
+  if (block.kind === 'raw-generated-toc') {
+    const rendered = renderGeneratedTocNode(block.source)
+    rendered.dataset.type = 'desk-raw-block'
+    rendered.dataset.kind = block.kind
+    rendered.dataset.source = encodeBase64(block.source)
+    rendered.dataset.hidden = 'false'
+    return rendered
+  }
+
+  const element = document.createElement('div')
+  element.dataset.type = 'desk-raw-block'
+  element.dataset.kind = block.kind
+  element.dataset.source = encodeBase64(block.source)
+  element.dataset.hidden = String(block.hidden)
+  element.contentEditable = 'false'
+  element.title = '当前版本请在源码视图中编辑此内容'
+
+  if (block.hidden) {
+    element.className = 'desk-raw-block desk-raw-block--hidden'
+    element.setAttribute('aria-hidden', 'true')
+    return element
+  }
+
+  element.className = 'desk-raw-block'
+  const label = document.createElement('span')
+  label.className = 'desk-raw-block__label'
+  label.textContent = rawBlockLabel(block)
+  const preview = document.createElement('code')
+  preview.className = 'desk-raw-block__preview'
+  preview.textContent = rawBlockPreview(block.source)
+  element.append(label, preview)
+  return element
+}
+
 function replaceProjectionMarkers(node: ProjectionMarkdownNode): void {
   if (!node.children) return
 
@@ -337,45 +443,7 @@ export const rawBlockSchema = $nodeSchema('deskRawBlock', () => ({
       source: node.attrs.source,
       hidden: node.attrs.hidden
     }
-    if (block.kind === 'raw-generated-title') {
-      const rendered = renderGeneratedTitleNode(block.source)
-      rendered.dataset.type = 'desk-raw-block'
-      rendered.dataset.kind = block.kind
-      rendered.dataset.source = encodeBase64(block.source)
-      rendered.dataset.hidden = 'false'
-      return rendered
-    }
-    if (block.kind === 'raw-generated-toc') {
-      const rendered = renderGeneratedTocNode(block.source)
-      rendered.dataset.type = 'desk-raw-block'
-      rendered.dataset.kind = block.kind
-      rendered.dataset.source = encodeBase64(block.source)
-      rendered.dataset.hidden = 'false'
-      return rendered
-    }
-    const element = document.createElement('div')
-    element.dataset.type = 'desk-raw-block'
-    element.dataset.kind = block.kind
-    element.dataset.source = encodeBase64(block.source)
-    element.dataset.hidden = String(block.hidden)
-    element.contentEditable = 'false'
-    element.title = '当前版本请在源码视图中编辑此内容'
-
-    if (block.hidden) {
-      element.className = 'desk-raw-block desk-raw-block--hidden'
-      element.setAttribute('aria-hidden', 'true')
-      return element
-    }
-
-    element.className = 'desk-raw-block'
-    const label = document.createElement('span')
-    label.className = 'desk-raw-block__label'
-    label.textContent = rawBlockLabel(block)
-    const preview = document.createElement('code')
-    preview.className = 'desk-raw-block__preview'
-    preview.textContent = rawBlockPreview(block.source)
-    element.append(label, preview)
-    return element
+    return renderDeskRawBlockElement(block)
   },
   parseMarkdown: {
     match: (node) => node.type === 'deskRawBlock',
@@ -443,6 +511,9 @@ function rawBlockSignatures(document: {
   const signatures: string[] = []
   document.descendants((node) => {
     if (node.type.name !== 'deskRawBlock') return
+    // `raw-container` is now editorially mutable (source-editor editing); every
+    // other projected kind stays immutable until a dedicated editor lands.
+    if (node.attrs.kind === 'raw-container') return
     signatures.push(
       `${String(node.attrs.kind)}\u0000${String(node.attrs.hidden)}\u0000${String(node.attrs.source)}`
     )

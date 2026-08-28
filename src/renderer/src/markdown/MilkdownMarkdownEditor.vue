@@ -4,6 +4,7 @@ import { Crepe } from '@milkdown/crepe'
 import { editorViewCtx } from '@milkdown/kit/core'
 import { uploadConfig } from '@milkdown/kit/plugin/upload'
 import { Plugin } from '@milkdown/kit/prose/state'
+import type { EditorView } from '@milkdown/kit/prose/view'
 import {
   createCodeBlockCommand,
   toggleEmphasisCommand,
@@ -23,8 +24,17 @@ import GithubSlugger from 'github-slugger'
 
 import {
   projectRawBlocksForMilkdown,
-  rawBlockProjectionPlugins
+  rawBlockProjectionPlugins,
+  rawBlockSchema as deskRawBlockSchema,
+  renderDeskRawBlockElement
 } from '../editor/markdown/rawBlockProjection'
+import type { ProjectedRawBlockKind } from '../editor/markdown/rawBlockProjection'
+import { renderContainerFromSource } from '../editor/markdown/containerBody'
+import {
+  createContainerSourceEditor,
+  type ContainerSourceEditorHandle
+} from '../editor/markdown/containerSourceEditor'
+import { renderDiagram } from '../editor/markdown/diagramRenderer'
 import { reconcileMarkdownSource } from '../editor/markdown/sourcePreservation'
 import { resolveMarkdownImageUrl } from './markdownAssetUrl'
 
@@ -59,6 +69,116 @@ let contentSyncQueued = false
 
 function isEffectivelyReadOnly(): boolean {
   return props.readOnly || props.mode === 'readonly'
+}
+
+interface RawSourceEditorContext {
+  dom: HTMLElement
+  source: string
+  view: EditorView
+  getPos: () => number | undefined
+  label: string
+  renderPreview: (source: string) => void
+}
+
+/**
+ * Wires the "编辑源码" button + inline CodeMirror editor onto an editable raw
+ * block (containers and diagrams). Live edits re-render the preview through
+ * `renderPreview`; committing dispatches a source-updating transaction that is
+ * reconciled byte-faithfully by sourcePreservation.
+ */
+function attachRawSourceEditor(ctx: RawSourceEditorContext): () => void {
+  const editButton = document.createElement('button')
+  editButton.type = 'button'
+  editButton.className = 'desk-raw-block__edit'
+  editButton.textContent = '编辑源码'
+  const editorHost = document.createElement('div')
+  editorHost.className = 'desk-raw-block__editor'
+  editorHost.hidden = true
+  ctx.dom.append(editButton, editorHost)
+
+  let editorValue = ctx.source
+  let syncTimer: ReturnType<typeof setTimeout> | null = null
+  let editing = false
+  let editorHandle: ContainerSourceEditorHandle | null = null
+
+  const closeEditing = (): void => {
+    editing = false
+    editorHandle?.destroy()
+    editorHandle = null
+    editorHost.hidden = true
+    editButton.hidden = false
+    editButton.disabled = false
+  }
+
+  const commit = (): void => {
+    if (editorValue === ctx.source) {
+      setTimeout(closeEditing, 0)
+      return
+    }
+    const position = ctx.getPos()
+    if (position == null) return
+    const currentNode = ctx.view.state.doc.nodeAt(position)
+    if (currentNode?.type.name !== 'deskRawBlock') return
+    ctx.view.dispatch(
+      ctx.view.state.tr.setNodeMarkup(position, undefined, {
+        ...(currentNode.attrs as Record<string, unknown>),
+        source: editorValue
+      })
+    )
+    setTimeout(closeEditing, 0)
+  }
+
+  const startEditing = (): void => {
+    if (editing) return
+    editing = true
+    editorValue = ctx.source
+    editButton.hidden = true
+    editButton.disabled = true
+
+    const header = document.createElement('div')
+    header.className = 'desk-raw-block__editor-header'
+    const label = document.createElement('span')
+    label.className = 'desk-raw-block__editor-label'
+    label.textContent = ctx.label
+    const done = document.createElement('button')
+    done.type = 'button'
+    done.className = 'desk-raw-block__editor-done'
+    done.textContent = '完成'
+    header.append(label, done)
+    done.addEventListener('click', (event) => {
+      event.preventDefault()
+      commit()
+    })
+
+    const cmHost = document.createElement('div')
+    cmHost.className = 'desk-raw-block__editor-cm'
+    editorHost.replaceChildren()
+    editorHost.append(header, cmHost)
+    editorHost.hidden = false
+
+    editorHandle = createContainerSourceEditor(
+      cmHost,
+      ctx.source,
+      (value) => {
+        editorValue = value
+        if (syncTimer != null) clearTimeout(syncTimer)
+        syncTimer = setTimeout(() => ctx.renderPreview(editorValue), 250)
+      },
+      () => commit()
+    )
+    window.setTimeout(() => editorHandle?.focus(), 0)
+  }
+
+  editButton.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    startEditing()
+  })
+
+  return () => {
+    editorHandle?.destroy()
+    editorHandle = null
+  }
 }
 
 function run(action: (editor: Crepe) => void): boolean {
@@ -271,6 +391,98 @@ onMounted(async () => {
     }
   })
   editor.editor.use(rawBlockProjectionPlugins)
+  editor.editor.use(
+    $view(deskRawBlockSchema.node, () => (node, view, getPos) => {
+      const block = {
+        kind: String(node.attrs.kind) as ProjectedRawBlockKind,
+        source: String(node.attrs.source),
+        hidden: Boolean(node.attrs.hidden)
+      }
+      const resolveImage = (source: string): string =>
+        resolveMarkdownImageUrl(source, props.knowledgeBaseId, props.noteUuid)
+      const dom = renderDeskRawBlockElement(block, resolveImage)
+      let cleanup: (() => void) | null = null
+      if (block.kind === 'raw-container') {
+        let previewEl = dom.querySelector('.custom-block') as HTMLElement | null
+        cleanup = attachRawSourceEditor({
+          dom,
+          source: block.source,
+          view,
+          getPos,
+          label: '编辑容器源码',
+          renderPreview: (source) => {
+            if (!previewEl) return
+            const fresh = renderContainerFromSource(source, resolveImage)
+            previewEl.replaceWith(fresh)
+            previewEl = fresh
+          }
+        })
+      }
+      if (block.kind === 'raw-diagram') {
+        const diagramEl = dom.querySelector('.desk-diagram') as HTMLElement | null
+        let renderToken = 0
+        let currentDiagram: { destroy?: () => void } | null = null
+        const renderInto = (source: string): void => {
+          if (!diagramEl) return
+          const token = ++renderToken
+          currentDiagram?.destroy?.()
+          currentDiagram = null
+          void renderDiagram(source).then((rendered) => {
+            if (token !== renderToken) {
+              rendered.destroy?.()
+              return
+            }
+            currentDiagram = rendered
+            diagramEl.replaceChildren(rendered.node)
+            // The canvas needs the host to be laid out (clientWidth/Height);
+            // defer creation to the next frame so the size is available.
+            const active = rendered.activate
+            if (active) {
+              // Defer past the first layout so the canvas host has real
+              // clientWidth/Height; otherwise zoomToFit can't frame the tree.
+              setTimeout(() => {
+                if (token === renderToken) active(rendered.node)
+              }, 80)
+            }
+          })
+        }
+        renderInto(block.source)
+        const editorCleanup = attachRawSourceEditor({
+          dom,
+          source: block.source,
+          view,
+          getPos,
+          label: '编辑图表源码',
+          renderPreview: renderInto
+        })
+        cleanup = () => {
+          editorCleanup()
+          currentDiagram?.destroy?.()
+        }
+      }
+      return {
+        dom,
+        update: (nextNode) => {
+          if (nextNode.type.name !== 'deskRawBlock') return false
+          // An external content sync may replace the atom entirely; remount then.
+          if (nextNode.attrs.source !== node.attrs.source) return false
+          return true
+        },
+        selectNode: () => dom.classList.add('ProseMirror-selectednode'),
+        deselectNode: () => dom.classList.remove('ProseMirror-selectednode'),
+        ignoreMutation: () => true,
+        destroy: () => cleanup?.(),
+        stopEvent: (event) => {
+          const target = event.target as Element | null
+          // Let native details toggles and links inside the rendered container
+          // keep their default behaviour instead of being turned into a node
+          // selection; everything else selects the atom so it stays swipeable.
+          if (target?.closest('summary, a, button, textarea')) return true
+          return false
+        }
+      }
+    })
+  )
   editor.editor.use(
     $view(imageSchema.node, () => (node) => {
       const dom = document.createElement('img')
@@ -516,6 +728,274 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+.milkdown-markdown-editor :deep(.desk-raw-block--container) {
+  position: relative;
+  display: block;
+  margin: 12px 0;
+  cursor: default;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--diagram) {
+  position: relative;
+  display: block;
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  overflow: hidden;
+  cursor: default;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--diagram .desk-diagram) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 140px;
+  padding: 16px;
+  overflow: auto;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--diagram .desk-diagram__svg svg) {
+  max-width: 100%;
+  height: auto;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--diagram .desk-diagram__mindmap) {
+  position: relative;
+  width: 100%;
+  height: 320px;
+  overflow: hidden;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--diagram .desk-diagram__error),
+.milkdown-markdown-editor :deep(.desk-raw-block--diagram .desk-diagram__fallback) {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--diagram .desk-diagram__error) {
+  color: var(--danger);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block) {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 14px 18px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--editor-text);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-title) {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--editor-text);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-body) {
+  color: var(--editor-text);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-tip) {
+  border-left-color: var(--success);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-info),
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-note) {
+  border-left-color: var(--accent);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-warning) {
+  border-left-color: var(--warning);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-danger) {
+  border-left-color: var(--danger);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-details) {
+  border-left-color: var(--border-strong);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container details summary) {
+  cursor: pointer;
+  list-style: none;
+}
+
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--container details summary::-webkit-details-marker) {
+  display: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container details summary::before) {
+  content: '▸';
+  display: inline-block;
+  margin-right: 8px;
+  color: var(--muted);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container details[open] summary::before) {
+  content: '▾';
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container details:not([open]) > *:not(summary)) {
+  display: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-body p) {
+  margin: 0 0 8px;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-body p:last-child) {
+  margin-bottom: 0;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-body img) {
+  max-width: 100%;
+  height: auto;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-body pre) {
+  overflow-x: auto;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .code-group-tabs) {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .code-group-tab) {
+  padding: 4px 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+  background: var(--hover);
+  border: 1px solid var(--border);
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .code-group-tab:hover) {
+  color: var(--editor-text);
+  background: var(--raised);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .code-group-tab.active) {
+  color: var(--editor-text);
+  background: var(--panel);
+  border-color: var(--accent-strong);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .code-group-panels .code-group-panel) {
+  display: none;
+}
+
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--container .code-group-panels .code-group-panel.active) {
+  display: block;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-swiper .swiper-body) {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-swiper .swiper-body p) {
+  margin: 0;
+  flex: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-swiper .swiper-body img) {
+  display: block;
+  max-height: 260px;
+  width: auto;
+  max-width: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .desk-raw-block__edit) {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  z-index: 2;
+  padding: 3px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container:hover .desk-raw-block__edit),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--container.ProseMirror-selectednode .desk-raw-block__edit) {
+  opacity: 1;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .desk-raw-block__edit:hover) {
+  color: var(--editor-text);
+  border-color: var(--accent-strong);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .desk-raw-block__editor) {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--editor-bg);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .desk-raw-block__editor-header) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .desk-raw-block__editor-label) {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .desk-raw-block__editor-done) {
+  padding: 3px 12px;
+  font-size: 12px;
+  color: var(--editor-bg);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .desk-raw-block__editor-done:hover) {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .desk-raw-block__editor-cm) {
+  height: 320px;
+  overflow: hidden;
+  background: var(--editor-bg);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .desk-raw-block__editor-cm .cm-editor) {
+  height: 100%;
+}
+
 .milkdown-markdown-editor :deep(.desk-generated-title) {
   margin: 0 0 1.25em;
   padding: 0;
@@ -612,6 +1092,17 @@ onBeforeUnmount(() => {
 .milkdown-markdown-editor :deep(.desk-raw-block *::selection) {
   background: transparent;
   color: inherit;
+}
+
+/* The container inline source editor is a CodeMirror view; restore a visible
+   selection highlight that the blanket `.desk-raw-block *::selection` above
+   would otherwise wipe out. */
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--container .desk-raw-block__editor-cm .cm-content::selection),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--container .desk-raw-block__editor-cm .cm-content *::selection) {
+  background: var(--selected);
+  color: var(--editor-text);
 }
 
 .milkdown-markdown-editor :deep(.milkdown-code-block .language-picker) {
