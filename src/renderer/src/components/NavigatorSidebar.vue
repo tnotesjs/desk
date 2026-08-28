@@ -4,6 +4,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import TocNodeList from './TocNodeList.vue'
 import UiTooltip from './UiTooltip.vue'
 import { classifyChangePath } from './changeCategory'
+import { mergeRenameChanges } from './mergeRenameChanges'
 import { useEditorStore } from '../stores/editor'
 import { useWorkspaceStore } from '../stores/workspace'
 
@@ -89,6 +90,10 @@ const otherFileChanges = computed(() =>
     (change) => classifyChangePath(change.path) === 'otherFile'
   )
 )
+// Display-level rename merge: counts stay the true raw git counts above.
+const displayNoteFileChanges = computed(() => mergeRenameChanges(noteFileChanges.value))
+const displayConfigFileChanges = computed(() => mergeRenameChanges(configFileChanges.value))
+const displayOtherFileChanges = computed(() => mergeRenameChanges(otherFileChanges.value))
 const selectedTocNoteUuid = computed(() => {
   const tab = editor.activeTab
   return tab?.type === 'note' && tab.knowledgeBaseId === store.selectedKnowledgeBaseId
@@ -328,7 +333,7 @@ const previewLabel = computed(() => {
             </button>
             <div v-show="noteFileExpanded">
               <button
-                v-for="change in noteFileChanges"
+                v-for="change in displayNoteFileChanges"
                 :key="`note-file:${change.status}:${change.path}`"
                 type="button"
                 class="change-item"
@@ -343,7 +348,11 @@ const previewLabel = computed(() => {
                     >{{ change.noteTitle }}</strong
                   >
                   <strong v-else>{{ change.path }}</strong>
-                  <small v-if="change.noteUuid">{{ change.path }}</small>
+                  <small v-if="change.noteUuid">{{
+                    change.status === 'renamed' && change.previousPath
+                      ? `${change.previousPath} → ${change.path}`
+                      : change.path
+                  }}</small>
                 </span>
                 <span class="change-item__status">{{ statusSymbol[change.status] }}</span>
               </button>
@@ -378,7 +387,7 @@ const previewLabel = computed(() => {
             </button>
             <div v-show="configFileExpanded">
               <button
-                v-for="change in configFileChanges"
+                v-for="change in displayConfigFileChanges"
                 :key="`config:${change.status}:${change.path}`"
                 type="button"
                 class="change-item"
@@ -421,7 +430,7 @@ const previewLabel = computed(() => {
             </button>
             <div v-show="otherFileExpanded">
               <button
-                v-for="change in otherFileChanges"
+                v-for="change in displayOtherFileChanges"
                 :key="`other:${change.status}:${change.path}`"
                 type="button"
                 class="change-item"
