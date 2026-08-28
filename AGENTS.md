@@ -1,6 +1,8 @@
 # Desk 开发上下文（给 Agent 的交接文档）
 
 > 本文件是跨设备交接时的「上下文快照」，由上一轮对话压缩而成。新 Agent 请先读本文件 + [docs/development-status.md](./docs/development-status.md)，再动手。
+>
+> ⚠️ **当前交接快照见 [docs/handoff-2026-08-27.md](./docs/handoff-2026-08-27.md)**（比 development-status 更新）：含本轮完成的容器/图表渲染与编辑、canonical 规范、**已根因定位+修复验证的 mindmap 居中问题（非 zoomToFit 时序，是 canvas 元素 CSS 尺寸未钉回宿主）**、computer-use 不可用但已有 **Playwright Electron 运行态自测替代（§8 runbook）**、关键文件与下一步顺序。
 
 ## 项目快照
 
@@ -38,17 +40,16 @@
 - **desk-029** 复制按钮成蓝色胶囊 → 覆盖 `.tools-button-group button` 为面板灰。
 - **desk-030** 亮色模式当前行 / 行号列颜色错 → 对齐源码编辑器 `cm-gutters` / `cm-activeLine`。
 - **desk-031** 代码块语言常驻、复制 hover、外框 hover → code-block 交互显隐调整。
-- **desk-032** 代码块失焦后当前行仍高亮 → 加 `.cm-editor.cm-focused`（见下方「未解决」）。
+- **desk-032** 代码块失焦后当前行仍高亮 → 加 `.cm-editor:focus-within .cm-activeLine`（见下方「已解决」）。
 - **desk-033** 自动生成目录支持折叠 → `renderGeneratedTocNode` 加折叠开关（容器 + toggle + list）。
 
 ## ⚠️ 尚未真正解决的问题（下一 Agent 首要关注）
 
-### 1. 代码块「聚焦才高亮」未根治（重要）
+### 1. 代码块「聚焦才高亮」——已解决（真机 Playwright E2E 实测，详见 handoff §5.3）
 
-- 现象：光标不在代码块时，多个代码块仍同时高亮首行。
-- 根因（已从 `@codemirror/view` 源码确认）：`highlightActiveLine()` **不检查 `view.hasFocus`**，无条件给当前 selection 行（默认第 1 行）加 `cm-activeLine` 装饰。Crepe 通过 `basicSetup` 引入了该插件。
-- 当前尝试：`MilkdownMarkdownEditor.vue` 用 `.cm-editor:focus-within .cm-activeLine` 控制背景。**但它不可靠**——happy-dom 测不出 `:focus-within`，且嵌套 CodeMirror 的 `cm-focused` / `hasFocus` 初始即 true，跟真实用户点击不联动。
-- **建议**：改用真正由 ProseMirror 文档状态驱动的方式——当 milkdown 的 selection 落在 `code_block` 节点内时才高亮，或用 `ViewPlugin` 基于 `view.hasFocus` 动态增删 `cm-activeLine` 装饰，而不是纯 CSS。需要先实测确认。
+- 原症状：光标不在代码块时，多个代码块仍同时高亮首行。
+- 现状：`.cm-editor:focus-within .cm-activeLine`（`MilkdownMarkdownEditor.vue` 1171–1186 行）已在真机正确切换——**未聚焦=透明、聚焦=可见**。本会话 Playwright E2E 实测确认：未聚焦时 `.cm-activeLine` 背景 `rgba(0,0,0,0)`（DOM 有装饰但不可见、无害）；点击进入代码块后 `:focus-within`=true、背景变可见色。
+- 结论：**可见症状已解决**。唯一注意点：该行为**只能在真机验证**（happy-dom 测不出 `:focus-within`），用 §8 的 Playwright E2E 覆盖；旧疑虑「嵌套 CM `hasFocus` 初始为 true」在真实浏览器不成立。
 
 ### 2. 其它已知限制（来自 development-status）
 
@@ -59,13 +60,16 @@
 
 ## 下一步建议优先级
 
-1. 根治代码块「聚焦才高亮」（见上）。
-2. 与 VitePress 发布效果一致性：评估 Mermaid / MarkMap / Swiper / Container 的专用 NodeView 与预览（按需，不必全做）。
-3. 图片改为纯本地写入 assets（当前有 GitHub 图床逻辑，与本地优先定位不符）。
-4. 补齐 `desk-001 ~ desk-022` 在 Milkdown 新架构下的回归验证，确认哪些仍可复现。
+> 最新优先级以 `docs/handoff-2026-08-27.md` §6 为准；此处开发侧待办。
+
+1. 修 mindmap 居中（handoff §5.1，已根因定位+修复验证；`@tnotesjs/mindmap-core` 发版）。
+2. 完成 markmap 真实渲染（markmap-lib / markmap-view）。
+3. 阶段 3：组件抽取复用——core 拆纯 Vue 渲染层（props 驱动）+ VitePress 薄适配层。
+4. 补齐 `desk-001 ~ desk-022` 在 Milkdown 新架构下的回归验证（可用 Playwright E2E 固化）。
+5. 图片改为纯本地写入 assets（当前有 GitHub 图床逻辑，与本地优先定位不符）。
 
 ## 重要环境说明
 
 - 测试知识库：`desk/playground` 下 `TNotes.algorithms`（36 篇）、`TNotes.docs`（40 篇），共 76 篇；`TNotes.python`、`TNotes.javascript` 等可能在 playground 中可视测试。
-- 运行态 UI 验证需本机「Computer Use / node_repl」能力，且解锁屏幕。若不可用，UI 类改动只能靠用户人工确认。
+- 运行态 UI 验证：**优先用 `docs/handoff-2026-08-27.md` §8 的 Playwright Electron E2E**（CDP 驱动 + 截图像素断言，无需 Computer Use / 屏幕录制权限）；若需真外设/系统级交互才回落 computer-use。
 - 本机 Dev 服务器：`pnpm dev`（Electron 窗口，vite 5173）。
