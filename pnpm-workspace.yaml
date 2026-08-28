@@ -4,7 +4,8 @@ allowBuilds:
   esbuild: true
   vue-demi: true
 minimumReleaseAgeExclude:
-  - '@tnotesjs/core@0.6.0'
+  - '@tnotesjs/core@0.6.0 || 0.6.1'
+  - '@tnotesjs/mindmap-core@0.2.1'
 onlyBuiltDependencies:
   - electron
   - esbuild
