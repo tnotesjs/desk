@@ -14,7 +14,6 @@ import { searchKeymap } from '@codemirror/search'
 import { Annotation, Compartment, EditorState, type Extension } from '@codemirror/state'
 import {
   crosshairCursor,
-  drawSelection,
   dropCursor,
   EditorView,
   highlightActiveLine,
@@ -157,7 +156,8 @@ function baseExtensions(): Extension[] {
   return [
     highlightSpecialChars(),
     history(),
-    drawSelection(),
+    // Prefer native ::selection so multi-line highlights wrap the selected
+    // characters only. drawSelection() paints full-width line rectangles.
     dropCursor(),
     indentOnInput(),
     bracketMatching(),
@@ -233,10 +233,7 @@ function baseExtensions(): Extension[] {
       '.cm-scroller': { fontFamily: 'var(--font-mono)', lineHeight: '1.65' },
       '.cm-content': { caretColor: 'var(--accent-strong)' },
       '&.cm-focused': { outline: 'none' },
-      '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent-strong)' },
-      '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': {
-        backgroundColor: 'color-mix(in srgb, var(--accent) 52%, transparent) !important'
-      },
+      '.cm-dropCursor': { borderLeftColor: 'var(--accent-strong)' },
       '.cm-gutters': {
         backgroundColor: 'var(--editor-bg)',
         color: 'var(--muted)',
@@ -343,12 +340,14 @@ onBeforeUnmount(() => {
 
 .markdown-source-editor :deep(.cm-content) {
   padding: 20px max(24px, calc((100% - 940px) / 2));
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .markdown-source-editor :deep(.cm-content) ::selection,
 .markdown-source-editor :deep(.cm-line) ::selection {
-  background: color-mix(in srgb, var(--accent) 62%, #17325d) !important;
-  color: #fff !important;
+  background: color-mix(in srgb, var(--accent) 55%, transparent) !important;
+  color: var(--editor-text) !important;
 }
 
 :global(:root[data-theme='dark']) .markdown-source-editor {
@@ -381,13 +380,13 @@ onBeforeUnmount(() => {
 
 :global(:root[data-theme='dark']) .markdown-source-editor :deep(.cm-content) ::selection,
 :global(:root[data-theme='dark']) .markdown-source-editor :deep(.cm-line) ::selection {
-  background: #003d73 !important;
+  background: color-mix(in srgb, var(--accent) 55%, transparent) !important;
   color: #f0f6fc !important;
 }
 
 :global(:root[data-theme='light']) .markdown-source-editor :deep(.cm-content) ::selection,
 :global(:root[data-theme='light']) .markdown-source-editor :deep(.cm-line) ::selection {
-  background: #bbdfff !important;
+  background: color-mix(in srgb, var(--accent) 42%, transparent) !important;
   color: #24292e !important;
 }
 </style>
