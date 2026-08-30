@@ -89,10 +89,11 @@ function isOnFirstLineOfTextblock($head: EditorState['selection']['$head']): boo
 function neighborSelectableBlockPosition(
   state: EditorState,
   boundary: number,
-  direction: RawBlockArrowDirection
+  direction: RawBlockArrowDirection,
+  options: { skipEmptyTextblocks?: boolean } = {}
 ): number | null {
+  const skipEmpty = options.skipEmptyTextblocks === true
   let pos = boundary
-  // Skip empty paragraphs between fences so selected→Arrow chains to the next code.
   for (let guard = 0; guard < 32; guard += 1) {
     const resolved = state.doc.resolve(Math.max(0, Math.min(pos, state.doc.content.size)))
     const neighbor = direction === 'down' ? resolved.nodeAfter : resolved.nodeBefore
@@ -100,7 +101,10 @@ function neighborSelectableBlockPosition(
     if (isSelectableBlockNode(neighbor)) {
       return direction === 'down' ? pos : pos - neighbor.nodeSize
     }
-    if (neighbor.isTextblock && neighbor.content.size === 0) {
+    // Only skip empty paragraphs when chaining from an already-selected block
+    // (code→code). From a normal caret, an empty line must receive the arrow
+    // first — otherwise "哈哈哈"↓ jumps over the blank into the fence below.
+    if (skipEmpty && neighbor.isTextblock && neighbor.content.size === 0) {
       pos = direction === 'down' ? pos + neighbor.nodeSize : pos - neighbor.nodeSize
       continue
     }
@@ -116,6 +120,9 @@ function neighborSelectableBlockPosition(
  *
  * ArrowDown/Up match the last/first visual line (not only absolute offset 0/end),
  * so a mid-line caret on a single-line paragraph still whole-selects the next code.
+ *
+ * Empty paragraphs between the caret and a block are NOT skipped — ProseMirror
+ * should move into the blank line first.
  */
 export function adjacentRawBlockSelectionPosition(
   state: EditorState,
@@ -350,43 +357,32 @@ function isKeyboardRangeEvent(event: KeyboardEvent): boolean {
   )
 }
 
+/** Keep ProseMirror focused after Crepe's code nodeView.selectNode() focuses CM. */
+function reclaimFocusFromCodeMirror(view: EditorView, position: number): void {
+  view.focus()
+  queueMicrotask(() => {
+    if (codeBlockWholeSelectKey.getState(view.state) !== position) return
+    if (!(view.state.selection instanceof NodeSelection)) return
+    view.focus()
+  })
+}
+
 function selectSelectableBlock(view: EditorView, position: number): boolean {
   const node = view.state.doc.nodeAt(position)
   if (!node || !isSelectableBlockNode(node)) return false
-  // Crepe code_block NodeSelection focuses CodeMirror via selectNode(); use a
-  // decoration-backed whole-select instead so Arrow/Del stay in ProseMirror.
-  if (isCodeBlock(node)) {
-    const transaction = view.state.tr
-      .setMeta(codeBlockWholeSelectKey, position)
-      .setMeta(rawBlockKeyboardRangeKey, null)
-    const { selection } = view.state
-    const parkedOutside =
-      selection instanceof TextSelection &&
-      selection.empty &&
-      !isCodeBlock(selection.$head.parent)
-    if (!parkedOutside) {
-      // Drop NodeSelection / in-code caret so Crepe cannot focus CM; prefer a gap
-      // before the fence when valid, else the nearest surrounding text.
-      try {
-        transaction.setSelection(new GapCursor(view.state.doc.resolve(position)))
-      } catch {
-        transaction.setSelection(
-          TextSelection.near(view.state.doc.resolve(position), -1)
-        )
-      }
-    }
-    view.dispatch(transaction.scrollIntoView())
-    view.focus()
-    return true
-  }
+  // Use NodeSelection for both raw atoms and code fences so the caret leaves the
+  // previous line (same UX as deskRawBlock). Crepe's selectNode() will focus CM —
+  // reclaim PM focus and keep a decoration marker for styling / key routing.
+  const isCode = isCodeBlock(node)
   view.dispatch(
     view.state.tr
       .setSelection(NodeSelection.create(view.state.doc, position))
-      .setMeta(codeBlockWholeSelectKey, null)
+      .setMeta(codeBlockWholeSelectKey, isCode ? position : null)
       .setMeta(rawBlockKeyboardRangeKey, null)
       .scrollIntoView()
   )
-  view.focus()
+  if (isCode) reclaimFocusFromCodeMirror(view, position)
+  else view.focus()
   return true
 }
 
@@ -432,7 +428,7 @@ export function clearRawBlockSelectionState(view: EditorView): void {
   const transaction = view.state.tr
     .setMeta(codeBlockWholeSelectKey, null)
     .setMeta(rawBlockKeyboardRangeKey, null)
-  if (selection instanceof NodeSelection && isVisibleRawBlock(selection.node)) {
+  if (selection instanceof NodeSelection && isSelectableBlockNode(selection.node)) {
     transaction.setSelection(
       TextSelection.near(
         transaction.doc.resolve(Math.min(selection.from, transaction.doc.content.size)),
@@ -461,7 +457,10 @@ function moveFromSelectableBlock(
   direction: RawBlockArrowDirection
 ): boolean {
   const boundary = direction === 'down' ? position + nodeSize : position
-  const neighborPos = neighborSelectableBlockPosition(view.state, boundary, direction)
+  // From a whole-selected block, skip empty paragraphs so adjacent fences chain.
+  const neighborPos = neighborSelectableBlockPosition(view.state, boundary, direction, {
+    skipEmptyTextblocks: true
+  })
   if (neighborPos != null) {
     return selectSelectableBlock(view, neighborPos)
   }
@@ -501,7 +500,7 @@ function handleCodeBlockWholeSelect(view: EditorView, event: KeyboardEvent): boo
 
 function handleSelectedSelectableBlock(view: EditorView, event: KeyboardEvent): boolean {
   const { selection } = view.state
-  if (!(selection instanceof NodeSelection) || !isVisibleRawBlock(selection.node)) {
+  if (!(selection instanceof NodeSelection) || !isSelectableBlockNode(selection.node)) {
     return false
   }
   const position = selection.from
@@ -528,6 +527,29 @@ function handleSelectedSelectableBlock(view: EditorView, event: KeyboardEvent): 
     return moveFromSelectableBlock(view, position, selection.node.nodeSize, 'up')
   }
   return false
+}
+
+/** True when arrow/delete should stay on the whole-select path even if CM has focus. */
+function isWholeSelectKeyEvent(event: KeyboardEvent): boolean {
+  return (
+    !event.shiftKey &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.isComposing &&
+    ['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft', 'Delete', 'Backspace'].includes(
+      event.key
+    )
+  )
+}
+
+function handleWholeSelectKeys(view: EditorView, event: KeyboardEvent): boolean {
+  if (!isWholeSelectKeyEvent(event)) return false
+  return (
+    handleRawBlockRangeDeletion(view, event) ||
+    handleCodeBlockWholeSelect(view, event) ||
+    handleSelectedSelectableBlock(view, event)
+  )
 }
 
 function isBlockArrowEvent(event: KeyboardEvent): boolean {
@@ -604,20 +626,12 @@ export function createRawBlockSelectionPlugin(): MilkdownPlugin[] {
             if (!view.editable) return false
             if (claimedKeyboardEvent === event) return true
             const target = event.target as Element | null
-            if (target?.closest('.cm-editor')) return false
-            if (
-              !event.shiftKey &&
-              !event.altKey &&
-              !event.ctrlKey &&
-              !event.metaKey &&
-              !event.isComposing &&
-              (handleRawBlockRangeDeletion(view, event) ||
-                handleCodeBlockWholeSelect(view, event) ||
-                handleSelectedSelectableBlock(view, event))
-            ) {
+            // Whole-select must win even when Crepe's selectNode() left focus in CM.
+            if (handleWholeSelectKeys(view, event)) {
               claimEvent(event)
               return true
             }
+            if (target?.closest('.cm-editor')) return false
 
             if (isBlockArrowEvent(event)) {
               const down = event.key === 'ArrowDown' || event.key === 'ArrowRight'
@@ -642,36 +656,18 @@ export function createRawBlockSelectionPlugin(): MilkdownPlugin[] {
             ) {
               return
             }
-            if ((eventTarget as Element).closest?.('.cm-editor')) return
             if (claimedKeyboardEvent === event) return
 
-            if (
-              !event.shiftKey &&
-              !event.altKey &&
-              !event.ctrlKey &&
-              !event.metaKey &&
-              !event.isComposing &&
-              (event.key === 'Delete' || event.key === 'Backspace') &&
-              (handleRawBlockRangeDeletion(view, event) ||
-                handleCodeBlockWholeSelect(view, event) ||
-                handleSelectedSelectableBlock(view, event))
-            ) {
+            const inCodeMirror = Boolean((eventTarget as Element).closest?.('.cm-editor'))
+            if (handleWholeSelectKeys(view, event)) {
               claimEvent(event)
               event.preventDefault()
               event.stopImmediatePropagation()
               return
             }
+            if (inCodeMirror) return
 
             if (isBlockArrowEvent(event)) {
-              if (
-                handleCodeBlockWholeSelect(view, event) ||
-                handleSelectedSelectableBlock(view, event)
-              ) {
-                claimEvent(event)
-                event.preventDefault()
-                event.stopImmediatePropagation()
-                return
-              }
               const down = event.key === 'ArrowDown' || event.key === 'ArrowRight'
               const position = adjacentRawBlockSelectionPosition(view.state, down ? 'down' : 'up')
               if (position != null && selectSelectableBlock(view, position)) {
@@ -691,6 +687,14 @@ export function createRawBlockSelectionPlugin(): MilkdownPlugin[] {
           }
           view.dom.ownerDocument.addEventListener('keydown', keydown, true)
           return {
+            update: () => {
+              const position = codeBlockWholeSelectKey.getState(view.state)
+              if (position == null) return
+              const { selection } = view.state
+              if (!(selection instanceof NodeSelection) || !isCodeBlock(selection.node)) return
+              if (view.hasFocus()) return
+              view.focus()
+            },
             destroy: () => view.dom.ownerDocument.removeEventListener('keydown', keydown, true)
           }
         }

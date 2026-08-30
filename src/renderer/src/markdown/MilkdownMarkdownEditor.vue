@@ -1077,6 +1077,10 @@ onBeforeUnmount(() => {
   overflow: auto;
   background: var(--editor-bg);
   color: var(--editor-text);
+  /* Size the document against the editor pane, not the window — sidebars
+     commonly leave a narrow writing column even on a wide display. */
+  container-type: inline-size;
+  container-name: desk-visual-editor;
 }
 
 .milkdown-markdown-editor :deep(.milkdown) {
@@ -1255,7 +1259,9 @@ onBeforeUnmount(() => {
   width: min(100%, 940px);
   min-height: 100%;
   margin: 0 auto;
-  padding: 28px 40px 48px;
+  /* Left gutter must fit Crepe's block handle (2×32px icons + gap + 16px
+     floating offset). Right matches for a balanced writing column. */
+  padding: 28px 72px 48px 96px;
   line-height: 1.72;
   outline: none;
   --prosemirror-virtual-cursor-color: var(--accent-strong);
@@ -1840,9 +1846,11 @@ onBeforeUnmount(() => {
   color: var(--muted);
 }
 
-@media (max-width: 720px) {
+@container desk-visual-editor (max-width: 640px) {
   .milkdown-markdown-editor :deep(.ProseMirror) {
-    padding: 22px 20px 40px;
+    /* Keep a handle gutter even in a squeezed pane; never collapse to the
+       content edge (the old 20px padding clipped + / drag controls). */
+    padding: 22px 40px 40px 80px;
   }
 }
 </style>
