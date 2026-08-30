@@ -2,11 +2,12 @@
 import { _electron } from 'playwright-core'
 import { createRequire } from 'node:module'
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const require = createRequire(import.meta.url)
 const electronPath = require('electron')
-const DESK_DIR = '/Users/huyouda/tnotesjs/desk'
+const DESK_DIR = join(dirname(fileURLToPath(import.meta.url)), '..')
 const PROFILE = '/tmp/desk-e2e-profile-notes'
 const SHOTS = join(DESK_DIR, 'scripts/shots/notes')
 mkdirSync(SHOTS, { recursive: true })

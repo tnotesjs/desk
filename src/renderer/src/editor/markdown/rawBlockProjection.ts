@@ -26,7 +26,7 @@ type SourceProjectedKind = Extract<
   | 'html'
 >
 
-export type ProjectedRawBlockKind = SourceProjectedKind | 'raw-diagram' | 'raw-break'
+export type ProjectedRawBlockKind = SourceProjectedKind | 'raw-diagram'
 
 export interface ProjectedRawBlock {
   kind: ProjectedRawBlockKind
@@ -43,15 +43,15 @@ const PROJECTED_KINDS = new Set<ProjectedRawBlockKind>([
   'raw-generated-title',
   'raw-generated-toc',
   'raw-diagram',
-  'raw-break',
   'table',
   'html'
 ])
 
 const MARKER =
-  /^<!--desk-raw-block:v1:(raw-frontmatter|raw-container|raw-include|raw-component|raw-reference-definition|raw-generated-title|raw-generated-toc|raw-diagram|raw-break|table|html):([01]):([A-Za-z0-9+/]*={0,2})-->$/
+  /^<!--desk-raw-block:v1:(raw-frontmatter|raw-container|raw-include|raw-component|raw-reference-definition|raw-generated-title|raw-generated-toc|raw-diagram|table|html):([01]):([A-Za-z0-9+/]*={0,2})-->$/
 const REGION_COMMENT = /^ {0,3}<!--\s*(?:end)?region(?::[\s\S]*?)?\s*-->\s*$/i
 const HTML_TAG = /<\/?[A-Za-z][\w.-]*(?=[\s/>])/
+/** Standalone HTML breaks stay in the source for Milkdown's remark-preserve-empty-line. */
 const STANDALONE_BREAK = /^ {0,3}<br\s*\/?>(?:[ \t]*)$/i
 const DIAGRAM_LANGUAGES = new Set(['mermaid', 'mindmap', 'markmap'])
 
@@ -148,9 +148,12 @@ export function projectRawBlocksForMilkdown(source: string): string {
       )
       return
     }
+    // Leave standalone <br /> for Milkdown empty-paragraph round-trip; do not
+    // project them as raw HTML cards.
+    if (isStandaloneBreak(block)) return
     if (!shouldProjectBlock(block)) return
     const marker = createProjectedRawBlockMarker({
-      kind: isStandaloneBreak(block) ? 'raw-break' : block.kind,
+      kind: block.kind,
       source: block.source,
       // Reference definitions are metadata consumed by the Markdown parser to
       // resolve `[text][id]` links. They must never surface as a visible source
@@ -361,17 +364,6 @@ export function renderDeskRawBlockElement(
     rendered.dataset.hidden = 'false'
     return rendered
   }
-  if (block.kind === 'raw-break') {
-    const emptyLine = document.createElement('div')
-    emptyLine.dataset.type = 'desk-raw-block'
-    emptyLine.dataset.kind = 'raw-break'
-    emptyLine.dataset.source = encodeBase64(block.source)
-    emptyLine.dataset.hidden = 'false'
-    emptyLine.className = 'desk-raw-block desk-raw-block--empty-line'
-    emptyLine.contentEditable = 'false'
-    return emptyLine
-  }
-
   const element = document.createElement('div')
   element.dataset.type = 'desk-raw-block'
   element.dataset.kind = block.kind
@@ -536,11 +528,7 @@ function rawBlockSignatures(document: {
     if (
       node.attrs.kind === 'raw-container' ||
       node.attrs.kind === 'raw-component' ||
-      node.attrs.kind === 'raw-diagram' ||
-      // A standalone <br /> is presented as an empty visual line. It has no
-      // source editor, but users must still be able to remove that line with
-      // the normal selected-node and boundary deletion interactions.
-      node.attrs.kind === 'raw-break'
+      node.attrs.kind === 'raw-diagram'
     ) {
       return
     }

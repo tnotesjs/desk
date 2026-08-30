@@ -84,19 +84,21 @@ describe('MilkdownMarkdownEditor synchronization', () => {
     wrapper.unmount()
   })
 
-  it('emits a source with one fewer standalone break after boundary deletion', async () => {
+  it('loads consecutive standalone breaks as empty paragraphs', async () => {
     const source = 'before\n\n<br />\n\n<br />\n\n<br />\n\nafter\n'
     const wrapper = await mountEditor(source)
-    const breaks = wrapper.findAll('[data-kind="raw-break"]')
-    expect(breaks).toHaveLength(3)
+    expect(wrapper.findAll('[data-type="desk-raw-block"]')).toHaveLength(0)
 
-    await breaks[1].find('[data-side="after"]').trigger('pointerdown')
-    await wrapper.get('.ProseMirror').trigger('keydown', { key: 'Backspace' })
+    const emptyParagraphs = [...wrapper.get('.ProseMirror').element.querySelectorAll('p')].filter(
+      (element) => (element.textContent ?? '').trim() === ''
+    )
+    expect(emptyParagraphs.length).toBeGreaterThanOrEqual(3)
+
+    await wrapper.setProps({
+      content: 'before\n\n<br />\n\n<br />\n\nafter\n'
+    })
     await Promise.resolve()
-
-    expect(wrapper.findAll('[data-kind="raw-break"]')).toHaveLength(2)
-    const changes = wrapper.emitted<string[]>('change') ?? []
-    expect(changes.at(-1)?.[0].match(/<br \/>/g)).toHaveLength(2)
+    expect(wrapper.emitted('change')).toBeUndefined()
     wrapper.unmount()
   })
 
@@ -118,20 +120,17 @@ describe('MilkdownMarkdownEditor synchronization', () => {
     wrapper.unmount()
   })
 
-  it('blocks raw-break boundary selection and deletion while readonly', async () => {
+  it('blocks edits to empty paragraphs while readonly', async () => {
     const source = 'before\n\n<br />\n\nafter\n'
     const wrapper = await mountEditor(source, { mode: 'readonly' })
-    const emptyLine = wrapper.get('[data-kind="raw-break"]')
 
     expect(wrapper.get('.milkdown-markdown-editor').classes()).toContain('is-readonly')
-    await emptyLine.get('[data-side="after"]').trigger('pointerdown')
+    expect(wrapper.findAll('[data-type="desk-raw-block"]')).toHaveLength(0)
     await wrapper.get('.ProseMirror').trigger('keydown', { key: 'Backspace' })
     await wrapper.get('.ProseMirror').trigger('keydown', { key: 'Delete' })
     await wrapper.get('.ProseMirror').trigger('keydown', { key: 'x' })
     await Promise.resolve()
 
-    expect(wrapper.findAll('[data-kind="raw-break"]')).toHaveLength(1)
-    expect(wrapper.find('.desk-raw-boundary-cursor').exists()).toBe(false)
     expect(wrapper.emitted('change')).toBeUndefined()
     wrapper.unmount()
   })

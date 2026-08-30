@@ -2,7 +2,7 @@
 
 TNotes 的本地优先桌面客户端，使用 Electron、Vue 3、TypeScript、Milkdown / Crepe 和 CodeMirror 6 构建。
 
-> Desk 当前处于开发预览阶段，功能和交互仍会持续调整。当前完成度、已知限制和提交约定见[开发进度说明](./docs/development-status.md)。
+> Desk 当前处于开发预览阶段，功能和交互仍会持续调整。给 Agent / 开发者的短交接见 [AGENTS.md](./AGENTS.md)。
 
 ## 当前开发版本能力
 

@@ -1255,11 +1255,8 @@ onBeforeUnmount(() => {
   --prosemirror-virtual-cursor-color: var(--accent-strong);
 }
 
-/* Crepe's virtual cursor owns text-caret rendering. Its upstream stylesheet
-   hides the browser caret, but Desk's former higher-specificity caret-color
-   override brought the native caret back and allowed it to remain at an old
-   DOM Selection while a raw-break cursor moved elsewhere. Keep native caret
-   color only for an editor that has no virtual-cursor implementation. */
+/* Crepe's virtual cursor owns text-caret rendering. Prefer it over the browser
+   caret when the virtual-cursor implementation is present. */
 .milkdown-markdown-editor:not(.is-readonly)
   :deep(.ProseMirror:not(.virtual-cursor-enabled):not(.ProseMirror-hideselection)) {
   caret-color: var(--accent-strong);
@@ -1362,74 +1359,6 @@ onBeforeUnmount(() => {
   display: none;
 }
 
-.milkdown-markdown-editor :deep(.desk-raw-block--empty-line) {
-  display: block;
-  min-height: 1.72em;
-  margin: 0;
-  padding: 0;
-  overflow: visible;
-  border: 0;
-  background: transparent;
-  cursor: text;
-  user-select: text;
-}
-
-/* A standalone <br /> owns one line of vertical layout, but it must not look
-   like an empty raw-block card. A state-owned node decoration paints its caret
-   and hint inside this exact row; a multi-node range uses only a short marker. */
-.milkdown-markdown-editor :deep(.desk-raw-block--empty-line.ProseMirror-selectednode),
-.milkdown-markdown-editor :deep(.desk-raw-block--empty-line.desk-raw-block--selection-active),
-.milkdown-markdown-editor :deep(.desk-raw-block--empty-line.desk-raw-block--range-selected),
-.milkdown-markdown-editor
-  :deep(.desk-raw-block--empty-line.desk-raw-block--boundary-active.ProseMirror-selectednode) {
-  border: 0;
-  outline: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-.milkdown-markdown-editor:not(.is-readonly)
-  :deep(.desk-raw-block--empty-line.desk-raw-block--range-selected::before) {
-  position: absolute;
-  top: 50%;
-  left: 1px;
-  width: 8px;
-  height: 1.2em;
-  border-radius: 1px;
-  background: var(--crepe-color-selected);
-  content: '';
-  pointer-events: none;
-  transform: translateY(-50%);
-}
-
-.milkdown-markdown-editor:not(.is-readonly)
-  :deep(.desk-raw-block--empty-line.desk-raw-block--selection-active::before) {
-  position: absolute;
-  top: 50%;
-  left: 1px;
-  width: 1px;
-  height: 1.2em;
-  border-radius: 1px;
-  background: var(--accent-strong);
-  content: '';
-  pointer-events: none;
-  transform: translateY(-50%);
-}
-
-.milkdown-markdown-editor:not(.is-readonly)
-  :deep(.desk-raw-block--empty-line.desk-raw-block--selection-active::after) {
-  position: absolute;
-  top: 50%;
-  left: 0;
-  color: var(--crepe-color-placeholder, var(--muted));
-  content: attr(data-placeholder);
-  font-size: inherit;
-  line-height: inherit;
-  opacity: 0.72;
-  pointer-events: none;
-  transform: translateY(-50%);
-}
-
 .milkdown-markdown-editor.is-readonly :deep(.ProseMirror) {
   caret-color: transparent !important;
   --prosemirror-virtual-cursor-color: transparent;
@@ -1452,13 +1381,12 @@ onBeforeUnmount(() => {
   box-shadow: none;
 }
 
-/* The explicit raw boundary widget already owns before/after placement. Hide
-   Milkdown's generic virtual cursor for that exact state to keep one caret. */
+/* Desk owns the visible caret at raw-block boundaries. Hide Milkdown's
+   virtual cursor and ProseMirror's horizontal gap bar in those states. */
 .milkdown-markdown-editor
-  :deep(
-    .ProseMirror:has(.desk-raw-boundary-cursor, .desk-raw-block--selection-active)
-      .prosemirror-virtual-cursor
-  ) {
+  :deep(.ProseMirror:has(.desk-raw-boundary-cursor) .prosemirror-virtual-cursor),
+.milkdown-markdown-editor
+  :deep(.ProseMirror:has(.desk-raw-boundary-cursor) .ProseMirror-gapcursor) {
   display: none;
 }
 

@@ -5,12 +5,13 @@ import assert from 'node:assert/strict'
 import { _electron } from 'playwright-core'
 import { createRequire } from 'node:module'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 
 const require = createRequire(import.meta.url)
 const electronPath = require('electron')
-const deskDir = '/Users/huyouda/tnotesjs/desk'
+const deskDir = join(dirname(fileURLToPath(import.meta.url)), '..')
 const fixtureRoot = mkdtempSync(join(tmpdir(), 'desk-markdown-input-e2e-'))
 const workspace = join(fixtureRoot, 'workspace')
 const profile = join(fixtureRoot, 'profile')

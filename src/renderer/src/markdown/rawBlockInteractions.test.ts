@@ -93,59 +93,8 @@ describe('raw block keyboard selection', () => {
     })
   })
 
-  it('deletes only the selected line among consecutive standalone breaks', async () => {
-    const editor = await createEditor('上方段落\n\n<br>\n\n<br/>\n\n<br />\n\n下方段落\n')
-    editor.action((ctx) => {
-      const view = ctx.get(editorViewCtx)
-      const breaks: Array<{ position: number; source: string }> = []
-      view.state.doc.descendants((node, position) => {
-        if (node.type.name === 'deskRawBlock' && node.attrs.kind === 'raw-break') {
-          breaks.push({ position, source: node.attrs.source })
-        }
-      })
-      expect(breaks.map(({ source }) => source)).toEqual(['<br>', '<br/>', '<br />'])
-      view.dispatch(
-        view.state.tr.setSelection(NodeSelection.create(view.state.doc, breaks[1].position))
-      )
-      view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))
-
-      const remaining: string[] = []
-      view.state.doc.descendants((node) => {
-        if (node.type.name === 'deskRawBlock' && node.attrs.kind === 'raw-break') {
-          remaining.push(node.attrs.source)
-        }
-      })
-      expect(remaining).toEqual(['<br>', '<br />'])
-    })
-  })
-
-  it('owns exactly one state-derived in-row caret and hint while moving between breaks', async () => {
-    const editor = await createEditor('上方段落\n\n<br />\n\n<br />\n\n<br />\n\n下方段落\n')
-    editor.action((ctx) => {
-      const view = ctx.get(editorViewCtx)
-      const positions: number[] = []
-      view.state.doc.descendants((node, position) => {
-        if (node.type.name === 'deskRawBlock' && node.attrs.kind === 'raw-break') {
-          positions.push(position)
-        }
-      })
-
-      view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, positions[0])))
-      expect(view.dom.querySelectorAll('.desk-raw-block--selection-active')).toHaveLength(1)
-      expect(
-        view.dom
-          .querySelector('.desk-raw-block--selection-active')
-          ?.getAttribute('data-placeholder')
-      ).toBe('输入 / 插入内容')
-
-      view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, positions[2])))
-      expect(view.dom.querySelectorAll('.desk-raw-block--selection-active')).toHaveLength(1)
-      expect(view.dom.querySelector('.desk-raw-boundary-cursor')).toBeNull()
-    })
-  })
-
-  it('marks empty lines in a range without relying on a full-width native surface', async () => {
-    const editor = await createEditor('上方段落\n\n<B id="selection" />\n\n<br />\n\n下方段落\n')
+  it('marks visible raw atoms crossed by a text range', async () => {
+    const editor = await createEditor('上方段落\n\n<B id="selection" />\n\n下方段落\n')
     editor.action((ctx) => {
       const view = ctx.get(editorViewCtx)
       view.dispatch(
@@ -159,27 +108,6 @@ describe('raw block keyboard selection', () => {
           .querySelector('[data-kind="raw-component"]')
           ?.classList.contains('desk-raw-block--range-selected')
       ).toBe(true)
-      expect(
-        view.dom
-          .querySelector('[data-kind="raw-break"]')
-          ?.classList.contains('desk-raw-block--range-selected')
-      ).toBe(true)
-    })
-  })
-
-  it('marks every consecutive empty line crossed by a text range', async () => {
-    const editor = await createEditor('上方段落\n\n<br />\n\n<br />\n\n<br />\n\n下方段落\n')
-    editor.action((ctx) => {
-      const view = ctx.get(editorViewCtx)
-      view.dispatch(
-        view.state.tr.setSelection(
-          TextSelection.create(view.state.doc, 1, view.state.doc.content.size - 1)
-        )
-      )
-
-      expect(
-        view.dom.querySelectorAll('[data-kind="raw-break"].desk-raw-block--range-selected')
-      ).toHaveLength(3)
     })
   })
 
@@ -227,82 +155,6 @@ describe('raw block keyboard selection', () => {
     })
   })
 
-  it('extends and shrinks a keyboard range across consecutive breaks without losing its anchor', async () => {
-    const editor = await createEditor('上方段落\n\n<br />\n\n<br />\n\n<br />\n\n下方段落\n')
-    editor.action((ctx) => {
-      const view = ctx.get(editorViewCtx)
-      const breakPositions: number[] = []
-      let afterStart = -1
-      view.state.doc.descendants((node, position) => {
-        if (node.type.name === 'deskRawBlock' && node.attrs.kind === 'raw-break') {
-          breakPositions.push(position)
-        }
-        if (node.type.name === 'paragraph' && node.textContent === '下方段落') {
-          afterStart = position + 1
-        }
-      })
-      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, afterStart)))
-
-      const shiftUp = (): void => {
-        view.dom.dispatchEvent(
-          new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true, bubbles: true })
-        )
-      }
-      const shiftDown = (): void => {
-        view.dom.dispatchEvent(
-          new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true, bubbles: true })
-        )
-      }
-      const selectedBreaks = (): Element[] => [
-        ...view.dom.querySelectorAll('[data-kind="raw-break"].desk-raw-block--range-selected')
-      ]
-
-      shiftUp()
-      expect(selectedBreaks()).toHaveLength(1)
-      expect(view.state.selection.head).toBe(afterStart)
-      shiftUp()
-      expect(selectedBreaks()).toHaveLength(2)
-      expect(view.state.selection.head).toBe(afterStart)
-      shiftUp()
-      expect(selectedBreaks()).toHaveLength(3)
-      expect(view.state.selection.head).toBe(afterStart)
-
-      shiftDown()
-      expect(selectedBreaks()).toHaveLength(2)
-      shiftDown()
-      expect(selectedBreaks()).toHaveLength(1)
-      shiftDown()
-      expect(selectedBreaks()).toHaveLength(0)
-      expect(view.state.selection).toBeInstanceOf(TextSelection)
-      expect(view.state.selection.head).toBe(afterStart)
-    })
-  })
-
-  it('extends from a selected raw-break and deletes the complete keyboard range', async () => {
-    const editor = await createEditor('上方段落\n\n<br />\n\n<br />\n\n<br />\n\n下方段落\n')
-    editor.action((ctx) => {
-      const view = ctx.get(editorViewCtx)
-      const breakPositions: number[] = []
-      view.state.doc.descendants((node, position) => {
-        if (node.type.name === 'deskRawBlock' && node.attrs.kind === 'raw-break') {
-          breakPositions.push(position)
-        }
-      })
-      view.dispatch(
-        view.state.tr.setSelection(NodeSelection.create(view.state.doc, breakPositions[2]))
-      )
-      view.dom.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true, bubbles: true })
-      )
-      expect(
-        view.dom.querySelectorAll('[data-kind="raw-break"].desk-raw-block--range-selected')
-      ).toHaveLength(2)
-      view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))
-
-      expect(view.dom.querySelectorAll('[data-kind="raw-break"]')).toHaveLength(1)
-    })
-  })
-
   it('does not hijack a caret that is not at a block boundary', async () => {
     const editor = await createEditor()
     const pos = positions(editor)
@@ -311,6 +163,24 @@ describe('raw block keyboard selection', () => {
       const middle = pos.beforeEnd - 1
       const next = state.apply(state.tr.setSelection(TextSelection.create(state.doc, middle)))
       expect(adjacentRawBlockSelectionPosition(next, 'down')).toBeNull()
+    })
+  })
+
+  it('maps standalone breaks to empty paragraphs instead of desk raw atoms', async () => {
+    const editor = await createEditor('上方段落\n\n<br />\n\n下方段落\n')
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx)
+      let deskRawBlocks = 0
+      let emptyParagraphs = 0
+      view.state.doc.descendants((node) => {
+        if (node.type.name === 'deskRawBlock') deskRawBlocks += 1
+        if (node.type.name === 'paragraph' && node.content.size === 0) {
+          emptyParagraphs += 1
+        }
+      })
+      expect(deskRawBlocks).toBe(0)
+      expect(emptyParagraphs).toBeGreaterThanOrEqual(1)
+      expect(view.dom.querySelector('[data-type="desk-raw-block"]')).toBeNull()
     })
   })
 })

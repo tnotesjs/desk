@@ -4,12 +4,13 @@ import assert from 'node:assert/strict'
 import { _electron } from 'playwright-core'
 import { createRequire } from 'node:module'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 
 const require = createRequire(import.meta.url)
 const electronPath = require('electron')
-const deskDir = '/Users/huyouda/tnotesjs/desk'
+const deskDir = join(dirname(fileURLToPath(import.meta.url)), '..')
 const fixtureRoot = mkdtempSync(join(tmpdir(), 'desk-block-interactions-e2e-'))
 const workspace = join(fixtureRoot, 'workspace')
 const profile = join(fixtureRoot, 'profile')
@@ -109,14 +110,14 @@ try {
   const menu = page.locator('.milkdown-slash-menu')
   await pm.waitFor({ timeout: 30000 })
 
-  // 0017 deletion/save is isolated in e2e-empty-break-deletion.mjs. This
-  // combined suite only keeps the non-mutating three-line presentation check.
-  const emptyLines = pm.locator('[data-type="desk-raw-block"][data-kind="raw-break"]')
-  await emptyLines.first().waitFor()
-  assert.equal(await emptyLines.count(), 3)
-  assert.deepEqual(await emptyLines.allTextContents(), ['', '', ''])
-  assert.equal(await emptyLines.locator('.desk-raw-block__label').count(), 0)
-  console.log('✓ consecutive standalone <br /> nodes render as three empty visual lines')
+  // Consecutive standalone <br /> are Milkdown empty paragraphs, not desk raw atoms.
+  const emptyParagraphCount = await pm.evaluate((element) =>
+    [...element.querySelectorAll(':scope > p')].filter(
+      (paragraph) => (paragraph.textContent ?? '').trim() === ''
+    ).length
+  )
+  assert.ok(emptyParagraphCount >= 3)
+  console.log('✓ consecutive standalone <br /> render as empty paragraphs')
 
   await host.evaluate((element) => {
     element.scrollTop = 0

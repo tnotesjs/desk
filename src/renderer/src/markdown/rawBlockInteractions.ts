@@ -13,7 +13,7 @@ interface RawBlockBoundary {
   side: RawBlockBoundarySide
 }
 
-interface RawBlockPointerRange {
+interface RawBlockOwnedRange {
   from: number
   to: number
 }
@@ -21,24 +21,14 @@ interface RawBlockPointerRange {
 type RawBlockKeyboardAnchor =
   { kind: 'text'; position: number } | { kind: 'node'; position: number }
 
-interface RawBlockKeyboardRange extends RawBlockPointerRange {
+interface RawBlockKeyboardRange extends RawBlockOwnedRange {
   anchor: RawBlockKeyboardAnchor
   direction: RawBlockArrowDirection
   headPosition: number
   positions: number[]
 }
 
-interface RawBlockPointerAnchor {
-  pointerId: number
-  position: number
-  startX: number
-  startY: number
-}
-
 const rawBlockBoundaryKey = new PluginKey<RawBlockBoundary | null>('tnotes-raw-block-boundary')
-const rawBlockPointerRangeKey = new PluginKey<RawBlockPointerRange | null>(
-  'tnotes-raw-block-pointer-range'
-)
 const rawBlockKeyboardRangeKey = new PluginKey<RawBlockKeyboardRange | null>(
   'tnotes-raw-block-keyboard-range'
 )
@@ -54,15 +44,13 @@ function needsRangeSelectionSurface(node: {
   type: { name: string }
   attrs: Record<string, unknown>
 }): boolean {
-  // Every visible atom needs range-selection semantics. A standalone break is
-  // still decorated here, but its CSS renders only a short line-start marker
-  // instead of the generic full-width raw-block surface.
   return isVisibleRawBlock(node)
 }
 
 /**
- * Finds the position of a raw atom immediately above/below a root text block.
- * Restricting this to root text blocks avoids changing list/table navigation.
+ * Finds the position of a raw atom immediately above/below the caret's top-level
+ * block. Nested list/table carets only match when the caret is already at that
+ * top-level block's outer edge, so intra-list arrow movement stays with PM.
  */
 export function adjacentRawBlockSelectionPosition(
   state: EditorState,
@@ -71,16 +59,22 @@ export function adjacentRawBlockSelectionPosition(
   const { selection } = state
   if (!(selection instanceof TextSelection) || !selection.empty) return null
   const { $head } = selection
-  if ($head.depth !== 1 || !$head.parent.isTextblock) return null
+  if ($head.depth < 1 || !$head.parent.isTextblock) return null
 
   if (direction === 'down') {
     if ($head.parentOffset !== $head.parent.content.size) return null
+    for (let depth = $head.depth; depth > 1; depth -= 1) {
+      if ($head.index(depth - 1) < $head.node(depth - 1).childCount - 1) return null
+    }
     const boundary = $head.after(1)
     const next = state.doc.resolve(boundary).nodeAfter
     return next && isVisibleRawBlock(next) ? boundary : null
   }
 
   if ($head.parentOffset !== 0) return null
+  for (let depth = $head.depth; depth > 1; depth -= 1) {
+    if ($head.index(depth - 1) > 0) return null
+  }
   const boundary = $head.before(1)
   const previous = state.doc.resolve(boundary).nodeBefore
   return previous && isVisibleRawBlock(previous) ? boundary - previous.nodeSize : null
@@ -89,11 +83,9 @@ export function adjacentRawBlockSelectionPosition(
 function selectedRawBlockDecorations(state: EditorState): DecorationSet | null {
   const { selection } = state
   const decorations: Decoration[] = []
-  const pointerRange = rawBlockPointerRangeKey.getState(state)
   const keyboardRange = rawBlockKeyboardRangeKey.getState(state)
-  const ownedRange = pointerRange ?? keyboardRange
   const range =
-    ownedRange ??
+    keyboardRange ??
     (!selection.empty && !(selection instanceof NodeSelection)
       ? { from: selection.from, to: selection.to }
       : null)
@@ -113,7 +105,7 @@ function selectedRawBlockDecorations(state: EditorState): DecorationSet | null {
   const boundary = rawBlockBoundaryKey.getState(state)
   const boundaryNode = boundary ? state.doc.nodeAt(boundary.position) : null
   if (
-    !ownedRange &&
+    !keyboardRange &&
     boundary &&
     boundaryNode &&
     isVisibleRawBlock(boundaryNode) &&
@@ -141,53 +133,8 @@ function selectedRawBlockDecorations(state: EditorState): DecorationSet | null {
         }
       )
     )
-  } else if (
-    !ownedRange &&
-    selection instanceof NodeSelection &&
-    selection.node.type.name === 'deskRawBlock' &&
-    selection.node.attrs.kind === 'raw-break'
-  ) {
-    // Paint the caret and empty-paragraph hint on the selected raw-break itself.
-    // This state-owned Decoration aligns the insertion feedback with the same
-    // row used by Crepe's block handle, without trusting the imperative
-    // ProseMirror-selectednode class that can briefly outlive a selection.
-    decorations.push(
-      Decoration.node(selection.from, selection.to, {
-        class: 'desk-raw-block--selection-active',
-        'data-placeholder': '输入 / 插入内容'
-      })
-    )
   }
   return decorations.length ? DecorationSet.create(state.doc, decorations) : null
-}
-
-function rawBreakPositionFromTarget(view: EditorView, target: EventTarget | null): number | null {
-  if (!(target instanceof Element)) return null
-  const element = target.closest<HTMLElement>('[data-kind="raw-break"]')
-  if (!element || !view.dom.contains(element)) return null
-  try {
-    const position = view.posAtDOM(element, 0)
-    const node = view.state.doc.nodeAt(position)
-    return node?.type.name === 'deskRawBlock' && node.attrs.kind === 'raw-break' ? position : null
-  } catch {
-    return null
-  }
-}
-
-function pointerRangeBetween(
-  state: EditorState,
-  anchorPosition: number,
-  headPosition: number
-): RawBlockPointerRange | null {
-  const anchorNode = state.doc.nodeAt(anchorPosition)
-  const headNode = state.doc.nodeAt(headPosition)
-  if (!anchorNode || !headNode) return null
-  const from = Math.min(anchorPosition, headPosition)
-  const to =
-    anchorPosition <= headPosition
-      ? headPosition + headNode.nodeSize
-      : anchorPosition + anchorNode.nodeSize
-  return from < to ? { from, to } : null
 }
 
 function adjacentVisibleRawBlockPosition(
@@ -236,35 +183,36 @@ function keyboardRangeFromPositions(
 }
 
 function dispatchKeyboardRange(view: EditorView, range: RawBlockKeyboardRange): void {
-  view.dispatch(
-    view.state.tr
-      .setMeta(rawBlockKeyboardRangeKey, range)
-      .setMeta(rawBlockPointerRangeKey, null)
-      .setMeta(rawBlockBoundaryKey, null)
-  )
+  const transaction = view.state.tr
+    .setMeta(rawBlockKeyboardRangeKey, range)
+    .setMeta(rawBlockBoundaryKey, null)
+  if (range.anchor.kind === 'text') {
+    transaction.setSelection(TextSelection.create(view.state.doc, range.anchor.position))
+  } else {
+    transaction.setSelection(NodeSelection.create(view.state.doc, range.anchor.position))
+  }
+  view.dispatch(transaction)
 }
 
 function restoreKeyboardRangeAnchor(view: EditorView): void {
-  // The underlying ProseMirror Selection never leaves the original anchor.
-  // Clearing the Desk-owned range restores that caret/NodeSelection without
-  // asking Crepe to remap a synthetic DOM selection.
   view.dispatch(
-    view.state.tr
-      .setMeta(rawBlockKeyboardRangeKey, null)
-      .setMeta(rawBlockPointerRangeKey, null)
-      .setMeta(rawBlockBoundaryKey, null)
+    view.state.tr.setMeta(rawBlockKeyboardRangeKey, null).setMeta(rawBlockBoundaryKey, null)
   )
 }
 
 function startKeyboardRange(view: EditorView, direction: RawBlockArrowDirection): boolean {
   const { selection } = view.state
-  if (selection instanceof TextSelection && selection.empty) {
-    const position = adjacentRawBlockSelectionPosition(view.state, direction)
+  if (selection instanceof TextSelection) {
+    const anchorPos = selection.anchor
+    const probe = view.state.apply(
+      view.state.tr.setSelection(TextSelection.create(view.state.doc, anchorPos))
+    )
+    const position = adjacentRawBlockSelectionPosition(probe, direction)
     if (position == null) return false
     const range = keyboardRangeFromPositions(
       view.state,
       [position],
-      { kind: 'text', position: selection.head },
+      { kind: 'text', position: anchorPos },
       direction,
       position
     )
@@ -358,7 +306,6 @@ function setRawBlockBoundary(
     view.state.tr
       .setSelection(NodeSelection.create(view.state.doc, position))
       .setMeta(rawBlockBoundaryKey, { position, side } satisfies RawBlockBoundary)
-      .setMeta(rawBlockPointerRangeKey, null)
       .setMeta(rawBlockKeyboardRangeKey, null)
       .scrollIntoView()
   )
@@ -407,7 +354,6 @@ export function clearRawBlockSelectionState(view: EditorView): void {
   const { selection } = view.state
   const transaction = view.state.tr
     .setMeta(rawBlockBoundaryKey, null)
-    .setMeta(rawBlockPointerRangeKey, null)
     .setMeta(rawBlockKeyboardRangeKey, null)
   if (selection instanceof NodeSelection && isVisibleRawBlock(selection.node)) {
     transaction.setSelection(
@@ -425,7 +371,6 @@ function clearBoundarySelection(view: EditorView, position: number, bias: number
     view.state.tr
       .setSelection(TextSelection.near(view.state.doc.resolve(position), bias))
       .setMeta(rawBlockBoundaryKey, null)
-      .setMeta(rawBlockPointerRangeKey, null)
       .setMeta(rawBlockKeyboardRangeKey, null)
       .scrollIntoView()
   )
@@ -470,37 +415,22 @@ function handleActiveBoundary(view: EditorView, event: KeyboardEvent): boolean {
   return false
 }
 
-/** A blank raw-break has no visible child content, so own its delete keys. */
-function handleSelectedRawBreak(view: EditorView, event: KeyboardEvent): boolean {
-  if (event.key !== 'Delete' && event.key !== 'Backspace') return false
-  const { selection } = view.state
-  if (!(selection instanceof NodeSelection)) return false
-  if (selection.node.type.name !== 'deskRawBlock' || selection.node.attrs.kind !== 'raw-break') {
-    return false
-  }
-
-  const deletionPosition = selection.from
-  const tr = view.state.tr.delete(selection.from, selection.to)
-  tr.setSelection(
-    TextSelection.near(
-      tr.doc.resolve(Math.min(deletionPosition, tr.doc.content.size)),
-      event.key === 'Backspace' ? -1 : 1
-    )
+function isBoundaryArrowEvent(event: KeyboardEvent): boolean {
+  const target = event.target as Element | null
+  return (
+    !event.shiftKey &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.isComposing &&
+    ['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft'].includes(event.key) &&
+    !target?.closest('.cm-editor')
   )
-  view.dispatch(
-    tr
-      .setMeta(rawBlockBoundaryKey, null)
-      .setMeta(rawBlockPointerRangeKey, null)
-      .setMeta(rawBlockKeyboardRangeKey, null)
-      .scrollIntoView()
-  )
-  return true
 }
 
 function handleRawBlockRangeDeletion(view: EditorView, event: KeyboardEvent): boolean {
   if (event.key !== 'Delete' && event.key !== 'Backspace') return false
-  const range =
-    rawBlockPointerRangeKey.getState(view.state) ?? rawBlockKeyboardRangeKey.getState(view.state)
+  const range = rawBlockKeyboardRangeKey.getState(view.state)
   if (!range) return false
   const transaction = view.state.tr.delete(range.from, range.to)
   transaction.setSelection(
@@ -511,7 +441,6 @@ function handleRawBlockRangeDeletion(view: EditorView, event: KeyboardEvent): bo
   )
   view.dispatch(
     transaction
-      .setMeta(rawBlockPointerRangeKey, null)
       .setMeta(rawBlockKeyboardRangeKey, null)
       .setMeta(rawBlockBoundaryKey, null)
       .scrollIntoView()
@@ -521,7 +450,21 @@ function handleRawBlockRangeDeletion(view: EditorView, event: KeyboardEvent): bo
 
 /** Keyboard and visual selection semantics for selectable raw block atoms. */
 export function createRawBlockSelectionPlugin(): MilkdownPlugin[] {
-  let pointerAnchor: RawBlockPointerAnchor | null = null
+  // Capture-phase and ProseMirror handleKeyDown can both see the same Shift+arrow
+  // event. Claiming it once prevents 1→2 range jumps on the first keypress.
+  let claimedKeyboardEvent: KeyboardEvent | null = null
+
+  const claimKeyboardRange = (
+    view: EditorView,
+    event: KeyboardEvent,
+    direction: RawBlockArrowDirection
+  ): boolean => {
+    if (claimedKeyboardEvent === event) return true
+    if (!extendKeyboardRange(view, direction)) return false
+    claimedKeyboardEvent = event
+    return true
+  }
+
   const selectionPlugin = $prose(
     () =>
       new Plugin<RawBlockBoundary | null>({
@@ -548,21 +491,12 @@ export function createRawBlockSelectionPlugin(): MilkdownPlugin[] {
               !event.ctrlKey &&
               !event.metaKey &&
               !event.isComposing &&
-              (handleRawBlockRangeDeletion(view, event) ||
-                handleActiveBoundary(view, event) ||
-                handleSelectedRawBreak(view, event))
+              (handleRawBlockRangeDeletion(view, event) || handleActiveBoundary(view, event))
             ) {
               return true
             }
 
-            if (
-              !event.shiftKey &&
-              !event.altKey &&
-              !event.ctrlKey &&
-              !event.metaKey &&
-              !event.isComposing &&
-              ['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft'].includes(event.key)
-            ) {
+            if (isBoundaryArrowEvent(event)) {
               const down = event.key === 'ArrowDown' || event.key === 'ArrowRight'
               const position = adjacentRawBlockSelectionPosition(view.state, down ? 'down' : 'up')
               if (position != null) {
@@ -570,116 +504,30 @@ export function createRawBlockSelectionPlugin(): MilkdownPlugin[] {
               }
             }
 
-            if (
-              !event.shiftKey ||
-              event.altKey ||
-              event.ctrlKey ||
-              event.metaKey ||
-              event.isComposing ||
-              (event.key !== 'ArrowDown' && event.key !== 'ArrowUp')
-            ) {
-              return false
-            }
-            return extendKeyboardRange(view, event.key === 'ArrowDown' ? 'down' : 'up')
+            if (!isKeyboardRangeEvent(event)) return false
+            return claimKeyboardRange(view, event, event.key === 'ArrowDown' ? 'down' : 'up')
           }
         },
         view: (view) => {
-          // Crepe's cursor feature handles arrow keys on NodeSelection before a
-          // late ProseMirror plugin prop can extend the next raw atom. Capture
-          // only Shift+vertical-arrow at the editor boundary so the Desk range
-          // retains its anchor across repeated presses; every other key keeps
-          // the normal Milkdown/ProseMirror pipeline.
           const keydown = (event: KeyboardEvent): void => {
-            if (!view.editable || !isKeyboardRangeEvent(event)) return
-            if (!extendKeyboardRange(view, event.key === 'ArrowDown' ? 'down' : 'up')) return
+            if (!view.editable) return
+            const eventTarget = event.target
+            if (
+              !(eventTarget instanceof Node) ||
+              (!view.dom.contains(eventTarget) && eventTarget !== view.dom)
+            ) {
+              return
+            }
+            if (!isKeyboardRangeEvent(event)) return
+            if (!claimKeyboardRange(view, event, event.key === 'ArrowDown' ? 'down' : 'up')) {
+              return
+            }
             event.preventDefault()
             event.stopImmediatePropagation()
           }
-          view.dom.addEventListener('keydown', keydown, true)
+          view.dom.ownerDocument.addEventListener('keydown', keydown, true)
           return {
-            destroy: () => view.dom.removeEventListener('keydown', keydown, true)
-          }
-        }
-      })
-  )
-
-  const pointerRangePlugin = $prose(
-    () =>
-      new Plugin<RawBlockPointerRange | null>({
-        key: rawBlockPointerRangeKey,
-        state: {
-          init: () => null,
-          apply: (transaction, value) => {
-            const meta = transaction.getMeta(rawBlockPointerRangeKey) as
-              RawBlockPointerRange | null | undefined
-            if (meta !== undefined) return meta
-            if (transaction.docChanged || transaction.selectionSet) return null
-            return value
-          }
-        },
-        props: {
-          handleDOMEvents: {
-            pointerdown: (view, event) => {
-              if (!view.editable || event.button !== 0) return false
-              const position = rawBreakPositionFromTarget(view, event.target)
-              if (position == null) return false
-              pointerAnchor = {
-                pointerId: event.pointerId,
-                position,
-                startX: event.clientX,
-                startY: event.clientY
-              }
-              view.dispatch(
-                view.state.tr
-                  .setSelection(NodeSelection.create(view.state.doc, position))
-                  .setMeta(rawBlockPointerRangeKey, null)
-                  .setMeta(rawBlockKeyboardRangeKey, null)
-                  .setMeta(rawBlockBoundaryKey, null)
-              )
-              view.focus()
-              event.preventDefault()
-              return true
-            }
-          }
-        },
-        view: (view) => {
-          const ownerDocument = view.dom.ownerDocument
-          const move = (event: PointerEvent): void => {
-            if (!pointerAnchor || event.pointerId !== pointerAnchor.pointerId) return
-            if ((event.buttons & 1) === 0) {
-              pointerAnchor = null
-              return
-            }
-            const moved =
-              Math.abs(event.clientX - pointerAnchor.startX) >= 3 ||
-              Math.abs(event.clientY - pointerAnchor.startY) >= 3
-            if (!moved) return
-            const target = ownerDocument.elementFromPoint(event.clientX, event.clientY)
-            const headPosition = rawBreakPositionFromTarget(view, target)
-            if (headPosition == null) return
-            const range = pointerRangeBetween(view.state, pointerAnchor.position, headPosition)
-            if (!range) return
-            const current = rawBlockPointerRangeKey.getState(view.state)
-            if (current?.from === range.from && current.to === range.to) return
-            view.dispatch(
-              view.state.tr
-                .setMeta(rawBlockPointerRangeKey, range)
-                .setMeta(rawBlockBoundaryKey, null)
-            )
-          }
-          const finish = (event: PointerEvent): void => {
-            if (pointerAnchor && event.pointerId === pointerAnchor.pointerId) pointerAnchor = null
-          }
-          ownerDocument.addEventListener('pointermove', move, true)
-          ownerDocument.addEventListener('pointerup', finish, true)
-          ownerDocument.addEventListener('pointercancel', finish, true)
-          return {
-            destroy: () => {
-              pointerAnchor = null
-              ownerDocument.removeEventListener('pointermove', move, true)
-              ownerDocument.removeEventListener('pointerup', finish, true)
-              ownerDocument.removeEventListener('pointercancel', finish, true)
-            }
+            destroy: () => view.dom.ownerDocument.removeEventListener('keydown', keydown, true)
           }
         }
       })
@@ -695,12 +543,53 @@ export function createRawBlockSelectionPlugin(): MilkdownPlugin[] {
             const meta = transaction.getMeta(rawBlockKeyboardRangeKey) as
               RawBlockKeyboardRange | null | undefined
             if (meta !== undefined) return meta
-            if (transaction.docChanged || transaction.selectionSet) return null
-            return value
+            if (transaction.docChanged) return null
+            if (!transaction.selectionSet) return value
+            if (!value) return null
+            const selection = transaction.selection
+            if (
+              value.anchor.kind === 'text' &&
+              selection instanceof TextSelection &&
+              selection.empty &&
+              selection.head === value.anchor.position
+            ) {
+              return value
+            }
+            if (
+              value.anchor.kind === 'node' &&
+              selection instanceof NodeSelection &&
+              selection.from === value.anchor.position
+            ) {
+              return value
+            }
+            return null
           }
+        },
+        appendTransaction: (_transactions, _oldState, newState) => {
+          const range = rawBlockKeyboardRangeKey.getState(newState)
+          if (!range) return null
+          const { selection } = newState
+          if (range.anchor.kind === 'text') {
+            if (
+              selection instanceof TextSelection &&
+              selection.empty &&
+              selection.head === range.anchor.position
+            ) {
+              return null
+            }
+            return newState.tr
+              .setSelection(TextSelection.create(newState.doc, range.anchor.position))
+              .setMeta(rawBlockKeyboardRangeKey, range)
+          }
+          if (selection instanceof NodeSelection && selection.from === range.anchor.position) {
+            return null
+          }
+          return newState.tr
+            .setSelection(NodeSelection.create(newState.doc, range.anchor.position))
+            .setMeta(rawBlockKeyboardRangeKey, range)
         }
       })
   )
 
-  return [selectionPlugin, pointerRangePlugin, keyboardRangePlugin]
+  return [selectionPlugin, keyboardRangePlugin]
 }

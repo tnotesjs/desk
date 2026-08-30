@@ -145,24 +145,29 @@ describe('Milkdown raw block projection', () => {
     expect(editor.action(getMarkdown())).toBe(baseline)
   })
 
-  it('renders a standalone HTML break as an empty visual line while preserving its source', async () => {
+  it('leaves standalone HTML breaks for Milkdown empty paragraphs', async () => {
     const source = '## 2. 评价\n\n<br />\n\n正文\n'
     const projected = projectRawBlocksForMilkdown(source)
-    const marker = projected.match(/<!--desk-raw-block:v1:[^\n]+-->/)?.[0]
-
-    expect(readProjectedRawBlockMarker(marker ?? '')).toEqual({
-      kind: 'raw-break',
-      source: '<br />',
-      hidden: false
-    })
+    expect(projected).toContain('<br />')
+    expect(projected).not.toMatch(/<!--desk-raw-block:v1:/)
 
     const editor = await createEditor(source)
-    const emptyLine = document.querySelector<HTMLElement>('.desk-raw-block--empty-line')
-    expect(emptyLine).not.toBeNull()
-    expect(emptyLine?.textContent).toBe('')
-    expect(emptyLine?.querySelector('.desk-raw-block__label')).toBeNull()
+    editor.action((ctx) => {
+      const state = ctx.get(editorStateCtx)
+      let emptyParagraphs = 0
+      let deskRawBlocks = 0
+      state.doc.descendants((node) => {
+        if (node.type.name === 'deskRawBlock') deskRawBlocks += 1
+        if (node.type.name === 'paragraph' && node.content.size === 0) {
+          emptyParagraphs += 1
+        }
+      })
+      expect(deskRawBlocks).toBe(0)
+      expect(emptyParagraphs).toBeGreaterThanOrEqual(1)
+    })
 
     const baseline = editor.action(getMarkdown())
+    expect(baseline).toMatch(/<br\s*\/?>/)
     expect(reconcileMarkdownSource(source, baseline, baseline)).toBe(source)
   })
 
@@ -173,20 +178,21 @@ describe('Milkdown raw block projection', () => {
 
     editor.action((ctx) => {
       const view = ctx.get(editorViewCtx)
-      const breaks: Array<{ position: number; size: number }> = []
+      const empties: Array<{ position: number; size: number }> = []
       view.state.doc.descendants((node, position) => {
-        if (node.type.name === 'deskRawBlock' && node.attrs.kind === 'raw-break') {
-          breaks.push({ position, size: node.nodeSize })
+        if (node.type.name === 'paragraph' && node.content.size === 0) {
+          empties.push({ position, size: node.nodeSize })
         }
       })
-      const middle = breaks[1]
+      expect(empties.length).toBeGreaterThanOrEqual(3)
+      const middle = empties[1]
       view.dispatch(view.state.tr.delete(middle.position, middle.position + middle.size))
     })
 
     const current = editor.action(getMarkdown())
     const reconciled = reconcileMarkdownSource(source, baseline, current)
-    expect(current.match(/<br \/>/g)).toHaveLength(2)
-    expect(reconciled.match(/<br \/>/g)).toHaveLength(2)
+    expect(current.match(/<br\s*\/?>/g)?.length ?? 0).toBe(2)
+    expect(reconciled.match(/<br\s*\/?>/g)?.length ?? 0).toBe(2)
   })
 
   it('keeps a break deletion when surrounding paragraphs also changed', async () => {
@@ -199,8 +205,8 @@ describe('Milkdown raw block projection', () => {
     const current = currentEditor.action(getMarkdown())
     const reconciled = reconcileMarkdownSource(source, baseline, current)
 
-    expect(current.match(/<br \/>/g)).toHaveLength(2)
-    expect(reconciled.match(/<br \/>/g)).toHaveLength(2)
+    expect(current.match(/<br\s*\/?>/g)?.length ?? 0).toBe(2)
+    expect(reconciled.match(/<br\s*\/?>/g)?.length ?? 0).toBe(2)
   })
 
   it('renders a collapsible toggle for the generated TOC', async () => {
