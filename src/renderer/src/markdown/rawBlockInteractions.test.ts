@@ -138,6 +138,56 @@ describe('raw block keyboard selection', () => {
     })
   })
 
+  it('ArrowDown from a selected info atom lands on the following blank before text', async () => {
+    const editor = await createEditor(
+      [
+        '## 2. 评价',
+        '',
+        '<br />',
+        '',
+        '::: info INFO',
+        '',
+        '这是输入的内容',
+        '',
+        ':::',
+        '',
+        '<br />',
+        '',
+        '上面这是空行',
+        '',
+        '```js',
+        'console.log(123)',
+        '```',
+        ''
+      ].join('\n')
+    )
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx)
+      let infoPos = -1
+      let emptyBefore = -1
+      view.state.doc.descendants((node, pos) => {
+        if (node.type.name === 'deskRawBlock' && node.attrs.hidden !== true && infoPos < 0) {
+          infoPos = pos
+        }
+        if (node.type.name === 'paragraph' && node.content.size === 0 && infoPos < 0) {
+          emptyBefore = pos + 1
+        }
+      })
+      expect(infoPos).toBeGreaterThan(-1)
+      expect(emptyBefore).toBeGreaterThan(-1)
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, emptyBefore)))
+      view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      expect(view.state.selection).toBeInstanceOf(NodeSelection)
+      expect((view.state.selection as NodeSelection).from).toBe(infoPos)
+      view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      expect(view.state.selection).toBeInstanceOf(TextSelection)
+      expect(view.state.selection.from).toBeGreaterThan(infoPos)
+      expect((view.state.selection as TextSelection).$head.parent.content.size).toBe(0)
+      // Must not jump onto the code fence past the blank + following text.
+      expect(codeBlockWholeSelectPosition(view.state)).toBeNull()
+    })
+  })
+
   it('marks visible raw atoms crossed by a text range', async () => {
     const editor = await createEditor('上方段落\n\n<B id="selection" />\n\n下方段落\n')
     editor.action((ctx) => {
@@ -174,6 +224,119 @@ describe('raw block keyboard selection', () => {
       expect(
         ctx.get(editorViewCtx).dom.querySelectorAll('.desk-raw-block--range-selected')
       ).toHaveLength(1)
+    })
+  })
+
+  it('Shift+ArrowDown from an empty line continues past a single info atom', async () => {
+    const editor = await createEditor(
+      [
+        '## 2. 评价',
+        '',
+        '<br />',
+        '',
+        '::: info INFO',
+        '',
+        'body',
+        '',
+        ':::',
+        '',
+        '<br />',
+        '',
+        '上面这是空行',
+        ''
+      ].join('\n')
+    )
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx)
+      let emptyBefore = -1
+      let infoPos = -1
+      let infoSize = 0
+      view.state.doc.descendants((node, pos) => {
+        if (node.type.name === 'deskRawBlock' && infoPos < 0) {
+          infoPos = pos
+          infoSize = node.nodeSize
+        }
+        if (node.type.name === 'paragraph' && node.content.size === 0 && infoPos < 0) {
+          emptyBefore = pos + 1
+        }
+      })
+      expect(emptyBefore).toBeGreaterThan(-1)
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, emptyBefore)))
+      view.dom.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true, bubbles: true })
+      )
+      expect(view.state.selection.empty).toBe(true)
+      expect(view.dom.querySelectorAll('.desk-raw-block--range-selected')).toHaveLength(1)
+      view.dom.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true, bubbles: true })
+      )
+      expect(view.state.selection.empty).toBe(false)
+      expect(Math.max(view.state.selection.from, view.state.selection.to)).toBeGreaterThanOrEqual(
+        infoPos + infoSize
+      )
+    })
+  })
+
+  it('Shift+ArrowDown from text before a fence covers the code block', async () => {
+    const editor = await createEditor('123\n\n```js\nconsole.log(123)\n```\n\n222\n')
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx)
+      let textEnd = -1
+      let codePos = -1
+      let codeSize = 0
+      view.state.doc.descendants((node, pos) => {
+        if (node.type.name === 'code_block' && codePos < 0) {
+          codePos = pos
+          codeSize = node.nodeSize
+        }
+        if (node.type.name === 'paragraph' && node.textContent === '123') {
+          textEnd = pos + 1 + node.content.size
+        }
+      })
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, textEnd)))
+      view.dom.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true, bubbles: true })
+      )
+      expect(view.state.selection.empty).toBe(false)
+      expect(Math.max(view.state.selection.from, view.state.selection.to)).toBeGreaterThanOrEqual(
+        codePos + codeSize
+      )
+      const $from = view.state.doc.resolve(view.state.selection.from)
+      const $to = view.state.doc.resolve(view.state.selection.to)
+      expect($from.parent.type.name).not.toBe('code_block')
+      expect($to.parent.type.name).not.toBe('code_block')
+      expect(view.dom.querySelector('.desk-code-block--whole-selected')).toBeTruthy()
+    })
+  })
+
+  it('Shift+ArrowUp from text below a fence keeps the below anchor and parks above', async () => {
+    const editor = await createEditor('123\n\n```js\nconsole.log(123)\n```\n\n222\n')
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx)
+      let below = -1
+      let codePos = -1
+      let codeSize = 0
+      view.state.doc.descendants((node, pos) => {
+        if (node.type.name === 'code_block' && codePos < 0) {
+          codePos = pos
+          codeSize = node.nodeSize
+        }
+        if (node.type.name === 'paragraph' && node.textContent === '222') below = pos + 1
+      })
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, below)))
+      view.dom.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true, bubbles: true })
+      )
+      const { selection } = view.state
+      expect(selection.empty).toBe(false)
+      expect(selection.from).toBeLessThanOrEqual(below)
+      expect(selection.to).toBeGreaterThanOrEqual(below)
+      expect(selection.from).toBeLessThanOrEqual(codePos)
+      expect(selection.to).toBeGreaterThanOrEqual(codePos + codeSize)
+      const $from = view.state.doc.resolve(selection.from)
+      const $to = view.state.doc.resolve(selection.to)
+      expect($from.parent.type.name).not.toBe('code_block')
+      expect($to.parent.type.name).not.toBe('code_block')
     })
   })
 

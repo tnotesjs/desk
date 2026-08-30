@@ -172,11 +172,18 @@ function selectedRawBlockDecorations(state: EditorState): DecorationSet | null {
       : null)
   if (range) {
     state.doc.nodesBetween(range.from, range.to, (node, position) => {
-      if (!needsRangeSelectionSurface(node)) return
-      if (range.from < position + node.nodeSize && range.to > position) {
+      if (range.from >= position + node.nodeSize || range.to <= position) return
+      if (needsRangeSelectionSurface(node)) {
         decorations.push(
           Decoration.node(position, position + node.nodeSize, {
             class: 'desk-raw-block--range-selected'
+          })
+        )
+      }
+      if (isCodeBlock(node)) {
+        decorations.push(
+          Decoration.node(position, position + node.nodeSize, {
+            class: 'desk-code-block--whole-selected'
           })
         )
       }
@@ -259,9 +266,112 @@ function restoreKeyboardRangeAnchor(view: EditorView): void {
   )
 }
 
+/**
+ * Turn a keyboard-range meta selection into a real TextSelection covering the
+ * text anchor through the included raw atoms, then clear the meta so later
+ * Shift+arrows use native ProseMirror expansion (mouse-drag parity).
+ */
+function materializeKeyboardRangeAsTextSelection(
+  view: EditorView,
+  range: RawBlockKeyboardRange
+): void {
+  const lastPos = range.positions.at(-1) ?? range.headPosition
+  const lastNode = view.state.doc.nodeAt(lastPos)
+  if (!lastNode) {
+    restoreKeyboardRangeAnchor(view)
+    return
+  }
+  const blockFrom = Math.min(...range.positions)
+  const blockTo = lastPos + lastNode.nodeSize
+  let from = blockFrom
+  let to = blockTo
+  if (range.anchor.kind === 'text') {
+    from = Math.min(range.anchor.position, blockFrom)
+    to = Math.max(range.anchor.position, blockTo)
+  }
+  view.dispatch(
+    view.state.tr
+      .setSelection(TextSelection.create(view.state.doc, from, to))
+      .setMeta(rawBlockKeyboardRangeKey, null)
+      .setMeta(codeBlockWholeSelectKey, null)
+      .scrollIntoView()
+  )
+}
+
+/**
+ * Expand a text caret/range through an adjacent Crepe `code_block`.
+ * Endpoints stay in neighboring textblocks (never inside the fence) so
+ * CodeMirror cannot steal the DOM selection and drop the original range.
+ */
+function extendSelectionThroughAdjacentCode(
+  view: EditorView,
+  direction: RawBlockArrowDirection
+): boolean {
+  const { selection } = view.state
+  if (!(selection instanceof TextSelection)) return false
+
+  const anchor = selection.anchor
+  const head = selection.head
+  const edge = selection.empty
+    ? head
+    : direction === 'down'
+      ? Math.max(anchor, head)
+      : Math.min(anchor, head)
+  const $edge = view.state.doc.resolve(edge)
+  if ($edge.depth < 1 || !$edge.parent.isTextblock) return false
+  if (isCodeBlock($edge.parent)) return false
+
+  if (direction === 'down') {
+    if (!isOnLastLineOfTextblock($edge)) return false
+    for (let depth = $edge.depth; depth > 1; depth -= 1) {
+      if ($edge.index(depth - 1) < $edge.node(depth - 1).childCount - 1) return false
+    }
+  } else {
+    if (!isOnFirstLineOfTextblock($edge)) return false
+    for (let depth = $edge.depth; depth > 1; depth -= 1) {
+      if ($edge.index(depth - 1) > 0) return false
+    }
+  }
+
+  const boundary = direction === 'down' ? $edge.after(1) : $edge.before(1)
+  const codePos = neighborSelectableBlockPosition(view.state, boundary, direction)
+  if (codePos == null) return false
+  const codeNode = view.state.doc.nodeAt(codePos)
+  if (!codeNode || !isCodeBlock(codeNode)) return false
+
+  // Park the moving head in the textblock on the far side of the fence.
+  // If there is no far textblock, park on the doc position just outside the fence
+  // (still not inside code_block content) so CodeMirror cannot take the selection.
+  let headOutside: number
+  if (direction === 'down') {
+    const after = codePos + codeNode.nodeSize
+    const next = view.state.doc.resolve(Math.min(after, view.state.doc.content.size)).nodeAfter
+    headOutside = next?.isTextblock ? after + 1 : after
+  } else {
+    const prev = view.state.doc.resolve(codePos).nodeBefore
+    headOutside = prev?.isTextblock
+      ? codePos - prev.nodeSize + 1 + prev.content.size
+      : codePos
+  }
+  const newAnchor = selection.empty ? head : anchor
+  const newHead = headOutside
+  view.dispatch(
+    view.state.tr
+      .setSelection(TextSelection.create(view.state.doc, newAnchor, newHead))
+      .setMeta(rawBlockKeyboardRangeKey, null)
+      .setMeta(codeBlockWholeSelectKey, null)
+      .scrollIntoView()
+  )
+  return true
+}
+
 function startKeyboardRange(view: EditorView, direction: RawBlockArrowDirection): boolean {
   const { selection } = view.state
   if (selection instanceof TextSelection) {
+    // Non-empty ranges: try code-block bridge first, else native Shift+arrow.
+    if (!selection.empty) {
+      return extendSelectionThroughAdjacentCode(view, direction)
+    }
     const anchorPos = selection.anchor
     const probe = view.state.apply(
       view.state.tr.setSelection(TextSelection.create(view.state.doc, anchorPos))
@@ -269,8 +379,13 @@ function startKeyboardRange(view: EditorView, direction: RawBlockArrowDirection)
     const position = adjacentRawBlockSelectionPosition(probe, direction)
     if (position == null) return false
     const node = view.state.doc.nodeAt(position)
-    // Shift+range stays raw-atom only; code_block uses whole-node select instead.
-    if (!node || !isVisibleRawBlock(node)) return false
+    if (!node) return false
+    // Code fences: expand a real TextSelection through the block (Crepe CM
+    // prevents reliable native Shift+arrow across the nodeView).
+    if (isCodeBlock(node)) {
+      return extendSelectionThroughAdjacentCode(view, direction)
+    }
+    if (!isVisibleRawBlock(node)) return false
     const range = keyboardRangeFromPositions(
       view.state,
       [position],
@@ -304,7 +419,13 @@ function extendKeyboardRange(view: EditorView, direction: RawBlockArrowDirection
 
   if (direction === current.direction) {
     const adjacent = adjacentVisibleRawBlockPosition(view.state, current.headPosition, direction)
-    if (adjacent == null) return true
+    if (adjacent == null) {
+      // Hand off to a real TextSelection through the included atoms. Returning
+      // true consumes this Shift+arrow; the next one sees a non-empty selection
+      // and falls through to native ProseMirror expansion.
+      materializeKeyboardRangeAsTextSelection(view, current)
+      return true
+    }
     const range = keyboardRangeFromPositions(
       view.state,
       [...current.positions, adjacent],
@@ -312,7 +433,10 @@ function extendKeyboardRange(view: EditorView, direction: RawBlockArrowDirection
       current.direction,
       adjacent
     )
-    if (!range) return true
+    if (!range) {
+      materializeKeyboardRangeAsTextSelection(view, current)
+      return true
+    }
     dispatchKeyboardRange(view, range)
     return true
   }
@@ -447,6 +571,30 @@ function exitSelectableBlock(view: EditorView, position: number, bias: number): 
       .setMeta(rawBlockKeyboardRangeKey, null)
       .scrollIntoView()
   )
+  // Crepe's block handle lives outside view.dom; reclaim focus so the next
+  // ArrowDown is not dropped by the capture-listener's contains() check.
+  view.focus()
+}
+
+/**
+ * True when every sibling between `boundary` and the next selectable block is an
+ * empty textblock (so code→code chaining across blanks is safe).
+ */
+function onlyEmptyTextblocksUntilSelectable(
+  state: EditorState,
+  boundary: number,
+  direction: RawBlockArrowDirection
+): boolean {
+  let probe = boundary
+  for (let guard = 0; guard < 32; guard += 1) {
+    const $pos = state.doc.resolve(Math.max(0, Math.min(probe, state.doc.content.size)))
+    const node = direction === 'down' ? $pos.nodeAfter : $pos.nodeBefore
+    if (!node) return false
+    if (isSelectableBlockNode(node)) return true
+    if (!(node.isTextblock && node.content.size === 0)) return false
+    probe = direction === 'down' ? probe + node.nodeSize : probe - node.nodeSize
+  }
+  return false
 }
 
 /** Leave a selected block: chain into the next selectable neighbor, else park in text. */
@@ -457,12 +605,21 @@ function moveFromSelectableBlock(
   direction: RawBlockArrowDirection
 ): boolean {
   const boundary = direction === 'down' ? position + nodeSize : position
-  // From a whole-selected block, skip empty paragraphs so adjacent fences chain.
-  const neighborPos = neighborSelectableBlockPosition(view.state, boundary, direction, {
+  const immediatePos = neighborSelectableBlockPosition(view.state, boundary, direction)
+  if (immediatePos != null) {
+    return selectSelectableBlock(view, immediatePos)
+  }
+  // Chain across empty paragraphs only when nothing but blanks separate two
+  // selectable blocks (code→code). If real text follows a blank after an info
+  // atom, land on the blank instead of jumping the caret over it.
+  const chainedPos = neighborSelectableBlockPosition(view.state, boundary, direction, {
     skipEmptyTextblocks: true
   })
-  if (neighborPos != null) {
-    return selectSelectableBlock(view, neighborPos)
+  if (
+    chainedPos != null &&
+    onlyEmptyTextblocksUntilSelectable(view.state, boundary, direction)
+  ) {
+    return selectSelectableBlock(view, chainedPos)
   }
   exitSelectableBlock(view, boundary, direction === 'down' ? 1 : -1)
   return true
@@ -647,17 +804,48 @@ export function createRawBlockSelectionPlugin(): MilkdownPlugin[] {
           }
         },
         view: (view) => {
+          const hasWholeSelectSelection = (): boolean => {
+            if (codeBlockWholeSelectKey.getState(view.state) != null) return true
+            const { selection } = view.state
+            return (
+              selection instanceof NodeSelection && isSelectableBlockNode(selection.node)
+            )
+          }
+
+          /** True when the event target is an outside field we must not hijack. */
+          const isForeignTextField = (eventTarget: EventTarget | null): boolean => {
+            if (!(eventTarget instanceof HTMLElement)) return false
+            if (view.dom.contains(eventTarget)) return false
+            const milkdownRoot = view.dom.parentElement
+            if (milkdownRoot?.contains(eventTarget)) return false
+            if (eventTarget.isContentEditable) return true
+            const tag = eventTarget.tagName
+            return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
+          }
+
           const keydown = (event: KeyboardEvent): void => {
             if (!view.editable) return
-            const eventTarget = event.target
-            if (
-              !(eventTarget instanceof Node) ||
-              (!view.dom.contains(eventTarget) && eventTarget !== view.dom)
-            ) {
-              return
-            }
             if (claimedKeyboardEvent === event) return
 
+            const eventTarget = event.target
+            const inProseMirror =
+              eventTarget instanceof Node &&
+              (eventTarget === view.dom || view.dom.contains(eventTarget))
+
+            // Whole-select must win even when focus left .ProseMirror (Crepe block
+            // handle, body after atom NodeSelection, etc.). Gating on
+            // contains(target) made ↓ appear stuck on the first INFO atom.
+            if (hasWholeSelectSelection() && !isForeignTextField(eventTarget)) {
+              if (handleWholeSelectKeys(view, event)) {
+                claimEvent(event)
+                event.preventDefault()
+                event.stopImmediatePropagation()
+                view.focus()
+                return
+              }
+            }
+
+            if (!inProseMirror) return
             const inCodeMirror = Boolean((eventTarget as Element).closest?.('.cm-editor'))
             if (handleWholeSelectKeys(view, event)) {
               claimEvent(event)
@@ -688,11 +876,15 @@ export function createRawBlockSelectionPlugin(): MilkdownPlugin[] {
           view.dom.ownerDocument.addEventListener('keydown', keydown, true)
           return {
             update: () => {
-              const position = codeBlockWholeSelectKey.getState(view.state)
-              if (position == null) return
-              const { selection } = view.state
-              if (!(selection instanceof NodeSelection) || !isCodeBlock(selection.node)) return
+              if (!hasWholeSelectSelection()) return
               if (view.hasFocus()) return
+              const active = view.dom.ownerDocument.activeElement
+              // Inline raw-source CM and other real fields keep focus.
+              if (active instanceof Element && active.closest('.desk-raw-block__editor-cm')) {
+                return
+              }
+              if (isForeignTextField(active)) return
+              // Reclaim from body / Crepe block-handle after atom NodeSelection.
               view.focus()
             },
             destroy: () => view.dom.ownerDocument.removeEventListener('keydown', keydown, true)
