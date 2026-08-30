@@ -12,7 +12,6 @@ import { searchKeymap } from '@codemirror/search'
 import { Compartment, EditorState, type Extension } from '@codemirror/state'
 import {
   crosshairCursor,
-  drawSelection,
   dropCursor,
   EditorView,
   highlightActiveLine,
@@ -20,6 +19,7 @@ import {
   highlightSpecialChars,
   keymap,
   lineNumbers,
+  placeholder,
   rectangularSelection
 } from '@codemirror/view'
 import { githubDark, githubLight } from '@uiw/codemirror-theme-github'
@@ -39,6 +39,8 @@ export interface ContainerSourceEditorOptions {
    * Return true if the key was handled.
    */
   onEmptyBackspace?: () => boolean
+  /** Shown when the document is empty (CodeMirror placeholder). */
+  placeholder?: string
 }
 
 /**
@@ -80,7 +82,9 @@ export function createContainerSourceEditor(
       extensions: [
         highlightSpecialChars(),
         history(),
-        drawSelection(),
+        // Prefer native ::selection so multi-line highlights wrap characters
+        // only — same as MarkdownSourceEditor. drawSelection() paints full-width
+        // line rectangles.
         dropCursor(),
         indentOnInput(),
         bracketMatching(),
@@ -91,6 +95,7 @@ export function createContainerSourceEditor(
         syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
         markdown(),
         EditorState.allowMultipleSelections.of(true),
+        ...(options.placeholder ? [placeholder(options.placeholder)] : []),
         keymap.of([
           {
             key: 'Mod-Enter',
@@ -131,9 +136,6 @@ export function createContainerSourceEditor(
           '.cm-content': { caretColor: 'var(--accent-strong)' },
           '&.cm-focused': { outline: 'none' },
           '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent-strong)' },
-          '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': {
-            backgroundColor: 'color-mix(in srgb, var(--accent) 52%, transparent) !important'
-          },
           '.cm-gutters': {
             backgroundColor: 'var(--editor-bg)',
             color: 'var(--muted)',

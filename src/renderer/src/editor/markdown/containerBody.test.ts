@@ -1,7 +1,12 @@
 // @vitest-environment happy-dom
 
 import { describe, expect, it } from 'vitest'
-import { parseContainerSource, renderContainerFromSource } from './containerBody'
+import {
+  isStructuredCalloutSource,
+  parseContainerSource,
+  rebuildContainerSource,
+  renderContainerFromSource
+} from './containerBody'
 
 describe('parseContainerSource', () => {
   it('parses a bare-titled container', () => {
@@ -20,6 +25,27 @@ describe('parseContainerSource', () => {
     expect(parsed.title).toBe('')
     expect(parsed.body).toBe('line  one\n\ntwo')
     expect(parsed.hasBody).toBe(true)
+  })
+})
+
+describe('rebuildContainerSource', () => {
+  it('rewrites title and body while keeping colon count', () => {
+    const previous = ':::: tip 💡 TIP\n\nold\n\n::::\n'
+    expect(rebuildContainerSource(previous, { title: '新标题', body: '新正文' })).toBe(
+      ':::: tip 新标题\n\n新正文\n\n::::\n'
+    )
+  })
+
+  it('keeps an empty body shell valid', () => {
+    expect(rebuildContainerSource('::: info ℹ️ INFO\n\n\n\n:::\n', { title: 'ℹ️ INFO', body: '' })).toBe(
+      '::: info ℹ️ INFO\n\n\n:::\n'
+    )
+  })
+
+  it('identifies structured callout names', () => {
+    expect(isStructuredCalloutSource('::: tip\n\n:::\n')).toBe(true)
+    expect(isStructuredCalloutSource('::: code-group\n\n:::\n')).toBe(false)
+    expect(isStructuredCalloutSource('::: swiper\n\n:::\n')).toBe(false)
   })
 })
 

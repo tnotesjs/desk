@@ -48,12 +48,25 @@ describe('container inline source editor', () => {
     document.body.replaceChildren()
   })
 
-  it('opens a single CodeMirror editor and compacts the edit button', async () => {
+  it('opens a structured title+body editor for tip/info/details callouts', async () => {
     const wrapper = await mountWithContainer()
     const edit = wrapper.find('.desk-raw-block__edit')
+    expect(edit.classes()).toContain('desk-raw-block__edit--pill')
+    expect(edit.text()).toContain('Edit')
+    expect(edit.find('svg').exists()).toBe(true)
     await edit.trigger('click')
 
-    expect(wrapper.find('.desk-raw-block__editor').exists()).toBe(true)
+    expect(wrapper.find('.desk-raw-block__editor--structured').exists()).toBe(true)
+    expect(wrapper.find('.desk-raw-block__editor-header').exists()).toBe(false)
+    expect(wrapper.find('.desk-raw-block__editor-title-label').exists()).toBe(false)
+    expect(wrapper.find('.desk-raw-block__editor-body-label').exists()).toBe(false)
+    const title = wrapper.find('.desk-raw-block__editor-title')
+    expect(title.exists()).toBe(true)
+    expect(title.attributes('placeholder')).toBe('可选标题')
+    const done = wrapper.find('.desk-raw-block__editor--structured > .desk-raw-block__editor-done')
+    expect(done.classes()).toContain('desk-raw-block__edit--pill')
+    expect(done.text()).toContain('Done')
+    expect(done.find('svg').exists()).toBe(true)
     expect(wrapper.find('.desk-raw-block__editor-cm .cm-editor').exists()).toBe(true)
     expect(edit.attributes('hidden')).toBeDefined()
     wrapper.unmount()
@@ -70,9 +83,12 @@ describe('container inline source editor', () => {
     wrapper.unmount()
   })
 
-  it('opens the CodeMirror editor for a swiper container', async () => {
+  it('keeps full source editing for swiper containers', async () => {
     const wrapper = await mountSwiper()
-    await wrapper.find('.desk-raw-block__edit').trigger('click')
+    const edit = wrapper.find('.desk-raw-block__edit')
+    expect(edit.text()).toBe('编辑源码')
+    await edit.trigger('click')
+    expect(wrapper.find('.desk-raw-block__editor--structured').exists()).toBe(false)
     expect(wrapper.find('.desk-raw-block__editor-cm .cm-editor').exists()).toBe(true)
     wrapper.unmount()
   })
@@ -106,6 +122,44 @@ describe('container inline source editor', () => {
       const editor = wrapper.find('.desk-raw-block__editor')
       expect(editor.isVisible()).toBe(false)
     })
+    wrapper.unmount()
+  })
+
+  it('auto-commits structured editor when focus leaves the editor', async () => {
+    const wrapper = await mountWithContainer()
+    await wrapper.find('.desk-raw-block__edit').trigger('click')
+    await vi.waitFor(() => {
+      expect(wrapper.find('.desk-raw-block__editor-cm .cm-editor').exists()).toBe(true)
+    })
+    // Let the post-open focus() settle before leaving the editor.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    const editor = wrapper.find('.desk-raw-block__editor--structured').element
+    const outside = document.createElement('button')
+    document.body.append(outside)
+    editor.dispatchEvent(
+      new FocusEvent('focusout', { bubbles: true, relatedTarget: outside, cancelable: true })
+    )
+
+    await vi.waitFor(() => {
+      expect(wrapper.find('.desk-raw-block__editor').isVisible()).toBe(false)
+    })
+    outside.remove()
+    wrapper.unmount()
+  })
+
+  it('keeps structured editor open when focus moves between title and body', async () => {
+    const wrapper = await mountWithContainer()
+    await wrapper.find('.desk-raw-block__edit').trigger('click')
+    const title = wrapper.find('.desk-raw-block__editor-title').element as HTMLInputElement
+    const cm = wrapper.find('.desk-raw-block__editor-cm .cm-content').element as HTMLElement
+    title.focus()
+    title.dispatchEvent(
+      new FocusEvent('focusout', { bubbles: true, relatedTarget: cm, cancelable: true })
+    )
+    cm.focus()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(wrapper.find('.desk-raw-block__editor').isVisible()).toBe(true)
     wrapper.unmount()
   })
 
