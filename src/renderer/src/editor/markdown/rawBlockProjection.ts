@@ -26,7 +26,7 @@ type SourceProjectedKind = Extract<
   | 'html'
 >
 
-export type ProjectedRawBlockKind = SourceProjectedKind | 'raw-diagram'
+export type ProjectedRawBlockKind = SourceProjectedKind | 'raw-diagram' | 'raw-break'
 
 export interface ProjectedRawBlock {
   kind: ProjectedRawBlockKind
@@ -43,14 +43,16 @@ const PROJECTED_KINDS = new Set<ProjectedRawBlockKind>([
   'raw-generated-title',
   'raw-generated-toc',
   'raw-diagram',
+  'raw-break',
   'table',
   'html'
 ])
 
 const MARKER =
-  /^<!--desk-raw-block:v1:(raw-frontmatter|raw-container|raw-include|raw-component|raw-reference-definition|raw-generated-title|raw-generated-toc|raw-diagram|table|html):([01]):([A-Za-z0-9+/]*={0,2})-->$/
+  /^<!--desk-raw-block:v1:(raw-frontmatter|raw-container|raw-include|raw-component|raw-reference-definition|raw-generated-title|raw-generated-toc|raw-diagram|raw-break|table|html):([01]):([A-Za-z0-9+/]*={0,2})-->$/
 const REGION_COMMENT = /^ {0,3}<!--\s*(?:end)?region(?::[\s\S]*?)?\s*-->\s*$/i
 const HTML_TAG = /<\/?[A-Za-z][\w.-]*(?=[\s/>])/
+const STANDALONE_BREAK = /^ {0,3}<br\s*\/?>(?:[ \t]*)$/i
 const DIAGRAM_LANGUAGES = new Set(['mermaid', 'mindmap', 'markmap'])
 
 interface ProjectionMarkdownNode extends MarkdownNode {
@@ -94,6 +96,10 @@ function shouldProjectBlock(block: MarkdownSourceBlock): block is MarkdownSource
 
 function isRegionComment(block: MarkdownSourceBlock): boolean {
   return block.kind === 'html' && REGION_COMMENT.test(block.source)
+}
+
+function isStandaloneBreak(block: MarkdownSourceBlock): boolean {
+  return block.kind === 'html' && STANDALONE_BREAK.test(block.source)
 }
 
 function fenceLanguage(source: string): string {
@@ -144,7 +150,7 @@ export function projectRawBlocksForMilkdown(source: string): string {
     }
     if (!shouldProjectBlock(block)) return
     const marker = createProjectedRawBlockMarker({
-      kind: block.kind,
+      kind: isStandaloneBreak(block) ? 'raw-break' : block.kind,
       source: block.source,
       // Reference definitions are metadata consumed by the Markdown parser to
       // resolve `[text][id]` links. They must never surface as a visible source
@@ -355,6 +361,16 @@ export function renderDeskRawBlockElement(
     rendered.dataset.hidden = 'false'
     return rendered
   }
+  if (block.kind === 'raw-break') {
+    const emptyLine = document.createElement('div')
+    emptyLine.dataset.type = 'desk-raw-block'
+    emptyLine.dataset.kind = 'raw-break'
+    emptyLine.dataset.source = encodeBase64(block.source)
+    emptyLine.dataset.hidden = 'false'
+    emptyLine.className = 'desk-raw-block desk-raw-block--empty-line'
+    emptyLine.contentEditable = 'false'
+    return emptyLine
+  }
 
   const element = document.createElement('div')
   element.dataset.type = 'desk-raw-block'
@@ -413,7 +429,10 @@ export const rawBlockSchema = $nodeSchema('deskRawBlock', () => ({
   atom: true,
   group: 'block',
   isolating: true,
-  selectable: false,
+  // NodeSelection is required for keyboard selection, clipboard operations and
+  // Milkdown's block drag provider. The previous `false` made the node view's
+  // selectNode hook unreachable and was the shared cause of BUG2/BUG3.
+  selectable: true,
   attrs: {
     kind: { default: 'html', validate: 'string' },
     source: { default: '', validate: 'string' },
@@ -511,9 +530,20 @@ function rawBlockSignatures(document: {
   const signatures: string[] = []
   document.descendants((node) => {
     if (node.type.name !== 'deskRawBlock') return
-    // `raw-container` is now editorially mutable (source-editor editing); every
-    // other projected kind stays immutable until a dedicated editor lands.
-    if (node.attrs.kind === 'raw-container') return
+    // These three kinds all have the inline source editor wired by
+    // MilkdownMarkdownEditor. They must be mutable after slash/shortcut insert;
+    // opaque HTML, includes and generated blocks remain byte-locked.
+    if (
+      node.attrs.kind === 'raw-container' ||
+      node.attrs.kind === 'raw-component' ||
+      node.attrs.kind === 'raw-diagram' ||
+      // A standalone <br /> is presented as an empty visual line. It has no
+      // source editor, but users must still be able to remove that line with
+      // the normal selected-node and boundary deletion interactions.
+      node.attrs.kind === 'raw-break'
+    ) {
+      return
+    }
     signatures.push(
       `${String(node.attrs.kind)}\u0000${String(node.attrs.hidden)}\u0000${String(node.attrs.source)}`
     )
@@ -521,7 +551,13 @@ function rawBlockSignatures(document: {
   return signatures
 }
 
-/** Raw cards remain immutable until their dedicated visual interactions are implemented. */
+/**
+ * Immutable raw cards (everything except the raw kinds with a source editor)
+ * stay byte-faithful until their dedicated visual interactions are implemented:
+ * their signature must be preserved identically across a transaction.
+ * Adding new cards (e.g. via the slash menu) is allowed — only mutations of
+ * existing non-container cards, or deletions, are rejected.
+ */
 export const immutableRawBlockPlugin = $prose(
   () =>
     new Plugin({
@@ -529,9 +565,17 @@ export const immutableRawBlockPlugin = $prose(
         if (!transaction.docChanged) return true
         const before = rawBlockSignatures(state.doc)
         const after = rawBlockSignatures(transaction.doc)
-        return (
-          before.length === after.length && before.every((value, index) => value === after[index])
-        )
+        if (before.length > after.length) return false
+        // Every pre-existing card signature must survive in order; new cards
+        // are fine (they may be inserted anywhere, so a plain prefix check is
+        // not enough — match each `before` signature into `after` in order).
+        let cursor = 0
+        for (const signature of before) {
+          const index = after.indexOf(signature, cursor)
+          if (index < 0) return false
+          cursor = index + 1
+        }
+        return true
       }
     })
 )

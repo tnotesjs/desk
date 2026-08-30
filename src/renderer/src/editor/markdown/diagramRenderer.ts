@@ -44,6 +44,13 @@ function renderError(message: string): HTMLElement {
   return el
 }
 
+function renderEmpty(label: string): HTMLElement {
+  const empty = document.createElement('div')
+  empty.className = 'desk-diagram__empty'
+  empty.textContent = `输入 ${label} 源码后显示预览`
+  return empty
+}
+
 function wrapSvg(svg: string): HTMLElement {
   const host = document.createElement('div')
   host.className = 'desk-diagram__svg'
@@ -75,6 +82,7 @@ function renderFallback(lang: string): HTMLElement {
 
 async function renderMermaid(source: string): Promise<RenderedDiagram> {
   const { code } = parseFencedCode(source)
+  if (!code.trim()) return { node: renderEmpty('Mermaid') }
   try {
     const mermaid = await loadMermaid()
     const isDark = document.documentElement.dataset.theme === 'dark'
@@ -93,6 +101,7 @@ async function renderMermaid(source: string): Promise<RenderedDiagram> {
 
 function renderMindmap(source: string): RenderedDiagram {
   const { code, title } = parseFencedCode(source)
+  if (!code.trim()) return { node: renderEmpty('思维导图') }
   const node = document.createElement('div')
   node.className = 'desk-diagram__mindmap'
   let viewer: CanvasViewer | null = null

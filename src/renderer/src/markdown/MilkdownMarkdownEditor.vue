@@ -1,10 +1,23 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Crepe } from '@milkdown/crepe'
-import { editorViewCtx } from '@milkdown/kit/core'
+import { editorViewCtx, commandsCtx } from '@milkdown/kit/core'
 import { uploadConfig } from '@milkdown/kit/plugin/upload'
-import { Plugin } from '@milkdown/kit/prose/state'
+import { Plugin, TextSelection } from '@milkdown/kit/prose/state'
 import type { EditorView } from '@milkdown/kit/prose/view'
+import { buildTNotesSlashGroup, installSlashMenuPresentation } from './slashMenu'
+import type { SlashMenuItem } from './slashMenu'
+import {
+  createBlockShortcutPlugin,
+  createMarkdownShortcutInputRules,
+  replaceCurrentParagraphWithItem
+} from './markdownInputRules'
+import {
+  attachRawBlockBoundaryControls,
+  clearRawBlockSelectionState,
+  createRawBlockSelectionPlugin
+} from './rawBlockInteractions'
+import { createReadonlyTransactionGuard } from './readonlyGuard'
 import {
   createCodeBlockCommand,
   toggleEmphasisCommand,
@@ -16,11 +29,16 @@ import {
   wrapInBulletListCommand,
   wrapInHeadingCommand,
   wrapInOrderedListCommand,
+  clearTextInCurrentBlockCommand,
   imageSchema
 } from '@milkdown/kit/preset/commonmark'
 import { insertTableCommand, toggleStrikethroughCommand } from '@milkdown/kit/preset/gfm'
 import { $prose, $view, callCommand, insert, insertPos, replaceAll } from '@milkdown/kit/utils'
 import GithubSlugger from 'github-slugger'
+
+import BlockActionMenu from './BlockActionMenu.vue'
+import type { BlockAction } from './BlockActionMenu.vue'
+import { installBlockHandleClickController, type BlockHandleClickTarget } from './blockActionMenu'
 
 import {
   projectRawBlocksForMilkdown,
@@ -66,9 +84,155 @@ let originalSource = props.content
 let baselineCanonical = ''
 let lastEmitted: string | null = null
 let contentSyncQueued = false
+let slashMenuPresentationCleanup: (() => void) | null = null
+let blockHandleClickCleanup: (() => void) | null = null
+const rawSourceReadonlyListeners = new Set<(readOnly: boolean) => void>()
+
+interface BlockActionMenuState extends BlockHandleClickTarget {
+  x: number
+  y: number
+}
+
+const blockActionMenu = ref<BlockActionMenuState | null>(null)
+let addBelowMenuOpened = false
 
 function isEffectivelyReadOnly(): boolean {
   return props.readOnly || props.mode === 'readonly'
+}
+
+function editorView(): EditorView | null {
+  return crepe?.editor.action((ctx) => ctx.get(editorViewCtx)) ?? null
+}
+
+function positionBlockActionMenu(target: BlockHandleClickTarget): BlockActionMenuState {
+  const width = 224
+  const estimatedHeight = 176
+  const gap = 6
+  const x = Math.max(8, Math.min(target.handleRect.left, window.innerWidth - width - 8))
+  const below = target.handleRect.bottom + gap
+  const y =
+    below + estimatedHeight <= window.innerHeight - 8
+      ? below
+      : Math.max(8, target.handleRect.top - estimatedHeight - gap)
+  return {
+    ...target,
+    x,
+    y
+  }
+}
+
+function openBlockActionMenu(target: BlockHandleClickTarget): void {
+  if (isEffectivelyReadOnly()) return
+  addBelowMenuOpened = false
+  blockActionMenu.value = positionBlockActionMenu(target)
+}
+
+function closeBlockActionMenu(focusEditor = true): void {
+  if (!blockActionMenu.value) return
+  blockActionMenu.value = null
+  addBelowMenuOpened = false
+  if (focusEditor) editorView()?.focus()
+}
+
+function currentBlockTarget(): { view: EditorView; position: number; dom: HTMLElement } | null {
+  const menu = blockActionMenu.value
+  const view = editorView()
+  if (!menu || !view || !menu.dom.isConnected) return null
+  let position = menu.position
+  if (view.nodeDOM(position) !== menu.dom) {
+    position = -1
+    view.state.doc.descendants((node, candidate) => {
+      if (position >= 0 || node.type.name !== 'deskRawBlock') return
+      if (view.nodeDOM(candidate) === menu.dom) position = candidate
+    })
+  }
+  if (position < 0 || view.state.doc.nodeAt(position)?.type.name !== 'deskRawBlock') return null
+  return { view, position, dom: menu.dom }
+}
+
+function deleteCurrentBlock(): void {
+  if (isEffectivelyReadOnly()) return closeBlockActionMenu(false)
+  const target = currentBlockTarget()
+  if (!target) return closeBlockActionMenu()
+  const node = target.view.state.doc.nodeAt(target.position)
+  if (!node) return
+  const transaction = target.view.state.tr.delete(target.position, target.position + node.nodeSize)
+  transaction.setSelection(
+    TextSelection.near(
+      transaction.doc.resolve(Math.min(target.position, transaction.doc.content.size)),
+      -1
+    )
+  )
+  target.view.dispatch(transaction.scrollIntoView())
+  closeBlockActionMenu()
+}
+
+async function writeClipboard(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text)
+      return
+    } catch {
+      // Electron can expose Clipboard without granting the renderer's async
+      // Clipboard permission. Fall through to the synchronous user-gesture
+      // path so the menu action still works.
+    }
+  }
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  document.body.append(textarea)
+  textarea.select()
+  document.execCommand('copy')
+  textarea.remove()
+}
+
+async function copyCurrentBlock(): Promise<boolean> {
+  const target = currentBlockTarget()
+  const node = target?.view.state.doc.nodeAt(target.position)
+  if (!target || !node) return false
+  await writeClipboard(String(node.attrs.source ?? ''))
+  return true
+}
+
+function openAddBelowMenu(): void {
+  if (isEffectivelyReadOnly() || addBelowMenuOpened || !blockActionMenu.value || !host.value) return
+  const addButton = host.value.querySelector<HTMLElement>(
+    '.milkdown-block-handle[data-show="true"] .operation-item:first-child'
+  )
+  if (!addButton) return
+  addBelowMenuOpened = true
+  addButton.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true }))
+}
+
+async function handleBlockAction(action: BlockAction): Promise<void> {
+  if (isEffectivelyReadOnly()) return closeBlockActionMenu(false)
+  if (action === 'delete') return deleteCurrentBlock()
+  if (action === 'copy') {
+    await copyCurrentBlock()
+    return closeBlockActionMenu()
+  }
+  if (action === 'cut') {
+    if (await copyCurrentBlock()) deleteCurrentBlock()
+    return
+  }
+  if (action === 'add-below') openAddBelowMenu()
+}
+
+function handleBlockMenuOutsidePointer(event: PointerEvent): void {
+  if (!blockActionMenu.value) return
+  const target = event.target as Element | null
+  if (target?.closest('.desk-block-action-menu, .milkdown-block-handle, .milkdown-slash-menu'))
+    return
+  closeBlockActionMenu(false)
+}
+
+function handleBlockMenuDocumentPointerUp(event: PointerEvent): void {
+  const target = event.target as Element | null
+  if (target?.closest('.milkdown-slash-menu li[data-index]')) {
+    closeBlockActionMenu(false)
+  }
 }
 
 interface RawSourceEditorContext {
@@ -101,6 +265,12 @@ function attachRawSourceEditor(ctx: RawSourceEditorContext): () => void {
   let editing = false
   let editorHandle: ContainerSourceEditorHandle | null = null
 
+  const fitEditorToSource = (value: string): void => {
+    const lines = value.split(/\r?\n/).length
+    const height = Math.min(320, Math.max(132, lines * 22 + 56))
+    editorHost.style.setProperty('--desk-raw-editor-height', `${height}px`)
+  }
+
   const closeEditing = (): void => {
     editing = false
     editorHandle?.destroy()
@@ -110,7 +280,29 @@ function attachRawSourceEditor(ctx: RawSourceEditorContext): () => void {
     editButton.disabled = false
   }
 
+  const applyReadonly = (readOnly: boolean): void => {
+    if (readOnly) {
+      if (syncTimer != null) {
+        clearTimeout(syncTimer)
+        syncTimer = null
+      }
+      if (editing) ctx.renderPreview(ctx.source)
+      closeEditing()
+      editButton.hidden = true
+      editButton.disabled = true
+      return
+    }
+    if (!editing) {
+      editButton.hidden = false
+      editButton.disabled = false
+    }
+  }
+
   const commit = (): void => {
+    if (isEffectivelyReadOnly()) {
+      applyReadonly(true)
+      return
+    }
     if (editorValue === ctx.source) {
       setTimeout(closeEditing, 0)
       return
@@ -129,9 +321,10 @@ function attachRawSourceEditor(ctx: RawSourceEditorContext): () => void {
   }
 
   const startEditing = (): void => {
-    if (editing) return
+    if (editing || isEffectivelyReadOnly()) return
     editing = true
     editorValue = ctx.source
+    fitEditorToSource(editorValue)
     editButton.hidden = true
     editButton.disabled = true
 
@@ -160,7 +353,9 @@ function attachRawSourceEditor(ctx: RawSourceEditorContext): () => void {
       cmHost,
       ctx.source,
       (value) => {
+        if (isEffectivelyReadOnly()) return
         editorValue = value
+        fitEditorToSource(value)
         if (syncTimer != null) clearTimeout(syncTimer)
         syncTimer = setTimeout(() => ctx.renderPreview(editorValue), 250)
       },
@@ -174,8 +369,12 @@ function attachRawSourceEditor(ctx: RawSourceEditorContext): () => void {
     event.stopPropagation()
     startEditing()
   })
+  rawSourceReadonlyListeners.add(applyReadonly)
+  applyReadonly(isEffectivelyReadOnly())
 
   return () => {
+    rawSourceReadonlyListeners.delete(applyReadonly)
+    if (syncTimer != null) clearTimeout(syncTimer)
     editorHandle?.destroy()
     editorHandle = null
   }
@@ -278,9 +477,156 @@ function insertTable(): void {
   command(insertTableCommand, { row: 3, col: 3 })
 }
 
+/**
+ * 0005：斜杠菜单的 TNotes 项被选中时插入内容。
+ * - 容器 / 导图 / 组件 / 代码组 / swiper：插入 markdown（走 raw 块投影），
+ *   并自动打开新插入块的「编辑源码」。
+ * - 普通代码块：走 Crepe 代码块（createCodeBlockCommand）。
+ */
+function runSlashItemInsert(item: SlashMenuItem): void {
+  if (item.kind === 'code') {
+    run((editor) => {
+      editor.editor.action((ctx) => {
+        const commands = ctx.get(commandsCtx)
+        // The toolbar command intentionally preserves paragraph text. A slash
+        // insertion must first remove its `/query`, just like Crepe's own menu.
+        commands.call(clearTextInCurrentBlockCommand.key)
+        commands.call(createCodeBlockCommand.key, 'js')
+      })
+    })
+    return
+  }
+
+  // 斜杠菜单和块级快捷输入必须保留同一份 insert（包括末尾换行），
+  // 因而两条入口都直接用 replaceCurrentParagraphWithItem 创建节点。
+  // 新块定位：插入前后各取一次 deskRawBlock 原子的文档 pos 列表，
+  // 通过「前缀 + 后缀」对齐找出新增原子（插入发生在文档任意位置，不能
+  // 假设在末尾——例如用户在文档中间的空段落里打 `/`）。
+  let newBlockPos: number | null = null
+  run((editor) => {
+    editor.editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx)
+      const before = rawBlockPositions(view.state.doc)
+      const transaction = replaceCurrentParagraphWithItem(
+        view.state,
+        item,
+        view.state.selection.from
+      )
+      if (!transaction) return
+      view.dispatch(transaction)
+      const after = rawBlockPositions(view.state.doc)
+      newBlockPos = findAddedBlockPos(before, after)
+    })
+  })
+
+  if (newBlockPos != null) openRawSourceEditorAt(newBlockPos)
+}
+
+/**
+ * Raw NodeViews mount after their insertion transaction. Poll briefly, then
+ * open and focus the inline source editor. Both slash insertion (0005) and
+ * block shortcuts (0006) use this exact interaction path.
+ */
+function openRawSourceEditorAt(position: number): void {
+  if (isEffectivelyReadOnly()) return
+  let attempts = 0
+  const tryOpen = (): void => {
+    attempts += 1
+    const view = crepe?.editor.action((ctx) => ctx.get(editorViewCtx))
+    if (!view) {
+      if (attempts >= 20) window.clearInterval(pollTimer)
+      return
+    }
+    const dom = view.nodeDOM(position)
+    if (!(dom instanceof HTMLElement)) {
+      if (attempts >= 20) window.clearInterval(pollTimer)
+      return
+    }
+    const editButton = dom.querySelector<HTMLButtonElement>('.desk-raw-block__edit')
+    if (!editButton) {
+      if (attempts >= 20) window.clearInterval(pollTimer)
+      return
+    }
+    editButton.click()
+    window.clearInterval(pollTimer)
+  }
+  const pollTimer = window.setInterval(tryOpen, 50)
+  tryOpen()
+}
+
+/** 文档中所有 deskRawBlock 原子的 (pos, kind, source, hidden)，按文档序。 */
+function rawBlockPositions(doc: {
+  descendants: (
+    fn: (node: { type: { name: string }; attrs: Record<string, unknown> }, pos: number) => void
+  ) => void
+}): Array<{ pos: number; signature: string }> {
+  const found: Array<{ pos: number; signature: string }> = []
+  doc.descendants((node, pos) => {
+    if (node.type.name !== 'deskRawBlock') return
+    found.push({
+      pos,
+      signature: `${String(node.attrs.kind)}\u0000${String(node.attrs.hidden)}\u0000${String(node.attrs.source)}`
+    })
+  })
+  return found
+}
+
+/**
+ * 插入前后 pos 列表 diff：返回第一个新增原子的 pos。
+ * 用「前缀相同 + 后缀相同」对齐：新增项位于两者之间。
+ */
+function findAddedBlockPos(
+  before: Array<{ pos: number; signature: string }>,
+  after: Array<{ pos: number; signature: string }>
+): number | null {
+  const beforeSigs = before.map((item) => item.signature)
+  const afterSigs = after.map((item) => item.signature)
+  // 前缀对齐
+  let prefix = 0
+  while (
+    prefix < beforeSigs.length &&
+    prefix < afterSigs.length &&
+    beforeSigs[prefix] === afterSigs[prefix]
+  ) {
+    prefix += 1
+  }
+  // 后缀对齐（不含已对齐前缀）
+  let suffix = 0
+  while (
+    suffix < beforeSigs.length - prefix &&
+    suffix < afterSigs.length - prefix &&
+    beforeSigs[beforeSigs.length - 1 - suffix] === afterSigs[afterSigs.length - 1 - suffix]
+  ) {
+    suffix += 1
+  }
+  const addedCount = afterSigs.length - beforeSigs.length
+  if (addedCount <= 0) return null
+  // 插入位置 = 前缀 + 新增项序号；返回第一个新增的 pos。
+  const index = prefix
+  if (index >= after.length) return null
+  return after[index].pos
+}
+
 function focus(): void {
-  if (!crepe || !ready) return
+  if (!crepe || !ready || isEffectivelyReadOnly()) return
   crepe.editor.action((ctx) => ctx.get(editorViewCtx).focus())
+}
+
+function applyReadonlyState(): void {
+  const readOnly = isEffectivelyReadOnly()
+  crepe?.setReadonly(readOnly)
+  rawSourceReadonlyListeners.forEach((listener) => listener(readOnly))
+  if (!readOnly) return
+
+  closeBlockActionMenu(false)
+  const view = editorView()
+  if (!view) return
+  clearRawBlockSelectionState(view)
+  const activeElement = document.activeElement
+  if (activeElement instanceof HTMLElement && view.dom.contains(activeElement)) {
+    activeElement.blur()
+  }
+  view.dom.blur()
 }
 
 defineExpose({
@@ -376,6 +722,7 @@ async function syncExternalContent(content: string): Promise<void> {
 
 onMounted(async () => {
   if (!host.value) return
+  slashMenuPresentationCleanup = installSlashMenuPresentation(host.value)
   originalSource = props.content
   const editor = new Crepe({
     root: host.value,
@@ -387,10 +734,37 @@ onMounted(async () => {
       [Crepe.Feature.Placeholder]: {
         text: '输入 / 插入内容',
         mode: 'block'
+      },
+      [Crepe.Feature.Cursor]: {
+        color: 'var(--accent-strong)',
+        width: 4
+      },
+      [Crepe.Feature.BlockEdit]: {
+        buildMenu: (builder) => {
+          buildTNotesSlashGroup(builder, {
+            groupLabel: 'TNotes',
+            onRun: (item) => {
+              runSlashItemInsert(item)
+            }
+          })
+        }
       }
     }
   })
   editor.editor.use(rawBlockProjectionPlugins)
+  editor.editor.use(createMarkdownShortcutInputRules())
+  editor.editor.use(
+    createBlockShortcutPlugin({
+      onRawBlockInserted: openRawSourceEditorAt
+    })
+  )
+  editor.editor.use(createRawBlockSelectionPlugin())
+  editor.editor.use(
+    createReadonlyTransactionGuard({
+      isReadOnly: isEffectivelyReadOnly,
+      isExternalSync: () => synchronizing
+    })
+  )
   editor.editor.use(
     $view(deskRawBlockSchema.node, () => (node, view, getPos) => {
       const block = {
@@ -401,22 +775,52 @@ onMounted(async () => {
       const resolveImage = (source: string): string =>
         resolveMarkdownImageUrl(source, props.knowledgeBaseId, props.noteUuid)
       const dom = renderDeskRawBlockElement(block, resolveImage)
-      let cleanup: (() => void) | null = null
+      const cleanupTasks: Array<() => void> = []
+      if (!block.hidden) {
+        cleanupTasks.push(attachRawBlockBoundaryControls({ dom, view, getPos }))
+      }
       if (block.kind === 'raw-container') {
         let previewEl = dom.querySelector('.custom-block') as HTMLElement | null
-        cleanup = attachRawSourceEditor({
-          dom,
-          source: block.source,
-          view,
-          getPos,
-          label: '编辑容器源码',
-          renderPreview: (source) => {
-            if (!previewEl) return
-            const fresh = renderContainerFromSource(source, resolveImage)
-            previewEl.replaceWith(fresh)
-            previewEl = fresh
-          }
-        })
+        cleanupTasks.push(
+          attachRawSourceEditor({
+            dom,
+            source: block.source,
+            view,
+            getPos,
+            label: '编辑容器源码',
+            renderPreview: (source) => {
+              if (!previewEl) return
+              const fresh = renderContainerFromSource(source, resolveImage)
+              previewEl.replaceWith(fresh)
+              previewEl = fresh
+            }
+          })
+        )
+      }
+      if (block.kind === 'raw-component') {
+        const labelEl = dom.querySelector<HTMLElement>('.desk-raw-block__label')
+        const previewEl = dom.querySelector<HTMLElement>('.desk-raw-block__preview')
+        cleanupTasks.push(
+          attachRawSourceEditor({
+            dom,
+            source: block.source,
+            view,
+            getPos,
+            label: '编辑组件源码',
+            renderPreview: (source) => {
+              // 组件无专用可视化预览：刷新卡片标签/预览两行。
+              const name = source.match(/^ {0,3}<([A-Z][\w.-]*)/)?.[1]
+              if (labelEl) {
+                labelEl.textContent = name ? `组件 · ${name}` : '组件'
+              }
+              if (previewEl) {
+                const firstLine = source.split(/\r?\n/, 1)[0].trim()
+                previewEl.textContent =
+                  firstLine.length <= 96 ? firstLine : `${firstLine.slice(0, 93)}…`
+              }
+            }
+          })
+        )
       }
       if (block.kind === 'raw-diagram') {
         const diagramEl = dom.querySelector('.desk-diagram') as HTMLElement | null
@@ -455,10 +859,10 @@ onMounted(async () => {
           label: '编辑图表源码',
           renderPreview: renderInto
         })
-        cleanup = () => {
+        cleanupTasks.push(() => {
           editorCleanup()
           currentDiagram?.destroy?.()
-        }
+        })
       }
       return {
         dom,
@@ -471,13 +875,18 @@ onMounted(async () => {
         selectNode: () => dom.classList.add('ProseMirror-selectednode'),
         deselectNode: () => dom.classList.remove('ProseMirror-selectednode'),
         ignoreMutation: () => true,
-        destroy: () => cleanup?.(),
+        destroy: () => cleanupTasks.splice(0).forEach((cleanup) => cleanup()),
         stopEvent: (event) => {
           const target = event.target as Element | null
+          // CodeMirror owns keyboard/input events inside the inline source
+          // editor. Letting ProseMirror handle Meta+A or text input would select
+          // and replace the surrounding atomic block.
+          if (target?.closest('.desk-raw-block__editor-cm')) return true
           // Let native details toggles and links inside the rendered container
           // keep their default behaviour instead of being turned into a node
           // selection; everything else selects the atom so it stays swipeable.
-          if (target?.closest('summary, a, button, textarea')) return true
+          if (target?.closest('summary, a, button, textarea, .desk-raw-block__boundary-hit'))
+            return true
           return false
         }
       }
@@ -539,6 +948,7 @@ onMounted(async () => {
       // Milkdown's upload plugin keeps a mapped placeholder in the document,
       // so edits made while the image uploads cannot stale the insertion point.
       uploader: async (files, schema) => {
+        if (isEffectivelyReadOnly()) return []
         const imageType = schema.nodes.image
         if (!imageType) return []
         const images = [...files].filter((file) => file.type.startsWith('image/'))
@@ -561,6 +971,20 @@ onMounted(async () => {
     }
     baselineCanonical = editor.getMarkdown()
     ready = true
+    applyReadonlyState()
+    if (host.value) {
+      blockHandleClickCleanup = installBlockHandleClickController({
+        root: host.value,
+        getView: editorView,
+        onClick: openBlockActionMenu
+      })
+      document.addEventListener('pointerdown', handleBlockMenuOutsidePointer, {
+        capture: true
+      })
+      document.addEventListener('pointerup', handleBlockMenuDocumentPointerUp, {
+        capture: true
+      })
+    }
     if (props.content !== originalSource) await syncExternalContent(props.content)
     if (props.active) focus()
   } catch (cause) {
@@ -588,7 +1012,7 @@ watch(
 
 watch(
   () => [props.mode, props.readOnly] as const,
-  () => crepe?.setReadonly(isEffectivelyReadOnly())
+  () => applyReadonlyState()
 )
 
 watch(
@@ -602,6 +1026,17 @@ onBeforeUnmount(() => {
   flushCurrentContent()
   destroyed = true
   ready = false
+  slashMenuPresentationCleanup?.()
+  slashMenuPresentationCleanup = null
+  blockHandleClickCleanup?.()
+  blockHandleClickCleanup = null
+  document.removeEventListener('pointerdown', handleBlockMenuOutsidePointer, {
+    capture: true
+  })
+  document.removeEventListener('pointerup', handleBlockMenuDocumentPointerUp, {
+    capture: true
+  })
+  closeBlockActionMenu(false)
   const editor = crepe
   crepe = null
   if (editor) void editor.destroy()
@@ -609,7 +1044,22 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="host" class="milkdown-markdown-editor" @click.capture="handleClick" />
+  <div
+    ref="host"
+    class="milkdown-markdown-editor"
+    :class="{ 'is-readonly': isEffectivelyReadOnly() }"
+    @click.capture="handleClick"
+  />
+  <Teleport to="body">
+    <BlockActionMenu
+      v-if="blockActionMenu"
+      :x="blockActionMenu.x"
+      :y="blockActionMenu.y"
+      @action="handleBlockAction"
+      @add-below="openAddBelowMenu"
+      @close="closeBlockActionMenu"
+    />
+  </Teleport>
 </template>
 
 <style scoped>
@@ -646,6 +1096,7 @@ onBeforeUnmount(() => {
   --crepe-color-hover: var(--hover);
   --crepe-color-selected: color-mix(in srgb, var(--accent) 45%, transparent);
   --crepe-color-inline-area: var(--border);
+  --prosemirror-virtual-cursor-color: var(--accent-strong);
   --crepe-shadow-1: 0 6px 18px rgba(0, 0, 0, 0.28);
   --crepe-shadow-2: 0 8px 24px rgba(0, 0, 0, 0.3);
 }
@@ -671,6 +1122,128 @@ onBeforeUnmount(() => {
   fill: var(--accent-strong);
 }
 
+.milkdown-markdown-editor :deep(.milkdown .milkdown-block-handle .operation-item svg) {
+  color: var(--editor-text);
+  fill: var(--editor-text);
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-block-handle .operation-item:hover svg),
+.milkdown-markdown-editor :deep(.milkdown .milkdown-block-handle .operation-item.active svg) {
+  color: var(--accent-strong);
+  fill: var(--accent-strong);
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-slash-menu) {
+  width: min(340px, calc(100vw - 16px));
+  container-type: inline-size;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-slash-menu .tab-group) {
+  padding: 6px 8px 0;
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-slash-menu .tab-group ul) {
+  gap: 3px;
+  padding: 3px 2px 6px;
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-slash-menu .tab-group li) {
+  flex: 1 1 auto;
+  padding: 4px 7px;
+  text-align: center;
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-slash-menu .menu-groups) {
+  padding: 2px 8px 8px;
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-slash-menu .menu-group h6) {
+  padding: 8px 6px 5px;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.milkdown-markdown-editor
+  :deep(.milkdown .milkdown-slash-menu .menu-group[data-layout='compact-grid'] ul) {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 4px;
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-slash-menu .menu-group li) {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  box-sizing: border-box;
+  min-width: 0;
+  gap: 8px;
+  padding: 7px 8px;
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-slash-menu .menu-group li svg) {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  color: var(--editor-text);
+  fill: var(--editor-text);
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-slash-menu .menu-group li:hover svg),
+.milkdown-markdown-editor :deep(.milkdown .milkdown-slash-menu .menu-group li.hover svg),
+.milkdown-markdown-editor :deep(.milkdown .milkdown-slash-menu .menu-group li.active svg) {
+  color: var(--accent-strong);
+  fill: var(--accent-strong);
+}
+
+.milkdown-markdown-editor
+  :deep(.milkdown .milkdown-slash-menu .menu-group li svg.desk-tnotes-icon) {
+  color: var(--accent-strong);
+  fill: none !important;
+  stroke: currentColor;
+}
+
+.milkdown-markdown-editor
+  :deep(.milkdown .milkdown-slash-menu .menu-group li > span:not(.milkdown-icon)) {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-slash-menu .desk-slash-menu__shortcut) {
+  min-width: max-content;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-slash-menu .menu-group + .menu-group::before) {
+  margin: 4px 6px 0;
+}
+
+@media (max-width: 720px) {
+  .milkdown-markdown-editor
+    :deep(.milkdown .milkdown-slash-menu .menu-group[data-layout='compact-grid'] ul) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@container (max-width: 310px) {
+  .milkdown-markdown-editor
+    :deep(.milkdown .milkdown-slash-menu .menu-group[data-layout='compact-grid'] ul) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .milkdown-markdown-editor :deep(.milkdown .milkdown-slash-menu .desk-slash-menu__shortcut) {
+    display: none;
+  }
+}
+
 .milkdown-markdown-editor :deep(.ProseMirror) {
   box-sizing: border-box;
   width: min(100%, 940px);
@@ -679,6 +1252,22 @@ onBeforeUnmount(() => {
   padding: 28px 40px 48px;
   line-height: 1.72;
   outline: none;
+  --prosemirror-virtual-cursor-color: var(--accent-strong);
+}
+
+/* Crepe's virtual cursor owns text-caret rendering. Its upstream stylesheet
+   hides the browser caret, but Desk's former higher-specificity caret-color
+   override brought the native caret back and allowed it to remain at an old
+   DOM Selection while a raw-break cursor moved elsewhere. Keep native caret
+   color only for an editor that has no virtual-cursor implementation. */
+.milkdown-markdown-editor:not(.is-readonly)
+  :deep(.ProseMirror:not(.virtual-cursor-enabled):not(.ProseMirror-hideselection)) {
+  caret-color: var(--accent-strong);
+}
+
+.milkdown-markdown-editor :deep(.ProseMirror.virtual-cursor-enabled),
+.milkdown-markdown-editor :deep(.ProseMirror.ProseMirror-hideselection) {
+  caret-color: transparent;
 }
 
 .milkdown-markdown-editor :deep(.ProseMirror > :first-child) {
@@ -686,7 +1275,9 @@ onBeforeUnmount(() => {
 }
 
 .milkdown-markdown-editor :deep(.desk-raw-block) {
+  position: relative;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   box-sizing: border-box;
@@ -702,13 +1293,171 @@ onBeforeUnmount(() => {
   user-select: none;
 }
 
-.milkdown-markdown-editor :deep(.desk-raw-block.ProseMirror-selectednode) {
+.milkdown-markdown-editor :deep(.desk-raw-block.ProseMirror-selectednode),
+.milkdown-markdown-editor :deep(.desk-raw-block.desk-raw-block--range-selected) {
   border-color: var(--accent-strong);
   box-shadow: 0 0 0 1px var(--accent-strong);
 }
 
+.milkdown-markdown-editor :deep(.desk-raw-block.desk-raw-block--range-selected) {
+  background: color-mix(in srgb, var(--accent) 9%, var(--panel));
+}
+
+.milkdown-markdown-editor
+  :deep(.desk-raw-block.desk-raw-block--boundary-active.ProseMirror-selectednode) {
+  border-color: var(--border);
+  box-shadow: none;
+  background: var(--panel);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__boundary-hit) {
+  position: absolute;
+  right: 0;
+  left: 0;
+  z-index: 3;
+  height: 10px;
+  cursor: text;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__boundary-hit[data-side='before']) {
+  top: 0;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__boundary-hit[data-side='after']) {
+  bottom: 0;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-boundary-cursor) {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 0;
+  pointer-events: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-boundary-cursor::after) {
+  position: absolute;
+  left: 1px;
+  top: -11px;
+  width: 1px;
+  height: 22px;
+  border-radius: 1px;
+  background: var(--accent-strong);
+  content: '';
+  animation: desk-raw-boundary-blink 1.1s steps(1, end) infinite;
+}
+
+@keyframes desk-raw-boundary-blink {
+  0%,
+  55% {
+    opacity: 1;
+  }
+  56%,
+  100% {
+    opacity: 0;
+  }
+}
+
 .milkdown-markdown-editor :deep(.desk-raw-block--hidden) {
   display: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--empty-line) {
+  display: block;
+  min-height: 1.72em;
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  background: transparent;
+  cursor: text;
+  user-select: text;
+}
+
+/* A standalone <br /> owns one line of vertical layout, but it must not look
+   like an empty raw-block card. NodeSelection gets one Desk caret; a multi-node
+   text range gets only a short line-start placeholder, never a full row. */
+.milkdown-markdown-editor :deep(.desk-raw-block--empty-line.ProseMirror-selectednode),
+.milkdown-markdown-editor :deep(.desk-raw-block--empty-line.desk-raw-block--range-selected),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--empty-line.desk-raw-block--boundary-active.ProseMirror-selectednode) {
+  border: 0;
+  outline: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.milkdown-markdown-editor:not(.is-readonly)
+  :deep(.desk-raw-block--empty-line.desk-raw-block--range-selected::before) {
+  position: absolute;
+  top: 50%;
+  left: 1px;
+  width: 8px;
+  height: 1.2em;
+  border-radius: 1px;
+  background: var(--crepe-color-selected);
+  content: '';
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-selection-cursor) {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 0;
+  pointer-events: none;
+}
+
+.milkdown-markdown-editor:not(.is-readonly) :deep(.desk-raw-selection-cursor::after) {
+  position: absolute;
+  top: 3px;
+  left: 1px;
+  width: 1px;
+  height: 20px;
+  border-radius: 1px;
+  background: var(--accent-strong);
+  content: '';
+  pointer-events: none;
+}
+
+.milkdown-markdown-editor.is-readonly :deep(.ProseMirror) {
+  caret-color: transparent !important;
+  --prosemirror-virtual-cursor-color: transparent;
+}
+
+.milkdown-markdown-editor.is-readonly :deep(.prosemirror-virtual-cursor),
+.milkdown-markdown-editor.is-readonly :deep(.ProseMirror-gapcursor),
+.milkdown-markdown-editor.is-readonly :deep(.desk-raw-boundary-cursor),
+.milkdown-markdown-editor.is-readonly :deep(.desk-raw-selection-cursor),
+.milkdown-markdown-editor.is-readonly :deep(.crepe-drop-cursor),
+.milkdown-markdown-editor.is-readonly :deep(.milkdown-toolbar),
+.milkdown-markdown-editor.is-readonly :deep(.milkdown-block-handle),
+.milkdown-markdown-editor.is-readonly :deep(.milkdown-slash-menu),
+.milkdown-markdown-editor.is-readonly :deep(.desk-raw-block__edit),
+.milkdown-markdown-editor.is-readonly :deep(.desk-raw-block__editor) {
+  display: none !important;
+}
+
+.milkdown-markdown-editor.is-readonly :deep(.ProseMirror-selectednode) {
+  outline: 0;
+  box-shadow: none;
+}
+
+/* The explicit raw boundary widget already owns before/after placement. Hide
+   Milkdown's generic virtual cursor for that exact state to keep one caret. */
+.milkdown-markdown-editor
+  :deep(
+    .ProseMirror:has(.desk-raw-boundary-cursor, .desk-raw-selection-cursor)
+      .prosemirror-virtual-cursor
+  ) {
+  display: none;
+}
+
+.milkdown-markdown-editor :deep(.milkdown .crepe-drop-cursor) {
+  background: var(--accent-strong);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-strong) 55%, transparent);
+  opacity: 1;
 }
 
 .milkdown-markdown-editor :deep(.desk-raw-block__label) {
@@ -755,6 +1504,10 @@ onBeforeUnmount(() => {
   overflow: auto;
 }
 
+.milkdown-markdown-editor :deep(.desk-raw-block--diagram .desk-diagram:has(.desk-diagram__empty)) {
+  min-height: 88px;
+}
+
 .milkdown-markdown-editor :deep(.desk-raw-block--diagram .desk-diagram__svg svg) {
   max-width: 100%;
   height: auto;
@@ -768,7 +1521,8 @@ onBeforeUnmount(() => {
 }
 
 .milkdown-markdown-editor :deep(.desk-raw-block--diagram .desk-diagram__error),
-.milkdown-markdown-editor :deep(.desk-raw-block--diagram .desk-diagram__fallback) {
+.milkdown-markdown-editor :deep(.desk-raw-block--diagram .desk-diagram__fallback),
+.milkdown-markdown-editor :deep(.desk-raw-block--diagram .desk-diagram__empty) {
   color: var(--muted);
   font-size: 13px;
 }
@@ -920,7 +1674,7 @@ onBeforeUnmount(() => {
   border-radius: 6px;
 }
 
-.milkdown-markdown-editor :deep(.desk-raw-block--container .desk-raw-block__edit) {
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__edit) {
   position: absolute;
   top: 8px;
   right: 10px;
@@ -937,18 +1691,19 @@ onBeforeUnmount(() => {
   transition: opacity 120ms ease;
 }
 
-.milkdown-markdown-editor :deep(.desk-raw-block--container:hover .desk-raw-block__edit),
-.milkdown-markdown-editor
-  :deep(.desk-raw-block--container.ProseMirror-selectednode .desk-raw-block__edit) {
+.milkdown-markdown-editor :deep(.desk-raw-block:hover .desk-raw-block__edit),
+.milkdown-markdown-editor :deep(.desk-raw-block.ProseMirror-selectednode .desk-raw-block__edit) {
   opacity: 1;
 }
 
-.milkdown-markdown-editor :deep(.desk-raw-block--container .desk-raw-block__edit:hover) {
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__edit:hover) {
   color: var(--editor-text);
   border-color: var(--accent-strong);
 }
 
-.milkdown-markdown-editor :deep(.desk-raw-block--container .desk-raw-block__editor) {
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor) {
+  flex: 0 0 100%;
+  width: 100%;
   margin-top: 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -956,7 +1711,7 @@ onBeforeUnmount(() => {
   background: var(--editor-bg);
 }
 
-.milkdown-markdown-editor :deep(.desk-raw-block--container .desk-raw-block__editor-header) {
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-header) {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -965,13 +1720,13 @@ onBeforeUnmount(() => {
   background: var(--panel);
 }
 
-.milkdown-markdown-editor :deep(.desk-raw-block--container .desk-raw-block__editor-label) {
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-label) {
   font-size: 12px;
   font-weight: 600;
   color: var(--muted);
 }
 
-.milkdown-markdown-editor :deep(.desk-raw-block--container .desk-raw-block__editor-done) {
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-done) {
   padding: 3px 12px;
   font-size: 12px;
   color: var(--editor-bg);
@@ -981,18 +1736,18 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-.milkdown-markdown-editor :deep(.desk-raw-block--container .desk-raw-block__editor-done:hover) {
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-done:hover) {
   background: var(--accent-strong);
   border-color: var(--accent-strong);
 }
 
-.milkdown-markdown-editor :deep(.desk-raw-block--container .desk-raw-block__editor-cm) {
-  height: 320px;
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-cm) {
+  height: var(--desk-raw-editor-height, 220px);
   overflow: hidden;
   background: var(--editor-bg);
 }
 
-.milkdown-markdown-editor :deep(.desk-raw-block--container .desk-raw-block__editor-cm .cm-editor) {
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-cm .cm-editor) {
   height: 100%;
 }
 
@@ -1094,13 +1849,12 @@ onBeforeUnmount(() => {
   color: inherit;
 }
 
-/* The container inline source editor is a CodeMirror view; restore a visible
+/* The raw-block inline source editor is a CodeMirror view; restore a visible
    selection highlight that the blanket `.desk-raw-block *::selection` above
    would otherwise wipe out. */
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-cm .cm-content::selection),
 .milkdown-markdown-editor
-  :deep(.desk-raw-block--container .desk-raw-block__editor-cm .cm-content::selection),
-.milkdown-markdown-editor
-  :deep(.desk-raw-block--container .desk-raw-block__editor-cm .cm-content *::selection) {
+  :deep(.desk-raw-block .desk-raw-block__editor-cm .cm-content *::selection) {
   background: var(--selected);
   color: var(--editor-text);
 }

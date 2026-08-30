@@ -145,6 +145,64 @@ describe('Milkdown raw block projection', () => {
     expect(editor.action(getMarkdown())).toBe(baseline)
   })
 
+  it('renders a standalone HTML break as an empty visual line while preserving its source', async () => {
+    const source = '## 2. 评价\n\n<br />\n\n正文\n'
+    const projected = projectRawBlocksForMilkdown(source)
+    const marker = projected.match(/<!--desk-raw-block:v1:[^\n]+-->/)?.[0]
+
+    expect(readProjectedRawBlockMarker(marker ?? '')).toEqual({
+      kind: 'raw-break',
+      source: '<br />',
+      hidden: false
+    })
+
+    const editor = await createEditor(source)
+    const emptyLine = document.querySelector<HTMLElement>('.desk-raw-block--empty-line')
+    expect(emptyLine).not.toBeNull()
+    expect(emptyLine?.textContent).toBe('')
+    expect(emptyLine?.querySelector('.desk-raw-block__label')).toBeNull()
+
+    const baseline = editor.action(getMarkdown())
+    expect(reconcileMarkdownSource(source, baseline, baseline)).toBe(source)
+  })
+
+  it('keeps an explicit deletion among consecutive standalone breaks', async () => {
+    const source = 'before\n\n<br />\n\n<br />\n\n<br />\n\nafter\n'
+    const editor = await createEditor(source)
+    const baseline = editor.action(getMarkdown())
+
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx)
+      const breaks: Array<{ position: number; size: number }> = []
+      view.state.doc.descendants((node, position) => {
+        if (node.type.name === 'deskRawBlock' && node.attrs.kind === 'raw-break') {
+          breaks.push({ position, size: node.nodeSize })
+        }
+      })
+      const middle = breaks[1]
+      view.dispatch(view.state.tr.delete(middle.position, middle.position + middle.size))
+    })
+
+    const current = editor.action(getMarkdown())
+    const reconciled = reconcileMarkdownSource(source, baseline, current)
+    expect(current.match(/<br \/>/g)).toHaveLength(2)
+    expect(reconciled.match(/<br \/>/g)).toHaveLength(2)
+  })
+
+  it('keeps a break deletion when surrounding paragraphs also changed', async () => {
+    const fill = Array.from({ length: 28 }, (_, index) => `填充段落 ${index + 1}`).join('\n\n')
+    const source = `# Block interactions\n\n顶部段落\n\n组件上方\n\n<B id="selection-e2e" />\n\n组件下方\n\n${fill}\n\n底部段落\n\n<br />\n\n<br />\n\n<br />\n`
+    const baselineEditor = await createEditor(source)
+    const baseline = baselineEditor.action(getMarkdown())
+    const edited = `# Block interactions\n\n/\n\n组件上方\n\n<B id="selection-e2e" />\n\n组件下方\n\n${fill}\n\n底部段落\n\n<br />\n\n<br />\n\n/\n`
+    const currentEditor = await createEditor(edited)
+    const current = currentEditor.action(getMarkdown())
+    const reconciled = reconcileMarkdownSource(source, baseline, current)
+
+    expect(current.match(/<br \/>/g)).toHaveLength(2)
+    expect(reconciled.match(/<br \/>/g)).toHaveLength(2)
+  })
+
   it('renders a collapsible toggle for the generated TOC', async () => {
     const source = [
       '# 0001. 标题',
@@ -255,7 +313,7 @@ describe('Milkdown raw block projection', () => {
   })
 
   it('rejects visual transactions that delete or mutate an opaque raw block', async () => {
-    const source = 'before\n\n<Demo value="keep" />\n\nafter\n'
+    const source = 'before\n\n<<< ./shared.md\n\nafter\n'
     const editor = await createEditor(source)
 
     editor.action((ctx) => {
@@ -270,7 +328,7 @@ describe('Milkdown raw block projection', () => {
       view.dispatch(view.state.tr.delete(rawPosition, rawPosition + rawSize))
     })
 
-    expect(editor.action(getMarkdown())).toContain('<Demo value="keep" />')
+    expect(editor.action(getMarkdown())).toContain('<<< ./shared.md')
   })
 
   it('preserves real reference syntax and definitions when another block is edited', async () => {

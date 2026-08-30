@@ -108,4 +108,22 @@ describe('container inline source editor', () => {
     })
     wrapper.unmount()
   })
+
+  it('closes and disables the inline source editor when switching to readonly', async () => {
+    const wrapper = await mountWithContainer()
+    await wrapper.find('.desk-raw-block__edit').trigger('click')
+    expect(wrapper.find('.desk-raw-block__editor-cm .cm-editor').exists()).toBe(true)
+
+    await wrapper.setProps({ mode: 'readonly' })
+    await vi.waitFor(() => {
+      expect(wrapper.find('.desk-raw-block__editor').isVisible()).toBe(false)
+    })
+    const edit = wrapper.get('.desk-raw-block__edit')
+    expect(edit.attributes('hidden')).toBeDefined()
+    expect(edit.attributes('disabled')).toBeDefined()
+    await edit.trigger('click')
+    expect(wrapper.find('.desk-raw-block__editor-cm .cm-editor').exists()).toBe(false)
+    expect(wrapper.emitted('change')).toBeUndefined()
+    wrapper.unmount()
+  })
 })

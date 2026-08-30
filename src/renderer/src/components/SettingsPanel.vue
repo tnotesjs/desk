@@ -4,6 +4,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import EmojiInput from './EmojiInput.vue'
 import { useWorkspaceStore } from '../stores/workspace'
 import { pushToast } from '../stores/toast'
+import { TN_NOTES_SLASH_ITEMS } from '../markdown/slashMenu'
+import { MARKDOWN_BLOCK_SHORTCUTS, MARKDOWN_INLINE_SHORTCUTS } from '../markdown/markdownInputRules'
 
 import type { AppSettings, DeskResult, ImageTokenStatus } from '../../../shared/contracts'
 
@@ -96,6 +98,20 @@ const shortcutGroups = computed(() => [
       ['任务列表', `${altKey.value} ${primaryKey.value} T`],
       ['引用', `${primaryKey.value} Shift U`],
       ['分割线', `${altKey.value} ${primaryKey.value} S`]
+    ]
+  },
+  {
+    title: 'Markdown 快速输入',
+    items: [
+      ...TN_NOTES_SLASH_ITEMS.map((item) => [
+        `${item.label} · ${item.keywords.join(', ')}`,
+        item.shortcut
+      ]),
+      ...MARKDOWN_BLOCK_SHORTCUTS.map((item) => [
+        `${item.label} · ${[item.syntax, ...item.aliases].join(' / ')}`,
+        item.trigger
+      ]),
+      ...MARKDOWN_INLINE_SHORTCUTS.map((item) => [item.label + ' · ' + item.syntax, item.trigger])
     ]
   }
 ])
@@ -1154,6 +1170,12 @@ onMounted(() => {
   min-height: 35px;
   border-bottom: 1px solid var(--border);
   font-size: 10px;
+}
+
+.shortcut-row > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
 }
 
 .shortcut-row kbd {

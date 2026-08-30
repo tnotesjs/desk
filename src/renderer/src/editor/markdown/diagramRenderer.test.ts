@@ -15,6 +15,16 @@ describe('parseFencedCode', () => {
 })
 
 describe('renderDiagram', () => {
+  it.each([
+    ['```mermaid\n\n```', 'Mermaid'],
+    ['```mindmap\n\n```', '思维导图']
+  ])('renders a calm empty-state for a blank %s fence', async (source, label) => {
+    const rendered = await renderDiagram(source)
+    expect(rendered.node.className).toBe('desk-diagram__empty')
+    expect(rendered.node.textContent).toContain(label)
+    expect(rendered.activate).toBeUndefined()
+  })
+
   it('renders a fallback card for languages that are not yet rendered', async () => {
     const rendered = await renderDiagram('```markmap\n- A\n- B\n```')
     expect(rendered.node.className).toBe('desk-diagram__fallback')
