@@ -1375,9 +1375,10 @@ onBeforeUnmount(() => {
 }
 
 /* A standalone <br /> owns one line of vertical layout, but it must not look
-   like an empty raw-block card. NodeSelection gets one Desk caret; a multi-node
-   text range gets only a short line-start placeholder, never a full row. */
+   like an empty raw-block card. A state-owned node decoration paints its caret
+   and hint inside this exact row; a multi-node range uses only a short marker. */
 .milkdown-markdown-editor :deep(.desk-raw-block--empty-line.ProseMirror-selectednode),
+.milkdown-markdown-editor :deep(.desk-raw-block--empty-line.desk-raw-block--selection-active),
 .milkdown-markdown-editor :deep(.desk-raw-block--empty-line.desk-raw-block--range-selected),
 .milkdown-markdown-editor
   :deep(.desk-raw-block--empty-line.desk-raw-block--boundary-active.ProseMirror-selectednode) {
@@ -1401,24 +1402,32 @@ onBeforeUnmount(() => {
   transform: translateY(-50%);
 }
 
-.milkdown-markdown-editor :deep(.desk-raw-selection-cursor) {
-  position: relative;
-  display: block;
-  width: 100%;
-  height: 0;
-  pointer-events: none;
-}
-
-.milkdown-markdown-editor:not(.is-readonly) :deep(.desk-raw-selection-cursor::after) {
+.milkdown-markdown-editor:not(.is-readonly)
+  :deep(.desk-raw-block--empty-line.desk-raw-block--selection-active::before) {
   position: absolute;
-  top: 3px;
+  top: 50%;
   left: 1px;
   width: 1px;
-  height: 20px;
+  height: 1.2em;
   border-radius: 1px;
   background: var(--accent-strong);
   content: '';
   pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.milkdown-markdown-editor:not(.is-readonly)
+  :deep(.desk-raw-block--empty-line.desk-raw-block--selection-active::after) {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  color: var(--crepe-color-placeholder, var(--muted));
+  content: attr(data-placeholder);
+  font-size: inherit;
+  line-height: inherit;
+  opacity: 0.72;
+  pointer-events: none;
+  transform: translateY(-50%);
 }
 
 .milkdown-markdown-editor.is-readonly :deep(.ProseMirror) {
@@ -1429,7 +1438,6 @@ onBeforeUnmount(() => {
 .milkdown-markdown-editor.is-readonly :deep(.prosemirror-virtual-cursor),
 .milkdown-markdown-editor.is-readonly :deep(.ProseMirror-gapcursor),
 .milkdown-markdown-editor.is-readonly :deep(.desk-raw-boundary-cursor),
-.milkdown-markdown-editor.is-readonly :deep(.desk-raw-selection-cursor),
 .milkdown-markdown-editor.is-readonly :deep(.crepe-drop-cursor),
 .milkdown-markdown-editor.is-readonly :deep(.milkdown-toolbar),
 .milkdown-markdown-editor.is-readonly :deep(.milkdown-block-handle),
@@ -1448,7 +1456,7 @@ onBeforeUnmount(() => {
    Milkdown's generic virtual cursor for that exact state to keep one caret. */
 .milkdown-markdown-editor
   :deep(
-    .ProseMirror:has(.desk-raw-boundary-cursor, .desk-raw-selection-cursor)
+    .ProseMirror:has(.desk-raw-boundary-cursor, .desk-raw-block--selection-active)
       .prosemirror-virtual-cursor
   ) {
   display: none;

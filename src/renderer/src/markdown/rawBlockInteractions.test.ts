@@ -119,7 +119,7 @@ describe('raw block keyboard selection', () => {
     })
   })
 
-  it('owns exactly one state-derived caret while moving between standalone breaks', async () => {
+  it('owns exactly one state-derived in-row caret and hint while moving between breaks', async () => {
     const editor = await createEditor('上方段落\n\n<br />\n\n<br />\n\n<br />\n\n下方段落\n')
     editor.action((ctx) => {
       const view = ctx.get(editorViewCtx)
@@ -131,10 +131,15 @@ describe('raw block keyboard selection', () => {
       })
 
       view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, positions[0])))
-      expect(view.dom.querySelectorAll('.desk-raw-selection-cursor')).toHaveLength(1)
+      expect(view.dom.querySelectorAll('.desk-raw-block--selection-active')).toHaveLength(1)
+      expect(
+        view.dom
+          .querySelector('.desk-raw-block--selection-active')
+          ?.getAttribute('data-placeholder')
+      ).toBe('输入 / 插入内容')
 
       view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, positions[2])))
-      expect(view.dom.querySelectorAll('.desk-raw-selection-cursor')).toHaveLength(1)
+      expect(view.dom.querySelectorAll('.desk-raw-block--selection-active')).toHaveLength(1)
       expect(view.dom.querySelector('.desk-raw-boundary-cursor')).toBeNull()
     })
   })
@@ -178,7 +183,7 @@ describe('raw block keyboard selection', () => {
     })
   })
 
-  it('selects the whole atom with Shift+ArrowDown from the previous paragraph end', async () => {
+  it('marks the whole atom with Shift+ArrowDown while retaining the text anchor', async () => {
     const editor = await createEditor()
     const pos = positions(editor)
     editor.action((ctx) => {
@@ -191,12 +196,15 @@ describe('raw block keyboard selection', () => {
     })
     editor.action((ctx) => {
       const selection = ctx.get(editorStateCtx).selection
-      expect(selection).toBeInstanceOf(NodeSelection)
-      expect((selection as NodeSelection).node.type.name).toBe('deskRawBlock')
+      expect(selection).toBeInstanceOf(TextSelection)
+      expect(selection.head).toBe(pos.beforeEnd)
+      expect(
+        ctx.get(editorViewCtx).dom.querySelectorAll('.desk-raw-block--range-selected')
+      ).toHaveLength(1)
     })
   })
 
-  it('selects the whole atom with Shift+ArrowUp from the next paragraph start', async () => {
+  it('marks the whole atom with Shift+ArrowUp while retaining the text anchor', async () => {
     const editor = await createEditor()
     const pos = positions(editor)
     editor.action((ctx) => {
@@ -211,8 +219,87 @@ describe('raw block keyboard selection', () => {
     })
     editor.action((ctx) => {
       const selection = ctx.get(editorStateCtx).selection
-      expect(selection).toBeInstanceOf(NodeSelection)
-      expect(selection.from).toBe(pos.raw)
+      expect(selection).toBeInstanceOf(TextSelection)
+      expect(selection.head).toBe(pos.afterStart)
+      expect(
+        ctx.get(editorViewCtx).dom.querySelectorAll('.desk-raw-block--range-selected')
+      ).toHaveLength(1)
+    })
+  })
+
+  it('extends and shrinks a keyboard range across consecutive breaks without losing its anchor', async () => {
+    const editor = await createEditor('上方段落\n\n<br />\n\n<br />\n\n<br />\n\n下方段落\n')
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx)
+      const breakPositions: number[] = []
+      let afterStart = -1
+      view.state.doc.descendants((node, position) => {
+        if (node.type.name === 'deskRawBlock' && node.attrs.kind === 'raw-break') {
+          breakPositions.push(position)
+        }
+        if (node.type.name === 'paragraph' && node.textContent === '下方段落') {
+          afterStart = position + 1
+        }
+      })
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, afterStart)))
+
+      const shiftUp = (): void => {
+        view.dom.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true, bubbles: true })
+        )
+      }
+      const shiftDown = (): void => {
+        view.dom.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true, bubbles: true })
+        )
+      }
+      const selectedBreaks = (): Element[] => [
+        ...view.dom.querySelectorAll('[data-kind="raw-break"].desk-raw-block--range-selected')
+      ]
+
+      shiftUp()
+      expect(selectedBreaks()).toHaveLength(1)
+      expect(view.state.selection.head).toBe(afterStart)
+      shiftUp()
+      expect(selectedBreaks()).toHaveLength(2)
+      expect(view.state.selection.head).toBe(afterStart)
+      shiftUp()
+      expect(selectedBreaks()).toHaveLength(3)
+      expect(view.state.selection.head).toBe(afterStart)
+
+      shiftDown()
+      expect(selectedBreaks()).toHaveLength(2)
+      shiftDown()
+      expect(selectedBreaks()).toHaveLength(1)
+      shiftDown()
+      expect(selectedBreaks()).toHaveLength(0)
+      expect(view.state.selection).toBeInstanceOf(TextSelection)
+      expect(view.state.selection.head).toBe(afterStart)
+    })
+  })
+
+  it('extends from a selected raw-break and deletes the complete keyboard range', async () => {
+    const editor = await createEditor('上方段落\n\n<br />\n\n<br />\n\n<br />\n\n下方段落\n')
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx)
+      const breakPositions: number[] = []
+      view.state.doc.descendants((node, position) => {
+        if (node.type.name === 'deskRawBlock' && node.attrs.kind === 'raw-break') {
+          breakPositions.push(position)
+        }
+      })
+      view.dispatch(
+        view.state.tr.setSelection(NodeSelection.create(view.state.doc, breakPositions[2]))
+      )
+      view.dom.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true, bubbles: true })
+      )
+      expect(
+        view.dom.querySelectorAll('[data-kind="raw-break"].desk-raw-block--range-selected')
+      ).toHaveLength(2)
+      view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))
+
+      expect(view.dom.querySelectorAll('[data-kind="raw-break"]')).toHaveLength(1)
     })
   })
 

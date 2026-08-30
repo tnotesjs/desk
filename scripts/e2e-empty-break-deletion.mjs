@@ -118,6 +118,45 @@ try {
   }
   await page.screenshot({ path: join(shots, '01-three-empty-lines.png') })
 
+  const afterParagraph = pm
+    .locator('p')
+    .filter({ hasText: /^after$/ })
+    .first()
+  await afterParagraph.click({ position: { x: 1, y: 10 } })
+  await page.keyboard.press('Home')
+  const keyboardSelectedEmptyLines = pm.locator(
+    '[data-type="desk-raw-block"][data-kind="raw-break"].desk-raw-block--range-selected'
+  )
+  for (const expected of [1, 2, 3]) {
+    await page.keyboard.press('Shift+ArrowUp')
+    const actual = await keyboardSelectedEmptyLines.count()
+    const keyboardState = await pm.evaluate((element) => {
+      const selection = document.getSelection()
+      return {
+        activeElement: document.activeElement?.className ?? document.activeElement?.tagName ?? null,
+        selectedClasses: [...element.querySelectorAll('[data-kind="raw-break"]')].map(
+          (line) => line.className
+        ),
+        selection: selection
+          ? {
+              collapsed: selection.isCollapsed,
+              anchorNode: selection.anchorNode?.parentElement?.className ?? null,
+              anchorOffset: selection.anchorOffset,
+              focusNode: selection.focusNode?.parentElement?.className ?? null,
+              focusOffset: selection.focusOffset
+            }
+          : null
+      }
+    })
+    console.log(`keyboard-up-${expected}:`, JSON.stringify(keyboardState))
+    assert.equal(actual, expected)
+  }
+  await page.screenshot({ path: join(shots, '02-three-empty-lines-keyboard-selected.png') })
+  for (const expected of [2, 1, 0]) {
+    await page.keyboard.press('Shift+ArrowDown')
+    assert.equal(await keyboardSelectedEmptyLines.count(), expected)
+  }
+
   const firstRangeBox = await emptyLines.first().boundingBox()
   const lastRangeBox = await emptyLines.last().boundingBox()
   assert.ok(firstRangeBox)
@@ -163,7 +202,7 @@ try {
     assert.ok(presentation.markerHeight >= 16 && presentation.markerHeight <= 24)
     assert.notEqual(presentation.markerBackground, 'rgba(0, 0, 0, 0)')
   }
-  await page.screenshot({ path: join(shots, '02-three-empty-lines-range-selected.png') })
+  await page.screenshot({ path: join(shots, '03-three-empty-lines-pointer-selected.png') })
 
   const middle = emptyLines.nth(1)
   const box = await middle.boundingBox()
@@ -175,37 +214,33 @@ try {
   )
   const selectedPresentation = await middle.evaluate((element) => {
     const style = getComputedStyle(element)
-    const marker = getComputedStyle(element, '::before')
+    const caret = getComputedStyle(element, '::before')
+    const placeholder = getComputedStyle(element, '::after')
     return {
+      selectionActive: element.classList.contains('desk-raw-block--selection-active'),
+      placeholderAttribute: element.getAttribute('data-placeholder'),
       borderTopWidth: style.borderTopWidth,
       backgroundColor: style.backgroundColor,
       boxShadow: style.boxShadow,
-      markerWidth: marker.width,
-      markerContent: marker.content
+      caretWidth: caret.width,
+      caretHeight: caret.height,
+      caretContent: caret.content,
+      caretBackground: caret.backgroundColor,
+      placeholderContent: placeholder.content,
+      placeholderColor: placeholder.color
     }
   })
+  assert.equal(selectedPresentation.selectionActive, true)
+  assert.equal(selectedPresentation.placeholderAttribute, '输入 / 插入内容')
   assert.equal(selectedPresentation.borderTopWidth, '0px')
   assert.equal(selectedPresentation.backgroundColor, 'rgba(0, 0, 0, 0)')
   assert.equal(selectedPresentation.boxShadow, 'none')
-  assert.equal(selectedPresentation.markerContent, 'none')
-  const selectionCursorPresentation = await page
-    .locator('.desk-raw-selection-cursor')
-    .evaluateAll((elements) =>
-      elements.map((element) => {
-        const marker = getComputedStyle(element, '::after')
-        return {
-          content: marker.content,
-          width: marker.width,
-          height: marker.height,
-          background: marker.backgroundColor
-        }
-      })
-    )
-  assert.equal(selectionCursorPresentation.length, 1)
-  assert.equal(selectionCursorPresentation[0].content, '""')
-  assert.equal(selectionCursorPresentation[0].width, '1px')
-  assert.equal(selectionCursorPresentation[0].height, '20px')
-  assert.notEqual(selectionCursorPresentation[0].background, 'rgba(0, 0, 0, 0)')
+  assert.equal(selectedPresentation.caretContent, '""')
+  assert.equal(selectedPresentation.caretWidth, '1px')
+  assert.ok(Number.parseFloat(selectedPresentation.caretHeight) >= 16)
+  assert.notEqual(selectedPresentation.caretBackground, 'rgba(0, 0, 0, 0)')
+  assert.equal(selectedPresentation.placeholderContent, '"输入 / 插入内容"')
+  assert.notEqual(selectedPresentation.placeholderColor, 'rgba(0, 0, 0, 0)')
   assert.equal(
     await page
       .locator('.prosemirror-virtual-cursor, .desk-raw-boundary-cursor, .ProseMirror-gapcursor')
@@ -213,7 +248,20 @@ try {
     0
   )
   assert.equal(await selectedEmptyLines.count(), 0)
-  await page.screenshot({ path: join(shots, '03-middle-line-selected.png') })
+  const handleAlignment = await middle.evaluate((element) => {
+    const line = element.getBoundingClientRect()
+    const handle = document.querySelector('.milkdown-block-handle')?.getBoundingClientRect()
+    return handle
+      ? {
+          lineCenter: line.top + line.height / 2,
+          handleCenter: handle.top + handle.height / 2
+        }
+      : null
+  })
+  assert.ok(handleAlignment)
+  console.log('raw-break-handle-alignment:', JSON.stringify(handleAlignment))
+  assert.ok(Math.abs(handleAlignment.lineCenter - handleAlignment.handleCenter) <= 6)
+  await page.screenshot({ path: join(shots, '04-middle-line-selected-with-hint.png') })
 
   await page.getByRole('button', { name: '只读视图', exact: true }).click()
   await page.waitForTimeout(120)
@@ -241,6 +289,7 @@ try {
   assert.equal(readonlyPresentation.visibleCarets, 0)
   assert.equal(readonlyPresentation.focused, false)
   assert.equal(readonlyPresentation.activeInside, false)
+  assert.equal(await page.locator('.desk-raw-block--selection-active').count(), 0)
 
   await middle.click({ position: { x: Math.min(20, box.width / 2), y: box.height / 2 } })
   await page.keyboard.press('Delete')
@@ -251,7 +300,7 @@ try {
   assert.equal(await editButton.isVisible(), false)
   await editButton.dispatchEvent('click')
   assert.equal(await page.locator('.desk-raw-block__editor-cm:visible').count(), 0)
-  await page.screenshot({ path: join(shots, '04-readonly-no-caret.png') })
+  await page.screenshot({ path: join(shots, '05-readonly-no-caret.png') })
 
   await page.getByRole('button', { name: '源码视图', exact: true }).click()
   const sourceContent = page.locator('.markdown-source-editor .cm-content').first()
@@ -273,7 +322,7 @@ try {
   assert.equal(await emptyLines.count(), 2)
   await page.waitForTimeout(200)
   assert.equal(await emptyLines.count(), 2)
-  await page.screenshot({ path: join(shots, '05-middle-line-deleted.png') })
+  await page.screenshot({ path: join(shots, '06-middle-line-deleted.png') })
 
   const save = page.getByRole('button', { name: '保存', exact: true })
   await save.click()
@@ -283,8 +332,9 @@ try {
   assert.equal(saved.includes('before'), true)
   assert.equal(saved.includes('after'), true)
   console.log('✓ three empty lines render independently')
+  console.log('✓ Shift+ArrowUp/Down expands and shrinks a three-line empty range')
   console.log('✓ dragging across three empty lines paints three compact range markers')
-  console.log('✓ visual empty-line selection renders exactly one caret')
+  console.log('✓ visual empty-line selection renders one in-row caret and input hint')
   console.log('✓ readonly mode shows no caret and rejects all attempted document edits')
   console.log('✓ Delete removes only the selected middle <br />')
   console.log('✓ saving persists exactly two <br /> lines')

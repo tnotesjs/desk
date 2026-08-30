@@ -109,7 +109,7 @@ async function capture(page, label, log = true) {
       }),
       cursorElements: [
         ...document.querySelectorAll(
-          '.desk-raw-boundary-cursor, .desk-raw-selection-cursor, .prosemirror-virtual-cursor, .ProseMirror-gapcursor, .crepe-drop-cursor'
+          '.desk-raw-boundary-cursor, .prosemirror-virtual-cursor, .ProseMirror-gapcursor, .crepe-drop-cursor'
         )
       ].map((element) => {
         const rect = element.getBoundingClientRect()
