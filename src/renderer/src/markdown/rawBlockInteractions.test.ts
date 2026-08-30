@@ -12,6 +12,7 @@ import {
 } from '../editor/markdown/rawBlockProjection'
 import {
   adjacentRawBlockSelectionPosition,
+  codeBlockWholeSelectPosition,
   createRawBlockSelectionPlugin
 } from './rawBlockInteractions'
 
@@ -58,8 +59,29 @@ function positions(editor: Editor): { beforeEnd: number; raw: number; afterStart
   return result
 }
 
+function codePositions(editor: Editor): {
+  beforeEnd: number
+  code: number
+  afterStart: number
+} {
+  const result = { beforeEnd: -1, code: -1, afterStart: -1 }
+  editor.action((ctx) => {
+    const state = ctx.get(editorStateCtx)
+    let textIndex = 0
+    state.doc.descendants((node, position) => {
+      if (node.type.name === 'code_block') result.code = position
+      if (node.type.name === 'paragraph') {
+        if (textIndex === 0) result.beforeEnd = position + 1 + node.content.size
+        else result.afterStart = position + 1
+        textIndex += 1
+      }
+    })
+  })
+  return result
+}
+
 describe('raw block keyboard selection', () => {
-  it('enters the before boundary and Delete removes the complete atom', async () => {
+  it('ArrowDown selects the whole atom; Delete removes it', async () => {
     const editor = await createEditor()
     const pos = positions(editor)
     editor.action((ctx) => {
@@ -67,15 +89,14 @@ describe('raw block keyboard selection', () => {
       view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, pos.beforeEnd)))
       view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
       expect(view.state.selection).toBeInstanceOf(NodeSelection)
-      expect(view.dom.querySelector('.desk-raw-boundary-cursor')?.getAttribute('data-side')).toBe(
-        'before'
-      )
+      expect((view.state.selection as NodeSelection).from).toBe(pos.raw)
+      expect(view.dom.querySelector('.desk-raw-boundary-cursor')).toBeNull()
       view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))
       expect(view.state.doc.toString()).not.toContain('deskRawBlock')
     })
   })
 
-  it('enters the after boundary and Backspace removes the complete atom', async () => {
+  it('ArrowUp selects the whole atom; Backspace removes it', async () => {
     const editor = await createEditor()
     const pos = positions(editor)
     editor.action((ctx) => {
@@ -85,11 +106,35 @@ describe('raw block keyboard selection', () => {
       )
       view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
       expect(view.state.selection).toBeInstanceOf(NodeSelection)
-      expect(view.dom.querySelector('.desk-raw-boundary-cursor')?.getAttribute('data-side')).toBe(
-        'after'
-      )
+      expect((view.state.selection as NodeSelection).from).toBe(pos.raw)
+      expect(view.dom.querySelector('.desk-raw-boundary-cursor')).toBeNull()
       view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }))
       expect(view.state.doc.toString()).not.toContain('deskRawBlock')
+    })
+  })
+
+  it('selected atom: Backspace and Delete both remove it; ArrowDown exits past it', async () => {
+    const editor = await createEditor()
+    const pos = positions(editor)
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx)
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, pos.beforeEnd)))
+      view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      expect(view.state.selection).toBeInstanceOf(NodeSelection)
+      view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }))
+      expect(view.state.doc.toString()).not.toContain('deskRawBlock')
+    })
+
+    const editor2 = await createEditor()
+    const pos2 = positions(editor2)
+    editor2.action((ctx) => {
+      const view = ctx.get(editorViewCtx)
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, pos2.beforeEnd)))
+      view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      expect(view.state.selection).toBeInstanceOf(TextSelection)
+      expect(view.state.selection.head).toBe(pos2.afterStart)
+      expect(view.state.doc.toString()).toContain('deskRawBlock')
     })
   })
 
@@ -155,13 +200,12 @@ describe('raw block keyboard selection', () => {
     })
   })
 
-  it('does not hijack a caret that is not at a block boundary', async () => {
-    const editor = await createEditor()
-    const pos = positions(editor)
+  it('does not hijack ArrowDown from a non-last visual line', async () => {
+    const editor = await createEditor('第一行\n第二行还在段内\n\n<B id="selection" />\n\n下方段落\n')
     editor.action((ctx) => {
       const state = ctx.get(editorStateCtx)
-      const middle = pos.beforeEnd - 1
-      const next = state.apply(state.tr.setSelection(TextSelection.create(state.doc, middle)))
+      // Caret after first character of a multi-line paragraph (still on first line).
+      const next = state.apply(state.tr.setSelection(TextSelection.create(state.doc, 2)))
       expect(adjacentRawBlockSelectionPosition(next, 'down')).toBeNull()
     })
   })
@@ -181,6 +225,96 @@ describe('raw block keyboard selection', () => {
       expect(deskRawBlocks).toBe(0)
       expect(emptyParagraphs).toBeGreaterThanOrEqual(1)
       expect(view.dom.querySelector('[data-type="desk-raw-block"]')).toBeNull()
+    })
+  })
+})
+
+describe('code_block keyboard selection', () => {
+  it('ArrowDown whole-selects the code block without NodeSelection; ArrowDown again exits', async () => {
+    const editor = await createEditor('上方段落\n\n```js\nconst x = 1\n```\n\n下方段落\n')
+    const pos = codePositions(editor)
+    expect(pos.code).toBeGreaterThan(-1)
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx)
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, pos.beforeEnd)))
+      expect(adjacentRawBlockSelectionPosition(view.state, 'down')).toBe(pos.code)
+      view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      expect(view.state.selection).toBeInstanceOf(TextSelection)
+      expect(codeBlockWholeSelectPosition(view.state)).toBe(pos.code)
+      expect(view.dom.querySelector('.desk-code-block--whole-selected')).toBeTruthy()
+      view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      expect(view.state.selection).toBeInstanceOf(TextSelection)
+      expect(view.state.selection.head).toBe(pos.afterStart)
+      expect(codeBlockWholeSelectPosition(view.state)).toBeNull()
+      expect(view.state.doc.toString()).toContain('code_block')
+    })
+  })
+
+  it('ArrowDown from mid-line on the last visual line whole-selects the code block', async () => {
+    const editor = await createEditor('上方段落\n\n```js\nconst x = 1\n```\n\n下方段落\n')
+    const pos = codePositions(editor)
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx)
+      // Not at absolute end — one character before the end of the single-line paragraph.
+      const midLastLine = pos.beforeEnd - 1
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, midLastLine)))
+      expect(adjacentRawBlockSelectionPosition(view.state, 'down')).toBe(pos.code)
+      view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      expect(codeBlockWholeSelectPosition(view.state)).toBe(pos.code)
+      expect(view.state.doc.toString()).toContain('code_block')
+    })
+  })
+
+  it('whole-selected code block: Delete and Backspace both remove it', async () => {
+    const editor = await createEditor('上方段落\n\n```js\nconst x = 1\n```\n\n下方段落\n')
+    const pos = codePositions(editor)
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx)
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, pos.beforeEnd)))
+      view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      expect(codeBlockWholeSelectPosition(view.state)).toBe(pos.code)
+      view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))
+      expect(view.state.doc.toString()).not.toContain('code_block')
+    })
+
+    const editor2 = await createEditor('上方段落\n\n```js\nconst x = 1\n```\n\n下方段落\n')
+    const pos2 = codePositions(editor2)
+    editor2.action((ctx) => {
+      const view = ctx.get(editorViewCtx)
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, pos2.afterStart)))
+      view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
+      expect(codeBlockWholeSelectPosition(view.state)).toBe(pos2.code)
+      view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }))
+      expect(view.state.doc.toString()).not.toContain('code_block')
+    })
+  })
+
+  it('ArrowDown from a whole-selected code chains into the next adjacent code', async () => {
+    const editor = await createEditor(
+      '上方\n\n```js\none\n```\n\n```ts\ntwo\n```\n\n下方\n'
+    )
+    const codes: number[] = []
+    editor.action((ctx) => {
+      ctx.get(editorStateCtx).doc.descendants((node, position) => {
+        if (node.type.name === 'code_block') codes.push(position)
+      })
+    })
+    expect(codes.length).toBe(2)
+    let beforeEnd = -1
+    editor.action((ctx) => {
+      const state = ctx.get(editorStateCtx)
+      state.doc.descendants((node, position) => {
+        if (node.type.name === 'paragraph' && beforeEnd < 0) {
+          beforeEnd = position + 1 + node.content.size
+        }
+      })
+      const view = ctx.get(editorViewCtx)
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, beforeEnd)))
+      view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      expect(codeBlockWholeSelectPosition(view.state)).toBe(codes[0])
+      view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      expect(codeBlockWholeSelectPosition(view.state)).toBe(codes[1])
+      expect(view.state.doc.toString()).toContain('code_block')
     })
   })
 })

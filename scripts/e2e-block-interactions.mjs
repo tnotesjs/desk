@@ -312,27 +312,30 @@ try {
   assert.ok(savedOrder.indexOf('B') > savedOrder.indexOf('填充段落 2'))
   console.log('✓ six-dot pointer drag moves the complete raw block and clears drag state')
 
-  // 0007: mouse boundary targets, whole-node delete and undo.
+  // 0007: mouse edge hits select the whole node; Delete/Backspace remove it; Undo restores.
   await raw.locator('.desk-raw-block__boundary-hit[data-side="before"]').click()
-  const boundaryCursor = pm.locator('.desk-raw-boundary-cursor')
-  await boundaryCursor.waitFor({ state: 'attached' })
-  assert.equal(await boundaryCursor.getAttribute('data-side'), 'before')
-  await page.screenshot({ path: join(shots, '06-block-caret-before.png') })
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-type="desk-raw-block"]')
+    return el?.classList.contains('ProseMirror-selectednode') === true
+  })
+  await page.screenshot({ path: join(shots, '06-block-selected-from-before-hit.png') })
   await page.keyboard.press('Delete')
   assert.equal(await raw.count(), 0)
   await page.keyboard.press('Meta+Z')
   await raw.waitFor()
-  console.log('✓ mouse before-caret + Delete removes the whole block and Undo restores it')
+  console.log('✓ mouse before-hit + Delete removes the whole block and Undo restores it')
 
   await raw.locator('.desk-raw-block__boundary-hit[data-side="after"]').click()
-  await boundaryCursor.waitFor({ state: 'attached' })
-  assert.equal(await boundaryCursor.getAttribute('data-side'), 'after')
-  await page.screenshot({ path: join(shots, '07-block-caret-after.png') })
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-type="desk-raw-block"]')
+    return el?.classList.contains('ProseMirror-selectednode') === true
+  })
+  await page.screenshot({ path: join(shots, '07-block-selected-from-after-hit.png') })
   await page.keyboard.press('Backspace')
   assert.equal(await raw.count(), 0)
   await page.keyboard.press('Meta+Z')
   await raw.waitFor()
-  console.log('✓ mouse after-caret + Backspace removes the whole block and Undo restores it')
+  console.log('✓ mouse after-hit + Backspace removes the whole block and Undo restores it')
 
   // 0008: short-click menu, presentation action and canonical clipboard.
   await page.setViewportSize({ width: 1500, height: 800 })

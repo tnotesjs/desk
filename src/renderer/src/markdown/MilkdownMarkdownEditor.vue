@@ -1306,20 +1306,13 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--accent) 9%, var(--panel));
 }
 
-.milkdown-markdown-editor
-  :deep(.desk-raw-block.desk-raw-block--boundary-active.ProseMirror-selectednode) {
-  border-color: var(--border);
-  box-shadow: none;
-  background: var(--panel);
-}
-
 .milkdown-markdown-editor :deep(.desk-raw-block__boundary-hit) {
   position: absolute;
   right: 0;
   left: 0;
   z-index: 3;
   height: 10px;
-  cursor: text;
+  cursor: pointer;
 }
 
 .milkdown-markdown-editor :deep(.desk-raw-block__boundary-hit[data-side='before']) {
@@ -1328,37 +1321,6 @@ onBeforeUnmount(() => {
 
 .milkdown-markdown-editor :deep(.desk-raw-block__boundary-hit[data-side='after']) {
   bottom: 0;
-}
-
-.milkdown-markdown-editor :deep(.desk-raw-boundary-cursor) {
-  position: relative;
-  display: block;
-  width: 100%;
-  height: 0;
-  pointer-events: none;
-}
-
-.milkdown-markdown-editor :deep(.desk-raw-boundary-cursor::after) {
-  position: absolute;
-  left: 1px;
-  top: -11px;
-  width: 1px;
-  height: 22px;
-  border-radius: 1px;
-  background: var(--accent-strong);
-  content: '';
-  animation: desk-raw-boundary-blink 1.1s steps(1, end) infinite;
-}
-
-@keyframes desk-raw-boundary-blink {
-  0%,
-  55% {
-    opacity: 1;
-  }
-  56%,
-  100% {
-    opacity: 0;
-  }
 }
 
 .milkdown-markdown-editor :deep(.desk-raw-block--hidden) {
@@ -1372,7 +1334,6 @@ onBeforeUnmount(() => {
 
 .milkdown-markdown-editor.is-readonly :deep(.prosemirror-virtual-cursor),
 .milkdown-markdown-editor.is-readonly :deep(.ProseMirror-gapcursor),
-.milkdown-markdown-editor.is-readonly :deep(.desk-raw-boundary-cursor),
 .milkdown-markdown-editor.is-readonly :deep(.crepe-drop-cursor),
 .milkdown-markdown-editor.is-readonly :deep(.milkdown-toolbar),
 .milkdown-markdown-editor.is-readonly :deep(.milkdown-block-handle),
@@ -1385,15 +1346,6 @@ onBeforeUnmount(() => {
 .milkdown-markdown-editor.is-readonly :deep(.ProseMirror-selectednode) {
   outline: 0;
   box-shadow: none;
-}
-
-/* Desk owns the visible caret at raw-block boundaries. Hide Milkdown's
-   virtual cursor and ProseMirror's horizontal gap bar in those states. */
-.milkdown-markdown-editor
-  :deep(.ProseMirror:has(.desk-raw-boundary-cursor) .prosemirror-virtual-cursor),
-.milkdown-markdown-editor
-  :deep(.ProseMirror:has(.desk-raw-boundary-cursor) .ProseMirror-gapcursor) {
-  display: none;
 }
 
 .milkdown-markdown-editor :deep(.milkdown .crepe-drop-cursor) {
@@ -1852,6 +1804,13 @@ onBeforeUnmount(() => {
 
 .milkdown-markdown-editor :deep(.milkdown-code-block:hover) {
   border-color: var(--border);
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block.ProseMirror-selectednode),
+.milkdown-markdown-editor :deep(.milkdown-code-block.desk-code-block--whole-selected),
+.milkdown-markdown-editor :deep(.milkdown-code-block.selected) {
+  border-color: var(--accent-strong);
+  box-shadow: 0 0 0 1px var(--accent-strong);
 }
 
 .milkdown-markdown-editor :deep(.milkdown-code-block .cm-gutters) {
