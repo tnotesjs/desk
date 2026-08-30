@@ -1444,6 +1444,84 @@ onBeforeUnmount(() => {
   margin-top: 0;
 }
 
+/* VitePress .vp-doc headings + core `margin: 1rem 0` (tn:dev / published).
+   Use px so Crepe’s 15px base does not inflate em sizes. Skip VP’s leftover
+   h2 padding-top: 24px — core already tightened spacing. */
+.milkdown-markdown-editor :deep(.ProseMirror h1:not(.desk-generated-title)),
+.milkdown-markdown-editor :deep(.ProseMirror h2),
+.milkdown-markdown-editor :deep(.ProseMirror h3),
+.milkdown-markdown-editor :deep(.ProseMirror h4),
+.milkdown-markdown-editor :deep(.ProseMirror h5),
+.milkdown-markdown-editor :deep(.ProseMirror h6) {
+  margin: 16px 0;
+  padding: 0;
+  border-top: none;
+  font-weight: 600;
+  /* Reserve selection chrome: Crepe paints background on selectednode which
+     reads as a pop; keep box model identical and select via outline color only. */
+  background-color: transparent;
+  outline: 2px solid transparent;
+  outline-offset: 0;
+  scroll-margin: 0;
+}
+
+.milkdown-markdown-editor :deep(.ProseMirror h1:not(.desk-generated-title).ProseMirror-selectednode),
+.milkdown-markdown-editor :deep(.ProseMirror h2.ProseMirror-selectednode),
+.milkdown-markdown-editor :deep(.ProseMirror h3.ProseMirror-selectednode),
+.milkdown-markdown-editor :deep(.ProseMirror h4.ProseMirror-selectednode),
+.milkdown-markdown-editor :deep(.ProseMirror h5.ProseMirror-selectednode),
+.milkdown-markdown-editor :deep(.ProseMirror h6.ProseMirror-selectednode) {
+  /* Beat Crepe `.ProseMirror-selectednode { background; outline: none }`. */
+  background-color: transparent;
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 0;
+}
+
+
+.milkdown-markdown-editor :deep(.ProseMirror h1) {
+  font-size: 32px;
+  line-height: 40px;
+  letter-spacing: -0.02em;
+}
+
+.milkdown-markdown-editor :deep(.ProseMirror h2) {
+  font-size: 24px;
+  line-height: 32px;
+  letter-spacing: -0.02em;
+}
+
+.milkdown-markdown-editor :deep(.ProseMirror h3) {
+  font-size: 20px;
+  line-height: 28px;
+  letter-spacing: -0.01em;
+}
+
+.milkdown-markdown-editor :deep(.ProseMirror h4) {
+  font-size: 18px;
+  line-height: 24px;
+  letter-spacing: -0.01em;
+}
+
+.milkdown-markdown-editor :deep(.ProseMirror h5),
+.milkdown-markdown-editor :deep(.ProseMirror h6) {
+  font-size: 16px;
+  line-height: 24px;
+  letter-spacing: normal;
+}
+
+.milkdown-markdown-editor :deep(.ProseMirror > h1:first-of-type),
+.milkdown-markdown-editor :deep(.ProseMirror > h2:first-of-type),
+.milkdown-markdown-editor :deep(.ProseMirror > h3:first-of-type),
+.milkdown-markdown-editor :deep(.ProseMirror > h4:first-of-type),
+.milkdown-markdown-editor :deep(.ProseMirror > h5:first-of-type),
+.milkdown-markdown-editor :deep(.ProseMirror > h6:first-of-type),
+.milkdown-markdown-editor :deep(.milkdown .ProseMirror h1.desk-generated-title) {
+  /* Beat Crepe `.milkdown .ProseMirror h1 { margin-top: 32px }` and the
+     general Desk `h1 { margin: 16px 0 }` so lead-in top margin never flips
+     when virtual-cursor precedes the title (:first-child unstable). */
+  margin-top: 0;
+}
+
 .milkdown-markdown-editor :deep(.desk-raw-block) {
   position: relative;
   display: flex;
@@ -2064,14 +2142,23 @@ onBeforeUnmount(() => {
 }
 
 .milkdown-markdown-editor :deep(.desk-generated-title) {
-  margin: 0 0 1.25em;
+  /* Excluded from `.ProseMirror h1 { margin: 16px 0 }`; keep top stable so
+     virtual-cursor / :first-child flips cannot change lead-in spacing. */
+  margin-top: 0;
+  margin-bottom: 16px;
   padding: 0;
   border: 0;
-  font-size: 1.75em;
-  font-weight: 700;
-  line-height: 1.3;
+  font-size: 32px;
+  font-weight: 600;
+  line-height: 40px;
+  letter-spacing: -0.02em;
   color: var(--editor-text);
   cursor: default;
+  position: relative;
+  /* Always reserve outline ink so NodeSelect only changes color. */
+  outline: 2px solid transparent;
+  outline-offset: 0;
+  background-color: transparent;
 }
 
 .milkdown-markdown-editor :deep(.desk-generated-title a) {
@@ -2080,8 +2167,12 @@ onBeforeUnmount(() => {
 }
 
 .milkdown-markdown-editor :deep(.desk-generated-title.ProseMirror-selectednode) {
+  /* Full shorthand beats Crepe's `.ProseMirror-selectednode { outline: none }`.
+     Keep width/offset identical to the unselected transparent reserve.
+     No background — avoids selected/unselected paint asymmetry. */
   outline: 2px solid var(--accent-strong);
-  outline-offset: 4px;
+  outline-offset: 0;
+  background-color: transparent;
 }
 
 .milkdown-markdown-editor :deep(.desk-generated-toc) {
