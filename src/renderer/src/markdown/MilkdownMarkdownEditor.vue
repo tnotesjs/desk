@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Crepe } from '@milkdown/crepe'
-import { editorViewCtx, commandsCtx } from '@milkdown/kit/core'
+import { editorViewCtx, commandsCtx, remarkStringifyOptionsCtx } from '@milkdown/kit/core'
 import { uploadConfig } from '@milkdown/kit/plugin/upload'
 import { Plugin, TextSelection } from '@milkdown/kit/prose/state'
 import type { EditorView } from '@milkdown/kit/prose/view'
@@ -942,6 +942,12 @@ onMounted(async () => {
     )
   )
   editor.editor.config((ctx) => {
+    // Prefer GitHub / TNotes style list markers (`-`) over remark's default `*`.
+    ctx.update(remarkStringifyOptionsCtx, (current) => ({
+      ...current,
+      bullet: '-',
+      bulletOther: '*'
+    }))
     ctx.update(uploadConfig.key, (current) => ({
       ...current,
       enableHtmlFileUploader: true,

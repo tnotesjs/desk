@@ -84,6 +84,19 @@ describe('MilkdownMarkdownEditor synchronization', () => {
     wrapper.unmount()
   })
 
+  it('serializes unordered lists with hyphen bullets', async () => {
+    const wrapper = await mountEditor('* alpha\n* beta\n')
+    const editor = wrapper.vm as unknown as EditorHandle
+
+    editor.insertTextAt('x')
+    await Promise.resolve()
+
+    const latest = wrapper.emitted<string[]>('change')?.at(-1)?.[0] ?? ''
+    expect(latest).toMatch(/^- /m)
+    expect(latest).not.toMatch(/^\* /m)
+    wrapper.unmount()
+  })
+
   it('loads consecutive standalone breaks as empty paragraphs', async () => {
     const source = 'before\n\n<br />\n\n<br />\n\n<br />\n\nafter\n'
     const wrapper = await mountEditor(source)
