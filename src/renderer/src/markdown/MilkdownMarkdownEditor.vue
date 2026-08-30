@@ -52,6 +52,7 @@ import {
   createContainerSourceEditor,
   type ContainerSourceEditorHandle
 } from '../editor/markdown/containerSourceEditor'
+import { deleteDeskRawBlockAt } from '../editor/markdown/rawBlockEmpty'
 import { renderDiagram } from '../editor/markdown/diagramRenderer'
 import { reconcileMarkdownSource } from '../editor/markdown/sourcePreservation'
 import { resolveMarkdownImageUrl } from './markdownAssetUrl'
@@ -320,6 +321,22 @@ function attachRawSourceEditor(ctx: RawSourceEditorContext): () => void {
     setTimeout(closeEditing, 0)
   }
 
+  /** Empty source + Backspace at doc start → delete the atom (Crepe code-block UX). */
+  const removeBlockOnEmptyBackspace = (): boolean => {
+    if (isEffectivelyReadOnly()) return false
+    const position = ctx.getPos()
+    if (position == null) return false
+    if (syncTimer != null) {
+      clearTimeout(syncTimer)
+      syncTimer = null
+    }
+    const handle = editorHandle
+    editorHandle = null
+    editing = false
+    handle?.destroy()
+    return deleteDeskRawBlockAt(ctx.view, position)
+  }
+
   const startEditing = (): void => {
     if (editing || isEffectivelyReadOnly()) return
     editing = true
@@ -359,7 +376,8 @@ function attachRawSourceEditor(ctx: RawSourceEditorContext): () => void {
         if (syncTimer != null) clearTimeout(syncTimer)
         syncTimer = setTimeout(() => ctx.renderPreview(editorValue), 250)
       },
-      () => commit()
+      () => commit(),
+      { onEmptyBackspace: removeBlockOnEmptyBackspace }
     )
     window.setTimeout(() => editorHandle?.focus(), 0)
   }

@@ -6,6 +6,7 @@ import { editorViewCtx } from '@milkdown/kit/core'
 import { getMarkdown } from '@milkdown/kit/utils'
 
 import { projectRawBlocksForMilkdown, rawBlockProjectionPlugins } from './rawBlockProjection'
+import { deleteDeskRawBlockAt } from './rawBlockEmpty'
 import { reconcileMarkdownSource } from './sourcePreservation'
 
 function createEditor(source: string): Promise<{ root: HTMLElement; crepe: Crepe }> {
@@ -93,6 +94,35 @@ describe('container source editing', () => {
       expect(blocked).toBeUndefined() // dispatch is void; note the transaction was rejected
       const markdown = crepe.editor.action(getMarkdown())
       expect(markdown).toContain('<<< ./shared.md')
+    } finally {
+      await crepe.destroy()
+      root.remove()
+    }
+  })
+
+  it('deletes an empty tip container atom (empty-Backspace path)', async () => {
+    const source = 'before\n\n::: tip 💡 TIP\n\n\n\n:::\n\nafter\n'
+    const { root, crepe } = await createEditor(source)
+    try {
+      const pos = findRawContainerPos(crepe)
+      expect(pos).not.toBeNull()
+      const removed = crepe.editor.action((ctx) => {
+        const view = ctx.get(editorViewCtx)
+        return deleteDeskRawBlockAt(view, pos!)
+      })
+      expect(removed).toBe(true)
+      let remaining = 0
+      crepe.editor.action((ctx) => {
+        const view = ctx.get(editorViewCtx)
+        view.state.doc.descendants((node) => {
+          if (node.type.name === 'deskRawBlock') remaining += 1
+        })
+      })
+      expect(remaining).toBe(0)
+      const markdown = crepe.editor.action(getMarkdown())
+      expect(markdown).toContain('before')
+      expect(markdown).toContain('after')
+      expect(markdown).not.toContain('::: tip')
     } finally {
       await crepe.destroy()
       root.remove()

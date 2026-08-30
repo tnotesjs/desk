@@ -1,7 +1,10 @@
 // @vitest-environment happy-dom
 
-import { describe, expect, it } from 'vitest'
-import { createContainerSourceEditor } from './containerSourceEditor'
+import { describe, expect, it, vi } from 'vitest'
+import {
+  createContainerSourceEditor,
+  handleEmptyRawBlockBackspace
+} from './containerSourceEditor'
 
 describe('createContainerSourceEditor', () => {
   it('creates a CodeMirror editor and reports the initial value', () => {
@@ -35,5 +38,54 @@ describe('createContainerSourceEditor', () => {
     handle.focus()
     expect(() => handle.destroy()).not.toThrow()
     host.remove()
+  })
+})
+
+describe('handleEmptyRawBlockBackspace', () => {
+  it('invokes the callback for an empty container at doc start', () => {
+    const onEmptyBackspace = vi.fn(() => true)
+    expect(
+      handleEmptyRawBlockBackspace(
+        '::: tip 💡 TIP\n\n\n\n:::\n',
+        { empty: true, anchor: 0 },
+        1,
+        onEmptyBackspace
+      )
+    ).toBe(true)
+    expect(onEmptyBackspace).toHaveBeenCalledTimes(1)
+  })
+
+  it('does nothing when the body still has content', () => {
+    const onEmptyBackspace = vi.fn(() => true)
+    expect(
+      handleEmptyRawBlockBackspace(
+        '::: tip\n\nkeep me\n\n:::\n',
+        { empty: true, anchor: 0 },
+        1,
+        onEmptyBackspace
+      )
+    ).toBe(false)
+    expect(onEmptyBackspace).not.toHaveBeenCalled()
+  })
+
+  it('does nothing when the caret is not at doc start', () => {
+    const onEmptyBackspace = vi.fn(() => true)
+    expect(
+      handleEmptyRawBlockBackspace(
+        '::: tip\n\n:::\n',
+        { empty: true, anchor: 4 },
+        1,
+        onEmptyBackspace
+      )
+    ).toBe(false)
+    expect(onEmptyBackspace).not.toHaveBeenCalled()
+  })
+
+  it('removes fully-cleared non-container sources', () => {
+    const onEmptyBackspace = vi.fn(() => true)
+    expect(
+      handleEmptyRawBlockBackspace('', { empty: true, anchor: 0 }, 1, onEmptyBackspace)
+    ).toBe(true)
+    expect(onEmptyBackspace).toHaveBeenCalledTimes(1)
   })
 })

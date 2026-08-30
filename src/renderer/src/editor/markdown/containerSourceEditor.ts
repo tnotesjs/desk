@@ -24,10 +24,37 @@ import {
 } from '@codemirror/view'
 import { githubDark, githubLight } from '@uiw/codemirror-theme-github'
 
+import { isEmptyRawBlockSource } from './rawBlockEmpty'
+
 export interface ContainerSourceEditorHandle {
   getValue(): string
   focus(): void
   destroy(): void
+}
+
+export interface ContainerSourceEditorOptions {
+  /**
+   * When the source is empty (see `isEmptyRawBlockSource`) and Backspace is
+   * pressed at the document start, remove the surrounding deskRawBlock.
+   * Return true if the key was handled.
+   */
+  onEmptyBackspace?: () => boolean
+}
+
+/**
+ * Shared predicate + callback for the empty-Backspace gesture. Exported for
+ * unit tests; the CodeMirror keymap delegates here.
+ */
+export function handleEmptyRawBlockBackspace(
+  docText: string,
+  selection: { empty: boolean; anchor: number },
+  rangeCount: number,
+  onEmptyBackspace: () => boolean
+): boolean {
+  if (rangeCount > 1) return false
+  if (!selection.empty || selection.anchor > 0) return false
+  if (!isEmptyRawBlockSource(docText)) return false
+  return onEmptyBackspace()
 }
 
 function themeExtension(): Extension {
@@ -43,7 +70,8 @@ export function createContainerSourceEditor(
   host: HTMLElement,
   initialValue: string,
   onChange: (value: string) => void,
-  onCommit: () => void
+  onCommit: () => void,
+  options: ContainerSourceEditorOptions = {}
 ): ContainerSourceEditorHandle {
   const themeCompartment = new Compartment()
   const view = new EditorView({
@@ -69,6 +97,22 @@ export function createContainerSourceEditor(
             run: () => {
               setTimeout(onCommit, 0)
               return true
+            }
+          },
+          {
+            key: 'Backspace',
+            run: () => {
+              const { onEmptyBackspace } = options
+              if (!onEmptyBackspace) return false
+              const ranges = view.state.selection.ranges
+              const selection = ranges[0]
+              if (!selection) return false
+              return handleEmptyRawBlockBackspace(
+                view.state.doc.toString(),
+                { empty: selection.empty, anchor: selection.anchor },
+                ranges.length,
+                onEmptyBackspace
+              )
             }
           },
           indentWithTab,
