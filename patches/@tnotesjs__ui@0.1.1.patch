@@ -1,0 +1,265 @@
+diff --git a/src/components/Mermaid/Mermaid.vue b/src/components/Mermaid/Mermaid.vue
+index e075d2fa76cae9161dd596664235ff303c91f2ce..24eaa390529878cabcfc8eb826d8316f7a1dc713 100644
+--- a/src/components/Mermaid/Mermaid.vue
++++ b/src/components/Mermaid/Mermaid.vue
+@@ -1,5 +1,9 @@
+ <template>
+-  <div ref="rootRef" class="tn-mermaid" :class="{ 'is-centered': centered }">
++  <div
++    ref="rootRef"
++    class="tn-mermaid"
++    :class="{ 'is-centered': centered, 'is-fullscreen': isFullscreen }"
++  >
+     <div
+       v-if="showActions"
+       class="tn-mermaid__actions"
+@@ -51,7 +55,6 @@
+ 
+     <div
+       class="tn-mermaid__stage"
+-      :class="{ 'is-fullscreen': isFullscreen }"
+       @mousedown="startDrag"
+       @mousemove="onDrag"
+       @mouseup="endDrag"
+@@ -194,23 +197,47 @@ const copyTitle = computed(() => {
+   return '复制源码'
+ })
+ let copyResetTimer = null
++/** How fullscreen was entered — Electron usually needs the CSS overlay path. */
++let fullscreenMode = null
++
++/** Sync write that survives Electron's missing clipboard permission. */
++function writeTextFallback(text) {
++  const textarea = document.createElement('textarea')
++  textarea.value = text
++  textarea.setAttribute('readonly', '')
++  textarea.style.position = 'fixed'
++  textarea.style.left = '-9999px'
++  textarea.style.opacity = '0'
++  document.body.append(textarea)
++  textarea.select()
++  let ok = false
++  try {
++    ok = document.execCommand('copy')
++  } catch {
++    ok = false
++  }
++  textarea.remove()
++  return ok
++}
+ 
+-function copySource() {
++async function copySource() {
+   const text = decodedSource.value
+-  navigator.clipboard
+-    .writeText(text)
+-    .then(() => {
+-      copyState.value = 'copied'
+-    })
+-    .catch(() => {
+-      copyState.value = 'failed'
+-    })
+-    .finally(() => {
+-      if (copyResetTimer) clearTimeout(copyResetTimer)
+-      copyResetTimer = setTimeout(() => {
+-        copyState.value = 'idle'
+-      }, COPY_RESET_DELAY)
+-    })
++  let ok = false
++  if (navigator.clipboard?.writeText) {
++    try {
++      await navigator.clipboard.writeText(text)
++      ok = true
++    } catch {
++      // Electron can expose Clipboard without granting the renderer's async
++      // Clipboard permission. Fall through to the synchronous user-gesture path.
++    }
++  }
++  if (!ok) ok = writeTextFallback(text)
++  copyState.value = ok ? 'copied' : 'failed'
++  if (copyResetTimer) clearTimeout(copyResetTimer)
++  copyResetTimer = setTimeout(() => {
++    copyState.value = 'idle'
++  }, COPY_RESET_DELAY)
+ }
+ 
+ const scale = ref(1)
+@@ -257,21 +284,70 @@ function handleWheel(e) {
+   scale.value = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale.value + delta))
+ }
+ 
+-function toggleFullscreen() {
+-  if (!rootRef.value) return
+-  if (!isFullscreen.value) {
+-    rootRef.value.requestFullscreen?.()
+-  } else {
+-    document.exitFullscreen?.()
++function resetPanZoom() {
++  scale.value = 1
++  panX.value = 0
++  panY.value = 0
++}
++
++function exitFullscreenOverlay() {
++  if (!isFullscreen.value && fullscreenMode == null) return
++  const root = rootRef.value
++  if (fullscreenMode === 'native' && root && document.fullscreenElement === root) {
++    void document.exitFullscreen().catch(() => {
++      /* ignore */
++    })
++  }
++  fullscreenMode = null
++  isFullscreen.value = false
++  resetPanZoom()
++}
++
++async function toggleFullscreen() {
++  const root = rootRef.value
++  if (!root) return
++
++  if (isFullscreen.value) {
++    exitFullscreenOverlay()
++    return
++  }
++
++  // CSS overlay first — Electron often rejects/hangs on requestFullscreen.
++  fullscreenMode = 'css'
++  isFullscreen.value = true
++
++  // Best-effort native fullscreen for browser / VitePress (non-blocking).
++  if (!document.fullscreenEnabled || typeof root.requestFullscreen !== 'function') return
++  if (/Electron/i.test(navigator.userAgent)) return
++  try {
++    await Promise.race([
++      root.requestFullscreen(),
++      new Promise((_, reject) => {
++        window.setTimeout(() => reject(new Error('fullscreen-timeout')), 500)
++      })
++    ])
++    if (document.fullscreenElement === root) fullscreenMode = 'native'
++  } catch {
++    /* keep CSS overlay */
+   }
+ }
+ 
+ function handleFullscreenChange() {
+-  isFullscreen.value = !!document.fullscreenElement
+-  if (!isFullscreen.value) {
+-    scale.value = 1
+-    panX.value = 0
+-    panY.value = 0
++  const root = rootRef.value
++  if (root && document.fullscreenElement === root) {
++    fullscreenMode = 'native'
++    isFullscreen.value = true
++  } else if (fullscreenMode === 'native') {
++    fullscreenMode = null
++    isFullscreen.value = false
++    resetPanZoom()
++  }
++}
++
++function handleDocumentKeydown(event) {
++  if (event.key === 'Escape' && isFullscreen.value && fullscreenMode === 'css') {
++    event.preventDefault()
++    exitFullscreenOverlay()
+   }
+ }
+ 
+@@ -335,12 +411,15 @@ onMounted(() => {
+   void renderDiagram()
+   themeObserver = observeTheme()
+   document.addEventListener('fullscreenchange', handleFullscreenChange)
++  document.addEventListener('keydown', handleDocumentKeydown, true)
+ })
+ 
+ onBeforeUnmount(() => {
+   themeObserver?.disconnect()
+   document.removeEventListener('fullscreenchange', handleFullscreenChange)
++  document.removeEventListener('keydown', handleDocumentKeydown, true)
+   if (copyResetTimer) clearTimeout(copyResetTimer)
++  if (isFullscreen.value) exitFullscreenOverlay()
+ })
+ 
+ watch(
+@@ -362,13 +441,23 @@ watch(
+   overflow: hidden;
+   color: var(--tn-c-text);
+   transition: border-color 0.2s ease;
++
++  &.is-fullscreen {
++    position: fixed;
++    inset: 0;
++    z-index: 9999;
++    margin: 0;
++    border-radius: 0;
++    border-color: var(--tn-c-divider);
++  }
+ }
+ 
+ .tn-mermaid:hover,
+ .tn-mermaid:has(.tn-mermaid__actions:hover),
+ .tn-mermaid:has(.tn-mermaid__actions:focus-within),
+ .tn-mermaid:has(.tn-mermaid__actions[data-copy-state='copied']),
+-.tn-mermaid:has(.tn-mermaid__actions[data-copy-state='failed']) {
++.tn-mermaid:has(.tn-mermaid__actions[data-copy-state='failed']),
++.tn-mermaid.is-fullscreen {
+   border-color: var(--tn-c-divider);
+ }
+ 
+@@ -392,7 +481,8 @@ watch(
+ .tn-mermaid__actions:hover,
+ .tn-mermaid__actions:focus-within,
+ .tn-mermaid__actions[data-copy-state='copied'],
+-.tn-mermaid__actions[data-copy-state='failed'] {
++.tn-mermaid__actions[data-copy-state='failed'],
++.tn-mermaid.is-fullscreen .tn-mermaid__actions {
+   opacity: 1;
+ }
+ 
+@@ -473,22 +563,34 @@ watch(
+   min-height: 160px;
+   padding: 20px;
+   background: transparent;
++}
+ 
+-  &.is-fullscreen {
+-    position: fixed;
+-    inset: 0;
+-    z-index: 9999;
+-    padding: 40px;
+-    overflow: hidden;
+-    cursor: grab;
+-    background: var(--tn-c-bg);
++.tn-mermaid.is-fullscreen .tn-mermaid__stage {
++  min-height: 100%;
++  height: 100%;
++  padding: 40px;
++  overflow: hidden;
++  cursor: grab;
++  background: var(--tn-c-bg);
+ 
+-    &:active {
+-      cursor: grabbing;
+-    }
++  &:active {
++    cursor: grabbing;
+   }
+ }
+ 
++.tn-mermaid.is-fullscreen.is-centered .tn-mermaid__stage {
++  display: flex;
++  align-items: center;
++  justify-content: center;
++}
++
++.tn-mermaid.is-fullscreen.is-centered .tn-mermaid__diagram {
++  width: 100%;
++  height: 100%;
++  align-items: center;
++  justify-content: center;
++}
++
+ .tn-mermaid__status {
+   position: absolute;
+   inset: 0;

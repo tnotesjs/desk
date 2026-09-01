@@ -7,9 +7,11 @@ allowBuilds:
 minimumReleaseAgeExclude:
   - '@tnotesjs/core@0.6.0 || 0.6.1 || 0.7.0 || 0.8.0'
   - '@tnotesjs/mindmap-core@0.2.1 || 0.2.2'
-  - '@tnotesjs/ui@0.1.0 || 0.1.1'
+  - '@tnotesjs/ui@0.1.0 || 0.1.1 || 0.1.2'
 onlyBuiltDependencies:
   - electron
   - esbuild
   - electron-winstaller
   - vue-demi
+patchedDependencies:
+  '@tnotesjs/ui@0.1.1': patches/@tnotesjs__ui@0.1.1.patch

@@ -71,6 +71,7 @@ export function createDeskRawBlockView(deps: DeskRawBlockViewDeps) {
                 __mindmapWriteback?: { acceptWriteback: (source: string) => boolean }
                 __codeGroupWriteback?: { acceptWriteback: (source: string) => boolean }
                 __swiperWriteback?: { acceptWriteback: (source: string) => boolean }
+                __mermaidWriteback?: { acceptWriteback: (source: string) => boolean }
               }
             ).__mindmapWriteback
             if (helper?.acceptWriteback(String(nextNode.attrs.source))) {
@@ -92,6 +93,15 @@ export function createDeskRawBlockView(deps: DeskRawBlockViewDeps) {
               }
             ).__swiperWriteback
             if (swiperHelper?.acceptWriteback(String(nextNode.attrs.source))) {
+              currentRawNode = nextNode
+              return true
+            }
+            const mermaidHelper = (
+              dom as HTMLElement & {
+                __mermaidWriteback?: { acceptWriteback: (source: string) => boolean }
+              }
+            ).__mermaidWriteback
+            if (mermaidHelper?.acceptWriteback(String(nextNode.attrs.source))) {
               currentRawNode = nextNode
               return true
             }

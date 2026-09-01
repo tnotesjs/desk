@@ -25,6 +25,7 @@ export function mountRawDiagram(ctx: DeskRawBlockMountContext): void {
     dom.append(previewHost)
 
     let currentSource = block.source
+    let writingBack = false
     const applyCenterChange = (center: boolean): void => {
       // Readonly / view mode: Mermaid keeps session-local state; skip write-back.
       if (deps.isEffectivelyReadOnly()) return
@@ -34,6 +35,7 @@ export function mountRawDiagram(ctx: DeskRawBlockMountContext): void {
       if (position == null) return
       const currentNode = view.state.doc.nodeAt(position)
       if (currentNode?.type.name !== 'deskRawBlock') return
+      writingBack = true
       currentSource = nextSource
       view.dispatch(
         view.state.tr.setNodeMarkup(position, undefined, {
@@ -41,6 +43,7 @@ export function mountRawDiagram(ctx: DeskRawBlockMountContext): void {
           source: nextSource
         })
       )
+      writingBack = false
     }
 
     const mounted = mountMermaidPreview(previewHost, {
@@ -49,6 +52,28 @@ export function mountRawDiagram(ctx: DeskRawBlockMountContext): void {
       onCenterChange: applyCenterChange
     })
     cleanupTasks.push(() => mounted.unmount())
+
+    // Keep nodeView alive across center writebacks so CSS fullscreen survives.
+    const mermaidWriteback = {
+      acceptWriteback: (nextSource: string): boolean => {
+        if (!writingBack && nextSource !== currentSource) return false
+        currentSource = nextSource
+        const next = parseFencedCode(nextSource)
+        mounted.update({
+          source: next.code,
+          center: next.center,
+          onCenterChange: applyCenterChange
+        })
+        return true
+      }
+    }
+    ;(dom as HTMLElement & { __mermaidWriteback?: typeof mermaidWriteback }).__mermaidWriteback =
+      mermaidWriteback
+    cleanupTasks.push(() => {
+      delete (dom as HTMLElement & { __mermaidWriteback?: typeof mermaidWriteback })
+        .__mermaidWriteback
+    })
+
     cleanupTasks.push(
       attachRawSourceEditor(
         {
