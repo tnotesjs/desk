@@ -1,35 +1,38 @@
 import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { watch, type FSWatcher } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { createWorkspace } from '@tnotesjs/core/workspace'
 
 import { deskLog } from './log'
-import { resolvePathInsideDirectory } from './noteAssetPath'
 import { loadSettings, settingsForKnowledgeBase } from './settings'
 import { loadWorkspace, saveWorkspace } from './workspace'
+import { descriptor, toDetail } from './workspace/dto'
+import * as noteIo from './workspace/noteIo'
+import {
+  disposeHandles,
+  enqueueScan,
+  markInternalWrites,
+  scan,
+  startWatchers,
+  stopWatcher,
+  type WorkspaceScanState
+} from './workspace/scan'
+import * as toc from './workspace/toc'
+import type {
+  GitRepositoryDescriptor,
+  KnowledgeBaseHandle,
+  WorkspaceManagerEvents
+} from './workspace/types'
 
 import type { SearchIndexDocument } from './searchModel'
-
-import type {
-  ChangedFile,
-  KnowledgeBaseSnapshot,
-  MutationResult,
-  NoteDocument,
-  NotePlacement,
-  TNotesWorkspace,
-  TocEntryRef
-} from '@tnotesjs/core/workspace'
+import type { ChangedFile } from '@tnotesjs/core/workspace'
 import type {
   DeletePreviewDto,
   AttachmentWriteLocalRequest,
   AttachmentWriteLocalResult,
   AttachmentReadTextRequest,
   AttachmentWriteTextRequest,
-  DeskTocNode,
   ExternalNoteChangeEvent,
-  KnowledgeBaseDescriptor,
   KnowledgeBaseDetail,
   NoteCreateRequest,
   NoteDocumentDto,
@@ -45,152 +48,34 @@ import type {
   WorkspaceOverview
 } from '../shared/contracts'
 
-const KNOWLEDGE_BASE_NAME = /^TNotes\./
-
-interface CoreTocNode {
-  kind: 'folder' | 'note'
-  title?: string
-  noteIndex?: string
-  tocLineIndex: number
-  children: CoreTocNode[]
-}
-
-interface KnowledgeBaseHandle {
-  id: string
-  name: string
-  rootPath: string
-  workspace: TNotesWorkspace
-  snapshot: KnowledgeBaseSnapshot
-}
-
-interface WorkspaceManagerEvents {
-  changed: [WorkspaceOverview]
-  noteExternalChanged: [ExternalNoteChangeEvent]
-}
-
-export interface GitRepositoryDescriptor {
-  knowledgeBaseId: string
-  knowledgeBaseName: string
-  configId: string
-  rootPath: string
-  notes: Array<{
-    uuid: string
-    index: string
-    title: string
-    dirName: string
-    directoryPath: string
-  }>
-}
-
-function stablePathSuffix(rootPath: string): string {
-  return createHash('sha256').update(rootPath).digest('hex').slice(0, 10)
-}
-
-function iconFromSnapshot(snapshot: KnowledgeBaseSnapshot): KnowledgeBaseDescriptor['icon'] {
-  const rootItem = snapshot.config?.root_item
-  const icon = rootItem?.icon
-  if (!icon || typeof icon !== 'object') return null
-  return {
-    src: typeof icon.src === 'string' ? icon.src : undefined,
-    svg: typeof icon.svg === 'string' ? icon.svg : undefined
-  }
-}
-
-function descriptor(handle: KnowledgeBaseHandle): KnowledgeBaseDescriptor {
-  const snapshot = handle.snapshot
-  return {
-    id: handle.id,
-    configId: snapshot.id,
-    name: handle.name,
-    rootPath: handle.rootPath,
-    displayName: snapshot.config?.root_item?.title || handle.name.replace(/^TNotes\./, ''),
-    icon: iconFromSnapshot(snapshot),
-    health: snapshot.health.status,
-    diagnostics: snapshot.health.diagnostics,
-    noteCount: snapshot.notes.length,
-    snapshotRevision: snapshot.revision
-  }
-}
-
-function mapToc(
-  nodes: CoreTocNode[],
-  snapshot: KnowledgeBaseSnapshot,
-  folderPath: string[] = []
-): DeskTocNode[] {
-  const noteByIndex = new Map(snapshot.notes.map((note) => [note.index, note]))
-  return nodes.flatMap((node): DeskTocNode[] => {
-    if (node.kind === 'folder') {
-      const title = node.title ?? '未命名分组'
-      const currentPath = [...folderPath, title]
-      return [
-        {
-          type: 'group',
-          title,
-          tocLineIndex: node.tocLineIndex,
-          nodeId: `folder:${node.tocLineIndex}:${currentPath.join('/')}`,
-          folderPath: currentPath,
-          children: mapToc(node.children, snapshot, currentPath)
-        }
-      ]
-    }
-    if (!node.noteIndex) return []
-    const note = noteByIndex.get(node.noteIndex)
-    if (!note) return []
-    return [
-      {
-        type: 'note',
-        uuid: note.uuid,
-        title: note.title,
-        dirName: note.dirName,
-        noteIndex: note.index,
-        tocLineIndex: node.tocLineIndex,
-        nodeId: `note:${note.uuid}`,
-        completed: Boolean(note.config.done),
-        children: mapToc(node.children, snapshot, folderPath)
-      }
-    ]
-  })
-}
-
-function toDetail(handle: KnowledgeBaseHandle): KnowledgeBaseDetail {
-  return {
-    ...descriptor(handle),
-    toc: mapToc(handle.snapshot.toc as CoreTocNode[], handle.snapshot)
-  }
-}
-
-function toNoteDocument(handle: KnowledgeBaseHandle, document: NoteDocument): NoteDocumentDto {
-  return {
-    knowledgeBaseId: handle.id,
-    uuid: document.uuid,
-    index: document.index,
-    title: document.title,
-    dirName: document.dirName,
-    directoryPath: document.directoryPath,
-    readmePath: document.readmePath,
-    configPath: document.configPath,
-    content: document.content,
-    revision: document.revision,
-    config: document.config,
-    readOnly: handle.snapshot.health.status !== 'ready'
-  }
-}
-
-function coreEntryRef(entry: TocEntryRefDto): TocEntryRef {
-  return entry
-}
+export type { GitRepositoryDescriptor } from './workspace/types'
 
 export class WorkspaceManager {
   private readonly events = new EventEmitter<WorkspaceManagerEvents>()
-  private handles = new Map<string, KnowledgeBaseHandle>()
-  private workspacePath: string | null = null
-  private watchers = new Map<string, FSWatcher>()
-  private refreshTimer: NodeJS.Timeout | null = null
-  private scanTail: Promise<void> = Promise.resolve()
-  private internalWriteUntil = new Map<string, number>()
-  private lastWatcherError = ''
-  private lastWatcherErrorAt = 0
   private disposed = false
+  private readonly scanState: WorkspaceScanState = {
+    handles: new Map(),
+    workspacePath: null,
+    watchers: new Map(),
+    refreshTimer: null,
+    scanTail: Promise.resolve(),
+    internalWriteUntil: new Map(),
+    lastWatcherError: '',
+    lastWatcherErrorAt: 0,
+    events: this.events,
+    emitChanged: () => this.emitChanged()
+  }
+
+  private mutationEffects(): {
+    markInternalWrites: (changedFiles: ChangedFile[]) => void
+    emitChanged: () => void
+  } {
+    return {
+      markInternalWrites: (changedFiles: ChangedFile[]) =>
+        markInternalWrites(this.scanState, changedFiles),
+      emitChanged: () => this.emitChanged()
+    }
+  }
 
   onChanged(listener: (overview: WorkspaceOverview) => void): () => void {
     this.events.on('changed', listener)
@@ -214,13 +99,13 @@ export class WorkspaceManager {
       if (!stat?.isDirectory()) throw new Error(`工作区目录不存在：${normalized}`)
     }
 
-    await this.stopWatcher()
-    await this.disposeHandles()
-    this.workspacePath = normalized
+    await stopWatcher(this.scanState)
+    await disposeHandles(this.scanState)
+    this.scanState.workspacePath = normalized
     if (persist) saveWorkspace(normalized)
     if (normalized) {
-      await this.scan()
-      this.startWatchers(normalized)
+      await scan(this.scanState)
+      startWatchers(this.scanState, normalized)
     }
     const overview = this.getOverview()
     this.events.emit('changed', overview)
@@ -228,12 +113,12 @@ export class WorkspaceManager {
   }
 
   async refresh(): Promise<WorkspaceOverview> {
-    await this.enqueueScan()
+    await enqueueScan(this.scanState)
     return this.getOverview()
   }
 
   getOverview(): WorkspaceOverview {
-    const allKnowledgeBases = [...this.handles.values()]
+    const allKnowledgeBases = [...this.scanState.handles.values()]
       .map(descriptor)
       .sort((left, right) => left.name.localeCompare(right.name))
     const settings = loadSettings()
@@ -242,7 +127,7 @@ export class WorkspaceManager {
       const override = settingsForKnowledgeBase(settings, item.configId)
       return !override.hidden && !hidden.has(item.configId) && !hidden.has(item.name)
     })
-    return { path: this.workspacePath, knowledgeBases, allKnowledgeBases }
+    return { path: this.scanState.workspacePath, knowledgeBases, allKnowledgeBases }
   }
 
   getDetail(knowledgeBaseId: string): KnowledgeBaseDetail {
@@ -262,7 +147,7 @@ export class WorkspaceManager {
   }
 
   getGitRepositories(): GitRepositoryDescriptor[] {
-    return [...this.handles.values()].map((handle) => ({
+    return [...this.scanState.handles.values()].map((handle) => ({
       knowledgeBaseId: handle.id,
       knowledgeBaseName: handle.name,
       configId: handle.snapshot.id,
@@ -278,7 +163,7 @@ export class WorkspaceManager {
   }
 
   async getSearchDocuments(): Promise<SearchIndexDocument[]> {
-    const pending = [...this.handles.values()].flatMap((handle) =>
+    const pending = [...this.scanState.handles.values()].flatMap((handle) =>
       handle.snapshot.notes.map((note) => ({ handle, note }))
     )
     const documents: SearchIndexDocument[] = []
@@ -312,8 +197,7 @@ export class WorkspaceManager {
   }
 
   async readNote(knowledgeBaseId: string, noteUuid: string): Promise<NoteDocumentDto> {
-    const handle = this.getHandle(knowledgeBaseId)
-    return toNoteDocument(handle, await handle.workspace.notes.read(noteUuid))
+    return noteIo.readNote(this.getHandle(knowledgeBaseId), noteUuid)
   }
 
   /**
@@ -332,91 +216,45 @@ export class WorkspaceManager {
     }>
     missingIds: string[]
   } {
-    const handle = this.getHandle(knowledgeBaseId)
-    const byIndex = new Map(handle.snapshot.notes.map((note) => [note.index, note]))
-    const missingIds: string[] = []
-    const notes: Array<{
-      id: string
-      title: string
-      description: string
-      noteUuid: string | null
-    }> = []
-
-    for (const id of ids) {
-      const note = byIndex.get(id)
-      if (!note) {
-        missingIds.push(id)
-        continue
-      }
-      const description =
-        typeof note.config.description === 'string' ? note.config.description : ''
-      notes.push({
-        id,
-        title: note.title,
-        description,
-        noteUuid: note.uuid
-      })
-    }
-
-    return { notes, missingIds }
+    return noteIo.resolveNotesTable(this.getHandle(knowledgeBaseId), ids)
   }
 
   async saveNote(request: NoteSaveRequest): Promise<NoteMutationDto> {
-    const handle = this.getHandle(request.knowledgeBaseId)
-    const settings = loadSettings()
-    const override = settingsForKnowledgeBase(settings, handle.snapshot.id)
-    const result = await handle.workspace.notes.save({
-      noteUuid: request.noteUuid,
-      content: request.content,
-      expectedRevision: request.expectedRevision,
-      prettier: request.prettier ?? override.prettier ?? settings.prettier
-    })
-    return this.noteMutation(handle, result)
+    return noteIo.saveNote(this.getHandle(request.knowledgeBaseId), request, this.mutationEffects())
   }
 
   async createNote(request: NoteCreateRequest): Promise<NoteMutationDto> {
-    const handle = this.getHandle(request.knowledgeBaseId)
-    const result = await handle.workspace.notes.create({
-      title: request.title,
-      placement: request.placement as NotePlacement | undefined,
-      expectedSnapshotRevision: request.expectedSnapshotRevision
-    })
-    return this.noteMutation(handle, result)
+    return noteIo.createNote(
+      this.getHandle(request.knowledgeBaseId),
+      request,
+      this.mutationEffects()
+    )
   }
 
   async renameNote(request: NoteRenameRequest): Promise<NoteMutationDto> {
-    const handle = this.getHandle(request.knowledgeBaseId)
-    const result = await handle.workspace.notes.rename({
-      noteUuid: request.noteUuid,
-      title: request.title,
-      expectedRevision: request.expectedRevision
-    })
-    return this.noteMutation(handle, result)
+    return noteIo.renameNote(
+      this.getHandle(request.knowledgeBaseId),
+      request,
+      this.mutationEffects()
+    )
   }
 
   async updateNoteConfig(request: NoteUpdateConfigRequest): Promise<NoteMutationDto> {
-    const handle = this.getHandle(request.knowledgeBaseId)
-    const result = await handle.workspace.notes.updateConfig({
-      noteUuid: request.noteUuid,
-      updates: request.updates,
-      expectedRevision: request.expectedRevision
-    })
-    return this.noteMutation(handle, result)
+    return noteIo.updateNoteConfig(
+      this.getHandle(request.knowledgeBaseId),
+      request,
+      this.mutationEffects()
+    )
   }
 
   async writeLocalAttachment(
     request: AttachmentWriteLocalRequest
   ): Promise<AttachmentWriteLocalResult> {
-    const handle = this.getHandle(request.knowledgeBaseId)
-    const result = await handle.workspace.attachments.writeLocal({
-      noteUuid: request.noteUuid,
-      fileName: request.fileName,
-      data: request.data
-    })
-    this.markInternalWrites(result.changedFiles)
-    handle.snapshot = await handle.workspace.refresh()
-    this.emitChanged()
-    return result.value
+    return noteIo.writeLocalAttachment(
+      this.getHandle(request.knowledgeBaseId),
+      request,
+      this.mutationEffects()
+    )
   }
 
   async resolveNoteAsset(
@@ -424,107 +262,55 @@ export class WorkspaceManager {
     noteUuid: string,
     requestedPath: string
   ): Promise<string> {
-    const absolutePath = await this.resolvePathInsideNote(knowledgeBaseId, noteUuid, requestedPath)
-    const extension = path.extname(absolutePath).toLocaleLowerCase()
-    const supported = new Set([
-      '.avif',
-      '.bmp',
-      '.gif',
-      '.ico',
-      '.jpeg',
-      '.jpg',
-      '.png',
-      '.svg',
-      '.webp'
-    ])
-    if (!supported.has(extension)) throw new Error('不支持的图片类型')
-    const stat = await fs.stat(absolutePath)
-    if (!stat.isFile()) throw new Error('图片不存在')
-    return absolutePath
+    return noteIo.resolveNoteAsset(this.getHandle(knowledgeBaseId), noteUuid, requestedPath)
   }
 
   async readNoteTextAsset(request: AttachmentReadTextRequest): Promise<string> {
-    const absolutePath = await this.resolvePathInsideNote(
-      request.knowledgeBaseId,
-      request.noteUuid,
-      request.path
-    )
-    const stat = await fs.stat(absolutePath)
-    if (!stat.isFile()) throw new Error('引用文件不存在')
-    if (stat.size > 2 * 1024 * 1024) throw new Error('引用文件不能超过 2 MB')
-    const content = await fs.readFile(absolutePath, 'utf8')
-    if (content.includes('\0')) throw new Error('引用文件不是文本文件')
-    return content
+    return noteIo.readNoteTextAsset(this.getHandle(request.knowledgeBaseId), request)
   }
 
   async writeNoteTextAsset(request: AttachmentWriteTextRequest): Promise<void> {
-    if (Buffer.byteLength(request.content, 'utf8') > 2 * 1024 * 1024) {
-      throw new Error('引用文件不能超过 2 MB')
-    }
-    if (request.content.includes('\0')) throw new Error('引用文件不是文本文件')
-    const absolutePath = await this.resolvePathInsideNote(
-      request.knowledgeBaseId,
-      request.noteUuid,
-      request.path
+    return noteIo.writeNoteTextAsset(
+      this.getHandle(request.knowledgeBaseId),
+      request,
+      (changedFiles) => markInternalWrites(this.scanState, changedFiles)
     )
-    const stat = await fs.stat(absolutePath)
-    if (!stat.isFile()) throw new Error('引用文件不存在')
-    this.markInternalWrites([{ path: absolutePath, kind: 'updated' }])
-    await fs.writeFile(absolutePath, request.content, 'utf8')
   }
 
   async moveToc(request: TocMoveRequest): Promise<KnowledgeBaseDetail> {
-    const handle = this.getHandle(request.knowledgeBaseId)
-    const result = await handle.workspace.toc.move({
-      source: coreEntryRef(request.source),
-      target: coreEntryRef(request.target),
-      placement: request.placement,
-      expectedSnapshotRevision: request.expectedSnapshotRevision
-    })
-    return this.snapshotMutation(handle, result)
+    return toc.moveToc(this.getHandle(request.knowledgeBaseId), request, this.mutationEffects())
   }
 
   async createTocGroup(request: TocCreateGroupRequest): Promise<KnowledgeBaseDetail> {
-    const handle = this.getHandle(request.knowledgeBaseId)
-    const result = await handle.workspace.toc.createGroup({
-      title: request.title,
-      placement: request.placement as NotePlacement | undefined,
-      expectedSnapshotRevision: request.expectedSnapshotRevision
-    })
-    return this.snapshotMutation(handle, result)
+    return toc.createTocGroup(
+      this.getHandle(request.knowledgeBaseId),
+      request,
+      this.mutationEffects()
+    )
   }
 
   async renameTocGroup(request: TocRenameGroupRequest): Promise<KnowledgeBaseDetail> {
-    const handle = this.getHandle(request.knowledgeBaseId)
-    const result = await handle.workspace.toc.renameGroup({
-      folderPath: request.folderPath,
-      title: request.title,
-      expectedSnapshotRevision: request.expectedSnapshotRevision
-    })
-    return this.snapshotMutation(handle, result)
+    return toc.renameTocGroup(
+      this.getHandle(request.knowledgeBaseId),
+      request,
+      this.mutationEffects()
+    )
   }
 
   async previewDelete(knowledgeBaseId: string, entry: TocEntryRefDto): Promise<DeletePreviewDto> {
-    const handle = this.getHandle(knowledgeBaseId)
-    const preview = await handle.workspace.toc.previewDelete(coreEntryRef(entry))
-    return { knowledgeBaseId, ...preview, entry, untrackedFilePaths: [] }
+    return toc.previewDelete(this.getHandle(knowledgeBaseId), knowledgeBaseId, entry)
   }
 
   async deleteToc(request: TocDeleteRequest): Promise<KnowledgeBaseDetail> {
-    const handle = this.getHandle(request.knowledgeBaseId)
-    const result = await handle.workspace.toc.deleteEntry({
-      entry: coreEntryRef(request.entry),
-      expectedSnapshotRevision: request.expectedSnapshotRevision
-    })
-    return this.snapshotMutation(handle, result)
+    return toc.deleteToc(this.getHandle(request.knowledgeBaseId), request, this.mutationEffects())
   }
 
   async dispose(): Promise<void> {
     if (this.disposed) return
     this.disposed = true
-    if (this.refreshTimer) clearTimeout(this.refreshTimer)
-    await this.stopWatcher()
-    await this.disposeHandles()
+    if (this.scanState.refreshTimer) clearTimeout(this.scanState.refreshTimer)
+    await stopWatcher(this.scanState)
+    await disposeHandles(this.scanState)
     this.events.removeAllListeners()
   }
 
@@ -533,237 +319,13 @@ export class WorkspaceManager {
   }
 
   private getHandle(knowledgeBaseId: string): KnowledgeBaseHandle {
-    const handle = this.handles.get(knowledgeBaseId)
+    const handle = this.scanState.handles.get(knowledgeBaseId)
     if (!handle) throw new Error(`知识库不存在：${knowledgeBaseId}`)
     return handle
   }
 
-  private async resolvePathInsideNote(
-    knowledgeBaseId: string,
-    noteUuid: string,
-    requestedPath: string
-  ): Promise<string> {
-    const handle = this.getHandle(knowledgeBaseId)
-    const note = await handle.workspace.notes.read(noteUuid)
-    return resolvePathInsideDirectory(note.directoryPath, requestedPath)
-  }
-
-  private async noteMutation(
-    handle: KnowledgeBaseHandle,
-    result: MutationResult<NoteDocument>
-  ): Promise<NoteMutationDto> {
-    this.markInternalWrites(result.changedFiles)
-    handle.snapshot = await handle.workspace.refresh()
-    this.emitChanged()
-    return {
-      note: toNoteDocument(handle, result.value),
-      knowledgeBase: toDetail(handle),
-      changedFiles: result.changedFiles
-    }
-  }
-
-  private snapshotMutation(
-    handle: KnowledgeBaseHandle,
-    result: MutationResult<KnowledgeBaseSnapshot>
-  ): KnowledgeBaseDetail {
-    this.markInternalWrites(result.changedFiles)
-    handle.snapshot = result.value
-    this.emitChanged()
-    return toDetail(handle)
-  }
-
-  private markInternalWrites(changedFiles: ChangedFile[]): void {
-    const until = Date.now() + 1500
-    for (const changed of changedFiles) {
-      this.internalWriteUntil.set(path.normalize(changed.path), until)
-      if (changed.previousPath) {
-        this.internalWriteUntil.set(path.normalize(changed.previousPath), until)
-      }
-    }
-  }
-
   private emitChanged(): void {
     this.events.emit('changed', this.getOverview())
-  }
-
-  private async enqueueScan(): Promise<void> {
-    this.scanTail = this.scanTail
-      .then(() => this.scan())
-      .catch((error) => {
-        deskLog('workspace', 'scan failed', error instanceof Error ? error.message : String(error))
-      })
-    await this.scanTail
-  }
-
-  /** 笔记配置缺失/损坏 → 触发 files→TOC 对齐（0004）。 */
-  private async reconcileIfNeeded(handle: KnowledgeBaseHandle): Promise<void> {
-    const snapshot = handle.snapshot
-    const hasConfigDiagnostics = snapshot.health.diagnostics.some(
-      (d) => d.code === 'NOTE_CONFIG_MISSING' || d.code === 'NOTE_CONFIG_INVALID'
-    )
-    if (!hasConfigDiagnostics) return
-    try {
-      const result = await handle.workspace.toc.reconcileFromFiles()
-      handle.snapshot = result.value
-    } catch (error) {
-      deskLog(
-        'workspace',
-        'reconcile failed',
-        error instanceof Error ? error.message : String(error)
-      )
-    }
-  }
-
-  private async scan(): Promise<void> {
-    if (!this.workspacePath) return
-    const entries = await fs.readdir(this.workspacePath, { withFileTypes: true })
-    const candidates = entries
-      .filter((entry) => entry.isDirectory() && KNOWLEDGE_BASE_NAME.test(entry.name))
-      .sort((left, right) => left.name.localeCompare(right.name))
-    const previousByPath = new Map(
-      [...this.handles.values()].map((handle) => [handle.rootPath, handle])
-    )
-    const next = new Map<string, KnowledgeBaseHandle>()
-
-    for (const candidate of candidates) {
-      const rootPath = path.join(this.workspacePath, candidate.name)
-      const existing = previousByPath.get(rootPath)
-      const workspace = existing?.workspace ?? createWorkspace({ rootPath })
-      const snapshot = await workspace.inspect()
-      let id = existing?.id ?? snapshot.id
-      if (next.has(id)) id = `${snapshot.id}:${stablePathSuffix(rootPath)}`
-      const handle = {
-        id,
-        name: candidate.name,
-        rootPath,
-        workspace,
-        snapshot
-      }
-      next.set(id, handle)
-      // 0004：文件系统为准——笔记配置缺失/损坏时先做 files→TOC 对齐
-      // （自动软删无效笔记到 notes/.trash/ 并恢复健康）。
-      await this.reconcileIfNeeded(handle)
-      previousByPath.delete(rootPath)
-    }
-
-    await Promise.all([...previousByPath.values()].map((handle) => handle.workspace.dispose()))
-    this.handles = next
-    this.syncKnowledgeBaseWatchers()
-    deskLog('workspace', 'scan complete', {
-      path: this.workspacePath,
-      knowledgeBases: next.size
-    })
-  }
-
-  private startWatchers(workspacePath: string): void {
-    this.createWatcher('workspace', workspacePath, false, (_event, fileName) => {
-      if (!fileName) return
-      const [topLevelName] = fileName.toString().split(path.sep)
-      if (topLevelName && KNOWLEDGE_BASE_NAME.test(topLevelName)) {
-        this.scheduleRefresh()
-      }
-    })
-    this.syncKnowledgeBaseWatchers()
-  }
-
-  private createWatcher(
-    key: string,
-    targetPath: string,
-    recursive: boolean,
-    listener: (eventType: 'rename' | 'change', fileName: string | null) => void
-  ): void {
-    if (this.watchers.has(key)) return
-    let watcher: FSWatcher
-    try {
-      watcher = watch(targetPath, { recursive }, listener)
-    } catch (error) {
-      this.logWatcherError(error)
-      return
-    }
-    watcher.on('error', (error) => this.logWatcherError(error))
-    this.watchers.set(key, watcher)
-  }
-
-  private logWatcherError(error: unknown): void {
-    const message = error instanceof Error ? error.message : String(error)
-    const now = Date.now()
-    if (message !== this.lastWatcherError || now - this.lastWatcherErrorAt > 5000) {
-      this.lastWatcherError = message
-      this.lastWatcherErrorAt = now
-      deskLog('workspace:watcher', 'error', message)
-    }
-  }
-
-  private syncKnowledgeBaseWatchers(): void {
-    if (!this.workspacePath || !this.watchers.has('workspace')) return
-    const expectedKeys = new Set(['workspace'])
-    for (const handle of this.handles.values()) {
-      const key = `knowledge-base:${handle.rootPath}`
-      expectedKeys.add(key)
-      this.createWatcher(key, handle.rootPath, true, (_event, fileName) => {
-        if (!fileName) return
-        const relativePath = fileName.toString()
-        if (this.shouldIgnoreKnowledgeBasePath(relativePath)) return
-        this.handleWatchedPath(path.join(handle.rootPath, relativePath))
-      })
-    }
-
-    for (const [key, watcher] of this.watchers) {
-      if (!expectedKeys.has(key)) {
-        watcher.close()
-        this.watchers.delete(key)
-      }
-    }
-  }
-
-  private shouldIgnoreKnowledgeBasePath(relativePath: string): boolean {
-    const segments = relativePath.split(path.sep).filter(Boolean)
-    return segments.some((segment, index) => {
-      if (segment === '.git' || segment === 'node_modules' || segment === 'dist') return true
-      return segment === 'cache' && segments[index - 1] === '.vitepress'
-    })
-  }
-
-  private handleWatchedPath(changedPath: string): void {
-    const normalizedPath = path.normalize(changedPath)
-    const internalUntil = this.internalWriteUntil.get(normalizedPath) ?? 0
-    if (internalUntil < Date.now()) {
-      this.internalWriteUntil.delete(normalizedPath)
-      if (path.basename(normalizedPath) === 'README.md') {
-        for (const handle of this.handles.values()) {
-          const note = handle.snapshot.notes.find(
-            (item) => path.normalize(item.readmePath) === normalizedPath
-          )
-          if (note) {
-            this.events.emit('noteExternalChanged', {
-              knowledgeBaseId: handle.id,
-              noteUuid: note.uuid
-            })
-            break
-          }
-        }
-      }
-    }
-
-    this.scheduleRefresh()
-  }
-
-  private scheduleRefresh(): void {
-    if (this.refreshTimer) clearTimeout(this.refreshTimer)
-    this.refreshTimer = setTimeout(() => {
-      this.refreshTimer = null
-      void this.enqueueScan().then(() => this.emitChanged())
-    }, 250)
-  }
-
-  private async stopWatcher(): Promise<void> {
-    for (const watcher of this.watchers.values()) watcher.close()
-    this.watchers.clear()
-  }
-
-  private async disposeHandles(): Promise<void> {
-    await Promise.all([...this.handles.values()].map((handle) => handle.workspace.dispose()))
-    this.handles.clear()
   }
 }
 

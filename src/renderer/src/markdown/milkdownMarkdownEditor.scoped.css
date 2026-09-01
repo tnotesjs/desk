@@ -1,0 +1,1965 @@
+.milkdown-markdown-editor {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--editor-bg);
+  color: var(--editor-text);
+  /* Size the document against the editor pane, not the window — sidebars
+     commonly leave a narrow writing column even on a wide display. */
+  container-type: inline-size;
+  container-name: desk-visual-editor;
+}
+
+.milkdown-markdown-editor :deep(.milkdown) {
+  min-height: 100%;
+  color: var(--editor-text);
+  --crepe-base-font-size: 15px;
+  --crepe-font-default: var(--font-sans);
+  --crepe-font-code: var(--font-mono);
+  --crepe-color-background: var(--editor-bg);
+  --crepe-color-on-background: var(--editor-text);
+  --crepe-color-surface: var(--panel);
+  --crepe-color-surface-low: var(--hover);
+  --crepe-color-on-surface: var(--editor-text);
+  --crepe-color-on-surface-variant: var(--muted);
+  --crepe-color-outline: var(--border);
+  --crepe-color-primary: var(--accent-strong);
+  --crepe-color-secondary: var(--accent);
+  --crepe-color-on-secondary: var(--editor-text);
+  --crepe-color-inverse: var(--editor-text);
+  --crepe-color-on-inverse: var(--editor-bg);
+  --crepe-color-inline-code: var(--danger);
+  --crepe-color-error: var(--danger);
+  --crepe-color-hover: var(--hover);
+  --crepe-color-selected: color-mix(in srgb, var(--accent) 45%, transparent);
+  --crepe-color-inline-area: var(--border);
+  --prosemirror-virtual-cursor-color: var(--accent-strong);
+  --crepe-shadow-1: 0 6px 18px rgba(0, 0, 0, 0.28);
+  --crepe-shadow-2: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-toolbar) {
+  background: var(--raised);
+  border: 1px solid var(--border);
+  box-shadow: var(--crepe-shadow-1);
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-toolbar .toolbar-item svg) {
+  color: var(--editor-text);
+  fill: var(--editor-text);
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-toolbar .toolbar-item:hover svg) {
+  color: var(--text);
+  fill: var(--text);
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-toolbar .toolbar-item.active svg) {
+  color: var(--accent-strong);
+  fill: var(--accent-strong);
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-block-handle .operation-item svg) {
+  color: var(--editor-text);
+  fill: var(--editor-text);
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-block-handle .operation-item:hover svg),
+.milkdown-markdown-editor :deep(.milkdown .milkdown-block-handle .operation-item.active svg) {
+  color: var(--accent-strong);
+  fill: var(--accent-strong);
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-slash-menu) {
+  width: min(340px, calc(100vw - 16px));
+  container-type: inline-size;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-slash-menu .tab-group) {
+  padding: 6px 8px 0;
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-slash-menu .tab-group ul) {
+  gap: 3px;
+  padding: 3px 2px 6px;
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-slash-menu .tab-group li) {
+  flex: 1 1 auto;
+  padding: 4px 7px;
+  text-align: center;
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-slash-menu .menu-groups) {
+  padding: 2px 8px 8px;
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-slash-menu .menu-group h6) {
+  padding: 8px 6px 5px;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.milkdown-markdown-editor
+  :deep(.milkdown .milkdown-slash-menu .menu-group[data-layout='compact-grid'] ul) {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 4px;
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-slash-menu .menu-group li) {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  box-sizing: border-box;
+  min-width: 0;
+  gap: 8px;
+  padding: 7px 8px;
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-slash-menu .menu-group li svg) {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  color: var(--editor-text);
+  fill: var(--editor-text);
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-slash-menu .menu-group li:hover svg),
+.milkdown-markdown-editor :deep(.milkdown .milkdown-slash-menu .menu-group li.hover svg),
+.milkdown-markdown-editor :deep(.milkdown .milkdown-slash-menu .menu-group li.active svg) {
+  color: var(--accent-strong);
+  fill: var(--accent-strong);
+}
+
+.milkdown-markdown-editor
+  :deep(.milkdown .milkdown-slash-menu .menu-group li svg.desk-tnotes-icon) {
+  color: var(--accent-strong);
+  fill: none !important;
+  stroke: currentColor;
+}
+
+.milkdown-markdown-editor
+  :deep(.milkdown .milkdown-slash-menu .menu-group li > span:not(.milkdown-icon)) {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-slash-menu .desk-slash-menu__shortcut) {
+  min-width: max-content;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-slash-menu .menu-group + .menu-group::before) {
+  margin: 4px 6px 0;
+}
+
+@media (max-width: 720px) {
+  .milkdown-markdown-editor
+    :deep(.milkdown .milkdown-slash-menu .menu-group[data-layout='compact-grid'] ul) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@container (max-width: 310px) {
+  .milkdown-markdown-editor
+    :deep(.milkdown .milkdown-slash-menu .menu-group[data-layout='compact-grid'] ul) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .milkdown-markdown-editor :deep(.milkdown .milkdown-slash-menu .desk-slash-menu__shortcut) {
+    display: none;
+  }
+}
+
+.milkdown-markdown-editor :deep(.ProseMirror) {
+  box-sizing: border-box;
+  width: min(100%, 940px);
+  min-height: 100%;
+  margin: 0 auto;
+  /* Left gutter must fit Crepe's block handle (2×32px icons + gap + 16px
+     floating offset). Right matches for a balanced writing column. */
+  padding: 28px 72px 48px 96px;
+  line-height: 1.72;
+  outline: none;
+  --prosemirror-virtual-cursor-color: var(--accent-strong);
+}
+
+/* Crepe's virtual cursor owns text-caret rendering. Prefer it over the browser
+   caret when the virtual-cursor implementation is present. */
+.milkdown-markdown-editor:not(.is-readonly)
+  :deep(.ProseMirror:not(.virtual-cursor-enabled):not(.ProseMirror-hideselection)) {
+  caret-color: var(--accent-strong);
+}
+
+.milkdown-markdown-editor :deep(.ProseMirror.virtual-cursor-enabled),
+.milkdown-markdown-editor :deep(.ProseMirror.ProseMirror-hideselection) {
+  caret-color: transparent;
+}
+
+/*
+ * Dual-focus fix: while a block owns focus or is node-selected, hide the body
+ * virtual caret (prosemirror-virtual-cursor keeps painting TextSelection even
+ * after DOM focus moves into a nodeView island).
+ */
+.milkdown-markdown-editor:has(.desk-raw-block:focus-within) :deep(.prosemirror-virtual-cursor),
+.milkdown-markdown-editor:has(.desk-raw-block.ProseMirror-selectednode)
+  :deep(.prosemirror-virtual-cursor),
+.milkdown-markdown-editor:has(.desk-raw-block.is-mindmap-island-active)
+  :deep(.prosemirror-virtual-cursor),
+.milkdown-markdown-editor:has(.milkdown-code-block:focus-within)
+  :deep(.prosemirror-virtual-cursor),
+.milkdown-markdown-editor:has(.milkdown-code-block.ProseMirror-selectednode)
+  :deep(.prosemirror-virtual-cursor),
+.milkdown-markdown-editor:has(.desk-raw-block:focus-within) :deep(.ProseMirror-gapcursor),
+.milkdown-markdown-editor:has(.desk-raw-block.ProseMirror-selectednode)
+  :deep(.ProseMirror-gapcursor),
+.milkdown-markdown-editor:has(.desk-raw-block.is-mindmap-island-active)
+  :deep(.ProseMirror-gapcursor) {
+  opacity: 0 !important;
+  visibility: hidden !important;
+}
+
+.milkdown-markdown-editor :deep(.ProseMirror > :first-child) {
+  margin-top: 0;
+}
+
+/* VitePress .vp-doc headings + core `margin: 1rem 0` (tn:dev / published).
+   Use px so Crepe’s 15px base does not inflate em sizes. Skip VP’s leftover
+   h2 padding-top: 24px — core already tightened spacing. */
+.milkdown-markdown-editor :deep(.ProseMirror h1:not(.desk-generated-title)),
+.milkdown-markdown-editor :deep(.ProseMirror h2),
+.milkdown-markdown-editor :deep(.ProseMirror h3),
+.milkdown-markdown-editor :deep(.ProseMirror h4),
+.milkdown-markdown-editor :deep(.ProseMirror h5),
+.milkdown-markdown-editor :deep(.ProseMirror h6) {
+  margin: 16px 0;
+  padding: 0;
+  border-top: none;
+  font-weight: 600;
+  /* Reserve selection chrome: Crepe paints background on selectednode which
+     reads as a pop; keep box model identical and select via outline color only. */
+  background-color: transparent;
+  outline: 2px solid transparent;
+  outline-offset: 0;
+  scroll-margin: 0;
+}
+
+.milkdown-markdown-editor :deep(.ProseMirror h1:not(.desk-generated-title).ProseMirror-selectednode),
+.milkdown-markdown-editor :deep(.ProseMirror h2.ProseMirror-selectednode),
+.milkdown-markdown-editor :deep(.ProseMirror h3.ProseMirror-selectednode),
+.milkdown-markdown-editor :deep(.ProseMirror h4.ProseMirror-selectednode),
+.milkdown-markdown-editor :deep(.ProseMirror h5.ProseMirror-selectednode),
+.milkdown-markdown-editor :deep(.ProseMirror h6.ProseMirror-selectednode) {
+  /* Beat Crepe `.ProseMirror-selectednode { background; outline: none }`. */
+  background-color: transparent;
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 0;
+}
+
+
+.milkdown-markdown-editor :deep(.ProseMirror h1) {
+  font-size: 32px;
+  line-height: 40px;
+  letter-spacing: -0.02em;
+}
+
+.milkdown-markdown-editor :deep(.ProseMirror h2) {
+  font-size: 24px;
+  line-height: 32px;
+  letter-spacing: -0.02em;
+}
+
+.milkdown-markdown-editor :deep(.ProseMirror h3) {
+  font-size: 20px;
+  line-height: 28px;
+  letter-spacing: -0.01em;
+}
+
+.milkdown-markdown-editor :deep(.ProseMirror h4) {
+  font-size: 18px;
+  line-height: 24px;
+  letter-spacing: -0.01em;
+}
+
+.milkdown-markdown-editor :deep(.ProseMirror h5),
+.milkdown-markdown-editor :deep(.ProseMirror h6) {
+  font-size: 16px;
+  line-height: 24px;
+  letter-spacing: normal;
+}
+
+.milkdown-markdown-editor :deep(.ProseMirror > h1:first-of-type),
+.milkdown-markdown-editor :deep(.ProseMirror > h2:first-of-type),
+.milkdown-markdown-editor :deep(.ProseMirror > h3:first-of-type),
+.milkdown-markdown-editor :deep(.ProseMirror > h4:first-of-type),
+.milkdown-markdown-editor :deep(.ProseMirror > h5:first-of-type),
+.milkdown-markdown-editor :deep(.ProseMirror > h6:first-of-type),
+.milkdown-markdown-editor :deep(.milkdown .ProseMirror h1.desk-generated-title) {
+  /* Beat Crepe `.milkdown .ProseMirror h1 { margin-top: 32px }` and the
+     general Desk `h1 { margin: 16px 0 }` so lead-in top margin never flips
+     when virtual-cursor precedes the title (:first-child unstable). */
+  margin-top: 0;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block) {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  box-sizing: border-box;
+  min-height: 38px;
+  margin: 12px 0;
+  padding: 8px 11px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--muted);
+  cursor: default;
+  user-select: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block.ProseMirror-selectednode),
+.milkdown-markdown-editor :deep(.desk-raw-block.desk-raw-block--range-selected) {
+  border-color: var(--accent-strong);
+  box-shadow: 0 0 0 1px var(--accent-strong);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block.desk-raw-block--range-selected) {
+  background: color-mix(in srgb, var(--accent) 9%, var(--panel));
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container.ProseMirror-selectednode),
+.milkdown-markdown-editor :deep(.desk-raw-block--container.desk-raw-block--range-selected) {
+  border: none;
+  box-shadow: none;
+  background: transparent;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container.ProseMirror-selectednode > .custom-block),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--container.desk-raw-block--range-selected > .custom-block) {
+  border-color: var(--accent-strong);
+  box-shadow: 0 0 0 1px var(--accent-strong);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__boundary-hit) {
+  position: absolute;
+  right: 0;
+  left: 0;
+  z-index: 3;
+  height: 10px;
+  cursor: pointer;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__boundary-hit[data-side='before']) {
+  top: 0;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__boundary-hit[data-side='after']) {
+  bottom: 0;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--hidden) {
+  display: none;
+}
+
+.milkdown-markdown-editor.is-readonly :deep(.ProseMirror) {
+  caret-color: transparent !important;
+  --prosemirror-virtual-cursor-color: transparent;
+}
+
+.milkdown-markdown-editor.is-readonly :deep(.prosemirror-virtual-cursor),
+.milkdown-markdown-editor.is-readonly :deep(.ProseMirror-gapcursor),
+.milkdown-markdown-editor.is-readonly :deep(.crepe-drop-cursor),
+.milkdown-markdown-editor.is-readonly :deep(.milkdown-toolbar),
+.milkdown-markdown-editor.is-readonly :deep(.milkdown-block-handle),
+.milkdown-markdown-editor.is-readonly :deep(.milkdown-slash-menu),
+.milkdown-markdown-editor.is-readonly :deep(.desk-raw-block__edit),
+.milkdown-markdown-editor.is-readonly :deep(.desk-raw-block__editor) {
+  display: none !important;
+}
+
+.milkdown-markdown-editor.is-readonly :deep(.ProseMirror-selectednode) {
+  outline: 0;
+  box-shadow: none;
+}
+
+.milkdown-markdown-editor :deep(.milkdown .crepe-drop-cursor) {
+  background: var(--accent-strong);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-strong) 55%, transparent);
+  opacity: 1;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__label) {
+  flex: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-strong);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__preview) {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container) {
+  position: relative;
+  display: block;
+  margin: 12px 0;
+  padding: 0;
+  min-height: 0;
+  overflow: visible;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  cursor: default;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--bilibili-video) {
+  position: relative;
+  display: block;
+  margin: 12px 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: default;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--bilibili-video .desk-raw-block__component-preview) {
+  min-height: 120px;
+}
+
+/* Match built-in code: no panel fill; border only on hover / focus / editing. */
+.milkdown-markdown-editor :deep(.desk-raw-block--word-list) {
+  position: relative;
+  display: block;
+  margin: 12px 0;
+  padding: 0;
+  overflow: visible;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  transition: border-color 120ms ease;
+  cursor: default;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--word-list:hover),
+.milkdown-markdown-editor :deep(.desk-raw-block--word-list:focus-within),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--word-list:has(.desk-raw-block__editor:not([hidden]))) {
+  border-color: var(--border);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--word-list .desk-raw-block__component-preview) {
+  min-height: 48px;
+  padding: 4px 8px;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--bilibili-video.ProseMirror-selectednode),
+.milkdown-markdown-editor :deep(.desk-raw-block--bilibili-video.desk-raw-block--range-selected) {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--word-list.ProseMirror-selectednode),
+.milkdown-markdown-editor :deep(.desk-raw-block--word-list.desk-raw-block--range-selected) {
+  border-color: var(--accent-strong);
+  box-shadow: 0 0 0 1px var(--accent-strong);
+  background: transparent;
+  outline: none;
+}
+
+/* Mermaid: same shell model as WordList — one border wraps preview + editor. */
+.milkdown-markdown-editor :deep(.desk-raw-block--mermaid),
+.milkdown-markdown-editor :deep(.desk-raw-block--mermaid.desk-raw-block--diagram) {
+  position: relative;
+  display: block;
+  margin: 12px 0;
+  padding: 0;
+  min-height: 0;
+  overflow: visible;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  transition: border-color 120ms ease;
+  cursor: default;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--mermaid:hover),
+.milkdown-markdown-editor :deep(.desk-raw-block--mermaid:focus-within),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--mermaid:has(.desk-raw-block__editor:not([hidden]))) {
+  border-color: var(--border);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--mermaid .tn-mermaid) {
+  margin: 0;
+  border-color: transparent;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* Shell hover/focus should reveal Mermaid actions even when the pointer is on the editor. */
+.milkdown-markdown-editor :deep(.desk-raw-block--mermaid:hover .tn-mermaid__actions:not(.is-suppressed)),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--mermaid:focus-within .tn-mermaid__actions:not(.is-suppressed)) {
+  opacity: 1;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--mermaid.ProseMirror-selectednode),
+.milkdown-markdown-editor :deep(.desk-raw-block--mermaid.desk-raw-block--range-selected) {
+  border-color: var(--accent-strong);
+  box-shadow: 0 0 0 1px var(--accent-strong);
+  outline: none;
+  background: transparent;
+}
+
+/* Structured editor sits inside the shell — no second outer frame. */
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--mermaid > .desk-raw-block__editor--structured),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--word-list > .desk-raw-block__editor--structured),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--mindmap > .desk-raw-block__editor--structured),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--notes-table > .desk-raw-block__editor--structured),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--footprints > .desk-raw-block__editor--structured) {
+  margin-top: 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 7px 7px;
+  background: transparent;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--include) {
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  align-self: stretch;
+  width: 100%;
+  gap: 8px;
+  padding: 10px 12px;
+  overflow: visible;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--include .desk-raw-block__label) {
+  flex: 0 0 auto;
+  align-self: flex-start;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-body) {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-pre) {
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  max-height: 420px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel) 70%, var(--editor-bg));
+  color: var(--editor-text);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  text-align: left;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-toolbar) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-action) {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--editor-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-action:hover:not(:disabled)) {
+  border-color: var(--accent-strong);
+  color: var(--accent-strong);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-action:disabled) {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-action.is-dirty) {
+  border-color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+  color: var(--accent-strong);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-cm) {
+  min-height: 160px;
+  max-height: 480px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--editor-bg);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-cm .cm-editor) {
+  min-height: 160px;
+  background: var(--editor-bg) !important;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-cm .cm-scroller),
+.milkdown-markdown-editor :deep(.desk-raw-block__include-cm .cm-content),
+.milkdown-markdown-editor :deep(.desk-raw-block__include-cm .cm-gutters),
+.milkdown-markdown-editor :deep(.desk-raw-block__include-cm .cm-gutterElement),
+.milkdown-markdown-editor :deep(.desk-raw-block__include-cm .cm-activeLine),
+.milkdown-markdown-editor :deep(.desk-raw-block__include-cm .cm-activeLineGutter) {
+  background-color: var(--editor-bg) !important;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-cm .cm-gutters) {
+  border-right: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--include.is-include-dirty) {
+  border-color: color-mix(in srgb, var(--accent-strong) 55%, var(--border));
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-status) {
+  min-height: 1.2em;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-status[data-kind='error']) {
+  color: var(--danger, #e85d5d);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-status[data-kind='ok']) {
+  color: var(--accent-strong);
+}
+
+/* Mindmap / NotesTable / Footprints: WordList-like transparent shell. */
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap),
+.milkdown-markdown-editor :deep(.desk-raw-block--notes-table),
+.milkdown-markdown-editor :deep(.desk-raw-block--footprints) {
+  position: relative;
+  display: block;
+  margin: 12px 0;
+  padding: 0;
+  overflow: visible;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  transition: border-color 120ms ease;
+  cursor: default;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap:hover),
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap:focus-within),
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap.is-mindmap-island-active),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--mindmap:has(.desk-raw-block__editor:not([hidden]))),
+.milkdown-markdown-editor :deep(.desk-raw-block--notes-table:hover),
+.milkdown-markdown-editor :deep(.desk-raw-block--notes-table:focus-within),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--notes-table:has(.desk-raw-block__editor:not([hidden]))),
+.milkdown-markdown-editor :deep(.desk-raw-block--footprints:hover),
+.milkdown-markdown-editor :deep(.desk-raw-block--footprints:focus-within),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--footprints:has(.desk-raw-block__editor:not([hidden]))) {
+  border-color: var(--border);
+}
+
+/* Match ui NotesTable link chrome (PM/global `a` styles must not force underline). */
+.milkdown-markdown-editor :deep(.desk-raw-block--notes-table .tn-notes-table__link) {
+  color: var(--tn-c-brand);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--notes-table .tn-notes-table__link:hover) {
+  text-decoration: underline;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--notes-table .tn-notes-table) {
+  margin: 0;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap.is-mindmap-island-active) {
+  border-color: var(--accent-strong);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .mindmap-preview) {
+  margin: 0;
+}
+
+/* Escape editor scroll/containment so CSS fullscreen covers the Desk window. */
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .mindmap-preview.is-fullscreen) {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 200000 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
+}
+
+/* ProseMirror virtual-cursor sets caret-color: transparent on the whole doc —
+   restore carets inside the mindmap island (canvas / outline / source). */
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--mindmap .mm-edit-input),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--mindmap .rich-inline-editor),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--mindmap .md-textarea),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--mindmap .markdown-view textarea),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--mindmap [contenteditable='true']) {
+  caret-color: var(--accent-strong, #3b82f6) !important;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .mm-selection-box) {
+  border: 1px solid color-mix(in srgb, var(--accent-strong, #3b82f6) 88%, white);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent-strong, #3b82f6) 16%, transparent);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .mindmap-preview-actions) {
+  z-index: 200;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .mindmap-preview.is-fullscreen .mindmap-preview-actions) {
+  pointer-events: auto !important;
+  opacity: 1 !important;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .mm-editor) {
+  outline: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--diagram) {
+  position: relative;
+  display: block;
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  overflow: hidden;
+  cursor: default;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--diagram .desk-diagram) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 140px;
+  padding: 16px;
+  overflow: auto;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--diagram .desk-diagram:has(.desk-diagram__empty)) {
+  min-height: 88px;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--diagram .desk-diagram__svg svg) {
+  max-width: 100%;
+  height: auto;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--diagram .desk-diagram__mindmap) {
+  position: relative;
+  width: 100%;
+  height: 320px;
+  overflow: hidden;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--diagram .desk-diagram__error),
+.milkdown-markdown-editor :deep(.desk-raw-block--diagram .desk-diagram__fallback),
+.milkdown-markdown-editor :deep(.desk-raw-block--diagram .desk-diagram__empty) {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--diagram .desk-diagram__error) {
+  color: var(--danger);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block) {
+  box-sizing: border-box;
+  margin: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--editor-text);
+}
+
+/* Soft-tint callouts. Body typography matches Crepe ProseMirror paragraphs
+   (line-height 1.5 + 4px vertical padding), not the editor chrome 1.72. */
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-tip),
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-info),
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-note),
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-warning),
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-danger),
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-details) {
+  padding: 12px 16px;
+  font-size: inherit;
+  line-height: 1.5;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-title) {
+  margin: 0 0 2px;
+  font-size: inherit;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--editor-text);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-body) {
+  color: var(--editor-text);
+  font-size: inherit;
+  line-height: 1.5;
+  /* ProseMirror uses break-spaces; markdown-it HTML has newlines between
+     tags. Without normal whitespace those text nodes become ~22.5px line
+     boxes and roughly double tip/info list height (li sum 62 → ul 128). */
+  white-space: normal;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-body > :first-child) {
+  margin-top: 0;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-body > :last-child) {
+  margin-bottom: 0;
+}
+
+/* tip → brand soft (VitePress --vp-c-tip-soft) */
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-tip) {
+  background-color: var(--selected);
+}
+
+/* info / note / details → gray soft (VitePress --vp-c-default-soft) */
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-info),
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-note),
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-details) {
+  background-color: var(--hover);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-warning) {
+  background-color: var(--warning-soft);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-danger) {
+  background-color: var(--danger-soft);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-code-group) {
+  /* No outer panel chrome — tabs + inner code block carry the surface. */
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+/* Swiper — align with core `.tn-swiper` (tokenized for Desk). */
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-swiper) {
+  margin: 0;
+  overflow: visible;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.18);
+  background: transparent;
+  padding: 0;
+  border: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-swiper:hover) {
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.28);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-swiper-tabs) {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-bottom: 1px solid var(--border);
+  border-radius: 8px 8px 0 0;
+  background: var(--panel);
+  box-shadow: inset 0 -1px var(--border);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-swiper-tabs.is-reordering) {
+  overflow: visible;
+  user-select: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-tab-nav) {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 0 0.3rem;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.8rem;
+  line-height: 1;
+  user-select: none;
+  transition: color 0.2s ease, transform 0.2s ease, font-size 0.2s ease;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-tab-prev) {
+  left: 0.5rem;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tab-tab-line) {
+  left: 1.1rem;
+  color: var(--accent-strong);
+  cursor: default;
+  opacity: 0.5;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-tab-next) {
+  left: 1.5rem;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-tab-prev:hover),
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-tab-next:hover) {
+  color: var(--accent-strong);
+  font-size: 1rem;
+  transform: translateY(-50%) scale(1.5);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-tab-nav:active) {
+  transform: translateY(-50%) scale(0.95);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-tab) {
+  position: relative;
+  flex: none;
+  padding: 0.25rem 0.75rem;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.875rem;
+  line-height: 2rem;
+  white-space: nowrap;
+  transition: color 0.2s ease, transform 0.2s ease;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .desk-raw-block--swiper-editable .tn-tab) {
+  cursor: grab;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-tab::after) {
+  position: absolute;
+  right: 8px;
+  bottom: -1px;
+  left: 8px;
+  z-index: 1;
+  height: 2px;
+  border-radius: 2px;
+  content: '';
+  background-color: transparent;
+  transition: background-color 0.2s ease;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-tab:hover) {
+  color: var(--editor-text);
+  transform: translateY(-1px);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-tab.active) {
+  color: var(--editor-text);
+  font-weight: 500;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-tab.active::after) {
+  background-color: var(--accent-strong);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-tab.is-dragging) {
+  z-index: 5;
+  cursor: grabbing;
+  opacity: 0.92;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.25);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-tab__rename) {
+  width: min(12rem, 40vw);
+  margin: 0;
+  padding: 2px 6px;
+  border: 1px solid var(--accent-strong);
+  border-radius: 4px;
+  background: var(--editor-bg);
+  color: var(--editor-text);
+  /* Nested under ProseMirror.virtual-cursor-enabled which sets caret-color:
+     transparent — restore a visible caret for this native input. */
+  caret-color: var(--accent-strong);
+  font: inherit;
+  font-size: 0.875rem;
+  line-height: 1.6rem;
+  outline: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .swiper-container) {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  margin: 0;
+  border-radius: 0 0 8px 8px;
+  background: var(--editor-bg);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .swiper-slide) {
+  display: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .swiper-slide.is-active) {
+  display: block;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .swiper-slide img) {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+  object-fit: contain;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container details.custom-block-details > summary) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--container details.custom-block-details > summary::-webkit-details-marker) {
+  display: none;
+}
+
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--container details.custom-block-details > summary::before) {
+  content: '';
+  flex: none;
+  box-sizing: border-box;
+  width: 0.42em;
+  height: 0.42em;
+  margin-top: 0.05em;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  color: var(--muted);
+  transform: rotate(-45deg);
+  transform-origin: 50% 50%;
+  transition: transform 120ms ease;
+}
+
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--container details.custom-block-details[open] > summary::before) {
+  margin-top: -0.05em;
+  transform: rotate(45deg);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container details:not([open]) > *:not(summary)) {
+  display: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-body p) {
+  margin: 0;
+  padding: 4px 0;
+  font-size: 1em;
+  line-height: 1.5;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-body p:last-child) {
+  margin-bottom: 0;
+}
+
+/* Callout body lists are markdown-it <ul>/<li>, while outer editor lists are
+   Crepe milkdown-list-item-block (flex + 24×32 label + p padding 4px 0).
+   Mirror that row geometry so tip/info lists match outer density. */
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-body ul),
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-body ol) {
+  margin: 0;
+  padding: 0;
+  font-size: 1em;
+  line-height: 1.5;
+  list-style: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-body ol) {
+  counter-reset: desk-callout-ol;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-body li) {
+  position: relative;
+  box-sizing: border-box;
+  margin: 0;
+  /* 24px label + 10px gap — same as Crepe .label-wrapper + gap */
+  padding: 0 0 0 34px;
+  line-height: 1.5;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-body ol > li) {
+  counter-increment: desk-callout-ol;
+}
+
+/* Text-only items: same vertical rhythm as Crepe list <p>. */
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-body li:not(:has(> p))) {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-body li > p) {
+  margin: 0;
+  padding: 4px 0;
+  line-height: 1.5;
+}
+
+/* Bullet / number column — matches Crepe .label-wrapper (24×32). */
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-body ul > li::before),
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-body ol > li::before) {
+  position: absolute;
+  top: 0;
+  left: 0;
+  box-sizing: border-box;
+  width: 24px;
+  height: 32px;
+  color: var(--muted);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-body ul > li::before) {
+  content: '';
+  background: radial-gradient(circle, currentColor 3px, transparent 3.25px);
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-body ol > li::before) {
+  content: counter(desk-callout-ol) '.';
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 4px 0;
+  font-size: 1em;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-body li > ul),
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-body li > ol) {
+  margin: 0;
+  padding: 0;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-body img) {
+  max-width: 100%;
+  height: auto;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-body pre) {
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .code-group-tabs) {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+  position: relative;
+  user-select: none;
+  touch-action: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .code-group-tabs.is-reordering) {
+  cursor: grabbing;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .code-group-tab) {
+  position: relative;
+  padding: 4px 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+  background: var(--hover);
+  border: 1px solid var(--border);
+  border-radius: 6px 6px 0 0;
+  cursor: grab;
+  transition: transform 120ms ease;
+  will-change: transform;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .code-group-tab:active) {
+  cursor: grabbing;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .code-group-tab:hover) {
+  color: var(--editor-text);
+  background: var(--raised);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .code-group-tab.active) {
+  color: var(--editor-text);
+  background: var(--panel);
+  border-color: var(--accent-strong);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .code-group-tab.is-tab-dirty) {
+  color: var(--accent-strong);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .code-group-tab.is-dragging) {
+  opacity: 0.92;
+  z-index: 5;
+  box-shadow: 0 4px 12px color-mix(in srgb, #000 28%, transparent);
+  transition: none;
+  cursor: grabbing;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .code-group-tab__rename) {
+  width: 100%;
+  min-width: 48px;
+  max-width: 160px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  caret-color: var(--accent-strong);
+  font: inherit;
+  line-height: inherit;
+  outline: none;
+}
+
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--container .desk-raw-block--code-group-editable .desk-raw-block__include-body) {
+  gap: 0;
+  padding: 0;
+}
+
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--container .desk-raw-block--code-group-editable .code-group-panel) {
+  padding: 0 0 8px;
+}
+
+.milkdown-markdown-editor :deep(.desk-code-tab) {
+  position: relative;
+  margin: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--editor-bg);
+  transition: border-color 120ms ease;
+  overflow: visible;
+  padding: 8px 12px 12px;
+}
+
+.milkdown-markdown-editor :deep(.desk-code-tab:hover),
+.milkdown-markdown-editor :deep(.desk-code-tab:focus-within),
+.milkdown-markdown-editor :deep(.desk-code-tab.is-dirty) {
+  border-color: var(--border);
+}
+
+.milkdown-markdown-editor :deep(.desk-code-tab.is-dirty) {
+  border-color: color-mix(in srgb, var(--accent-strong) 55%, var(--border));
+}
+
+/* Same tools chrome as standalone milkdown code blocks (header row, not overlay). */
+.milkdown-markdown-editor :deep(.desk-code-tab.milkdown-code-block .tools.desk-code-tab__tools) {
+  position: relative;
+  top: auto;
+  right: auto;
+  z-index: 2;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-height: 28px;
+  margin: 0 0 4px;
+  padding: 0 2px;
+  pointer-events: auto;
+}
+
+.milkdown-markdown-editor :deep(.desk-code-tab .tools .language-button),
+.milkdown-markdown-editor :deep(.desk-code-tab:hover .tools .language-button),
+.milkdown-markdown-editor :deep(.desk-code-tab .tools .tools-button-group button),
+.milkdown-markdown-editor :deep(.desk-code-tab:hover .tools .tools-button-group button) {
+  opacity: 1;
+  margin-bottom: 0;
+}
+
+.milkdown-markdown-editor :deep(.desk-code-tab .tools .copy-button svg) {
+  fill: currentColor;
+  stroke: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-code-tab .tools .copy-button svg path) {
+  fill: currentColor;
+}
+
+.milkdown-markdown-editor :deep(.desk-code-tab .tools .language-button .expand-icon svg) {
+  fill: none;
+  stroke: currentColor;
+}
+
+.milkdown-markdown-editor :deep(.desk-code-tab__tools .language-picker) {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  left: auto;
+}
+
+.milkdown-markdown-editor :deep(.desk-code-tab__cm) {
+  min-height: 140px;
+  max-height: 480px;
+  border: 0;
+  border-radius: 0;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .code-group-panels .code-group-panel) {
+  display: none;
+}
+
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--container .code-group-panels .code-group-panel.active) {
+  display: block;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__edit) {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  z-index: 2;
+  padding: 3px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__edit--pill) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+  color: var(--editor-text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  box-shadow: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__edit--pill svg) {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+  flex: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block:hover .desk-raw-block__edit),
+.milkdown-markdown-editor :deep(.desk-raw-block.ProseMirror-selectednode .desk-raw-block__edit),
+.milkdown-markdown-editor :deep(.desk-raw-block:focus-within .desk-raw-block__edit) {
+  opacity: 1;
+}
+
+/*
+ * Generic edit rule is `.desk-raw-block .desk-raw-block__edit` (top/right).
+ * Beat it with higher specificity so Mermaid edit shares the action-bar row
+ * instead of sitting under the icon cluster (z-index 10 covers top:8px/right:10px).
+ *
+ * Action bar: top 8px, right 8px, ~96px wide (3×28 + gaps + padding).
+ */
+.milkdown-markdown-editor
+  :deep(.desk-raw-block.desk-raw-block--mermaid > .desk-raw-block__edit) {
+  top: 10px;
+  right: 112px;
+  z-index: 11;
+  box-sizing: border-box;
+  height: 32px;
+  padding: 0 12px;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__edit:hover),
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__edit--pill:hover) {
+  color: var(--text, var(--editor-text));
+  background: var(--hover);
+  border-color: var(--border);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor) {
+  flex: 0 0 100%;
+  width: 100%;
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--editor-bg);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor--structured) {
+  position: relative;
+  overflow: visible;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-header) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-label) {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-done) {
+  padding: 3px 12px;
+  font-size: 12px;
+  color: var(--editor-bg);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-done:hover) {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+.milkdown-markdown-editor
+  :deep(.desk-raw-block .desk-raw-block__editor--structured > .desk-raw-block__editor-done) {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  z-index: 3;
+  opacity: 1;
+  color: var(--editor-text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  box-shadow: none;
+}
+
+.milkdown-markdown-editor
+  :deep(.desk-raw-block .desk-raw-block__editor--structured > .desk-raw-block__editor-done:hover) {
+  color: var(--text, var(--editor-text));
+  background: var(--hover);
+  border-color: var(--border);
+}
+
+.milkdown-markdown-editor
+  :deep(.desk-raw-block .desk-raw-block__editor--structured .desk-raw-block__editor-fields) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--editor-bg);
+}
+
+.milkdown-markdown-editor
+  :deep(.desk-raw-block .desk-raw-block__editor--structured .desk-raw-block__editor-title) {
+  width: 100%;
+  margin: 0;
+  padding: 10px 88px 10px 12px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--editor-text);
+  caret-color: var(--accent-strong);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 0;
+  outline: none;
+  user-select: text;
+}
+
+.milkdown-markdown-editor
+  :deep(.desk-raw-block .desk-raw-block__editor--structured .desk-raw-block__editor-title::placeholder) {
+  color: var(--muted);
+  opacity: 0.85;
+}
+
+.milkdown-markdown-editor
+  :deep(.desk-raw-block .desk-raw-block__editor--structured .desk-raw-block__editor-toggles) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  padding: 8px 12px 10px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.milkdown-markdown-editor
+  :deep(.desk-raw-block .desk-raw-block__editor--structured .desk-raw-block__editor-toggle) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.milkdown-markdown-editor
+  :deep(.desk-raw-block .desk-raw-block__editor--structured .desk-raw-block__editor-toggle input) {
+  margin: 0;
+}
+
+.milkdown-markdown-editor
+  :deep(.desk-raw-block .desk-raw-block__editor--structured .desk-raw-block__editor-title:focus) {
+  border-bottom-color: color-mix(in srgb, var(--accent-strong) 45%, var(--border));
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-cm) {
+  height: var(--desk-raw-editor-height, 220px);
+  overflow: hidden;
+  background: var(--editor-bg);
+}
+
+.milkdown-markdown-editor
+  :deep(.desk-raw-block .desk-raw-block__editor--structured .desk-raw-block__editor-cm) {
+  border: 0;
+}
+
+.milkdown-markdown-editor
+  :deep(.desk-raw-block .desk-raw-block__editor--structured .desk-raw-block__editor-cm .cm-placeholder) {
+  color: var(--muted);
+  opacity: 0.85;
+  font-style: normal;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-cm .cm-editor) {
+  height: 100%;
+  background: var(--editor-bg) !important;
+}
+
+/* Override githubDark/Light panel colors so tip/Mermaid/WordList editors match the document. */
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-cm .cm-scroller),
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-cm .cm-content),
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-cm .cm-gutters),
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-cm .cm-gutterElement),
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-cm .cm-activeLine),
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-cm .cm-activeLineGutter) {
+  background-color: var(--editor-bg) !important;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-cm .cm-gutters) {
+  border-right: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.milkdown-markdown-editor :deep(.desk-generated-title) {
+  /* Excluded from `.ProseMirror h1 { margin: 16px 0 }`; keep top stable so
+     virtual-cursor / :first-child flips cannot change lead-in spacing. */
+  margin-top: 0;
+  margin-bottom: 16px;
+  padding: 0;
+  border: 0;
+  font-size: 32px;
+  font-weight: 600;
+  line-height: 40px;
+  letter-spacing: -0.02em;
+  color: var(--editor-text);
+  cursor: default;
+  position: relative;
+  /* Always reserve outline ink so NodeSelect only changes color. */
+  outline: 2px solid transparent;
+  outline-offset: 0;
+  background-color: transparent;
+}
+
+.milkdown-markdown-editor :deep(.desk-generated-title a) {
+  color: inherit;
+  text-decoration: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-generated-title.ProseMirror-selectednode) {
+  /* Full shorthand beats Crepe's `.ProseMirror-selectednode { outline: none }`.
+     Keep width/offset identical to the unselected transparent reserve.
+     No background — avoids selected/unselected paint asymmetry. */
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 0;
+  background-color: transparent;
+}
+
+.milkdown-markdown-editor :deep(.desk-generated-toc) {
+  margin: 0.5em 0 1.25em;
+  padding: 0;
+}
+
+.milkdown-markdown-editor :deep(.desk-generated-toc__toggle) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 2px 4px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.milkdown-markdown-editor :deep(.desk-generated-toc__toggle:hover) {
+  color: var(--text);
+}
+
+.milkdown-markdown-editor :deep(.desk-generated-toc__toggle-icon) {
+  width: 0;
+  height: 0;
+  border-top: 5px solid currentColor;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  transition: transform 120ms ease;
+}
+
+.milkdown-markdown-editor :deep(.desk-generated-toc.is-collapsed .desk-generated-toc__toggle-icon) {
+  transform: rotate(-90deg);
+}
+
+.milkdown-markdown-editor :deep(.desk-generated-toc__list) {
+  margin: 0;
+  padding-left: 1.4em;
+}
+
+.milkdown-markdown-editor :deep(.desk-generated-toc.is-collapsed .desk-generated-toc__list) {
+  display: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-generated-toc__list ul) {
+  padding-left: 1.4em;
+}
+
+.milkdown-markdown-editor :deep(.desk-generated-toc__list li) {
+  margin: 0.15em 0;
+}
+
+.milkdown-markdown-editor :deep(.desk-generated-toc__link) {
+  color: var(--accent-strong);
+  text-decoration: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-generated-toc__link:hover) {
+  text-decoration: underline;
+}
+
+.milkdown-markdown-editor :deep(.desk-generated-toc.ProseMirror-selectednode) {
+  outline: none;
+  box-shadow: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-generated-toc::selection),
+.milkdown-markdown-editor :deep(.desk-generated-toc *::selection),
+.milkdown-markdown-editor :deep(.desk-generated-title::selection),
+.milkdown-markdown-editor :deep(.desk-generated-title *::selection),
+.milkdown-markdown-editor :deep(.desk-raw-block::selection),
+.milkdown-markdown-editor :deep(.desk-raw-block *::selection) {
+  background: transparent;
+  color: inherit;
+}
+
+/* The raw-block inline source editor is a CodeMirror view; restore a visible
+   selection highlight that the blanket `.desk-raw-block *::selection` above
+   would otherwise wipe out. Prefer native ::selection (character-tight) over
+   CodeMirror drawSelection full-line layers. */
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-cm .cm-content::selection),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block .desk-raw-block__editor-cm .cm-content *::selection) {
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--editor-text);
+}
+
+.milkdown-markdown-editor
+  :deep(.desk-raw-block .desk-raw-block__editor-cm .cm-selectionBackground),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block .desk-raw-block__editor-cm .cm-editor.cm-focused .cm-selectionBackground) {
+  background: transparent !important;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-title::selection) {
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--editor-text);
+}
+
+/* Tab rename inputs — same blanket wipe as above; restore visible text selection. */
+.milkdown-markdown-editor :deep(.desk-raw-block .tn-tab__rename::selection),
+.milkdown-markdown-editor :deep(.desk-raw-block .code-group-tab__rename::selection) {
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--editor-text);
+}
+
+/* Mindmap island editors — same blanket wipe as above; restore visible text selection. */
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .mm-edit-input::selection),
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .mm-edit-input *::selection),
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .rich-inline-editor::selection),
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .rich-inline-editor *::selection),
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .title-input::selection),
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .md-textarea::selection) {
+  background: color-mix(in srgb, var(--accent-strong, var(--accent)) 55%, transparent);
+  color: inherit;
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .language-picker) {
+  /* Anchor under the tools row (right side) so the 410px list is out of flow
+     and does not push following markdown / grow scroll height. */
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  left: auto;
+  z-index: 30;
+  width: max-content;
+  max-width: min(240px, 100%);
+  padding-top: 0;
+  color: var(--editor-text);
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .language-picker .list-wrapper) {
+  background: var(--panel);
+  color: var(--editor-text);
+  right: 0;
+  left: auto;
+  max-height: min(410px, 55vh);
+  overflow: hidden;
+  box-shadow: var(--shadow, 0 8px 24px color-mix(in srgb, #000 28%, transparent));
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .language-picker .language-list) {
+  height: auto;
+  max-height: min(360px, 48vh);
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .language-list-item) {
+  color: var(--editor-text);
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .language-list-item:hover) {
+  background: var(--hover);
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .search-box input) {
+  color: var(--editor-text);
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .tools) {
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-height: 28px;
+  margin-bottom: 4px;
+  padding: 0 2px;
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .tools .desk-code-title) {
+  order: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-right: auto;
+  height: 22px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--editor-text);
+  /* Nested under ProseMirror.virtual-cursor-enabled which sets caret-color:
+     transparent — restore a visible caret for this native input. */
+  caret-color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 22px;
+  outline: none;
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .tools .desk-code-title::placeholder) {
+  color: var(--muted);
+  opacity: 0.85;
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .tools .desk-code-title:focus) {
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .tools .tools-button-group) {
+  /* Copy sits to the right of the language pill. */
+  order: 3;
+  gap: 4px;
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .tools .tools-button-group button) {
+  background: color-mix(in srgb, var(--panel) 88%, var(--editor-bg));
+  color: var(--muted);
+  border: 1px solid var(--border);
+  opacity: 1;
+  border-radius: 4px;
+  padding: 3px 8px;
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .tools .tools-button-group button:first-child),
+.milkdown-markdown-editor :deep(.milkdown-code-block .tools .tools-button-group button:last-child) {
+  border-radius: 4px;
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .tools .tools-button-group button[data-copied='true']) {
+  color: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .tools .tools-button-group button svg) {
+  fill: currentColor;
+  color: currentColor;
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .cm-editor) {
+  background: var(--editor-bg);
+  color: var(--editor-text);
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block) {
+  background: var(--editor-bg);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  transition: border-color 120ms ease;
+  overflow: visible;
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block:hover) {
+  border-color: var(--border);
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block.ProseMirror-selectednode),
+.milkdown-markdown-editor :deep(.milkdown-code-block.desk-code-block--whole-selected),
+.milkdown-markdown-editor :deep(.milkdown-code-block.selected) {
+  border-color: var(--accent-strong);
+  box-shadow: 0 0 0 1px var(--accent-strong);
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .cm-gutters) {
+  background: var(--editor-bg);
+  color: var(--muted);
+  border-right: 1px solid var(--border);
+}
+
+/* Yuque-like language pill — left of Copy within the top-right cluster. */
+.milkdown-markdown-editor :deep(.milkdown-code-block .tools .language-button),
+.milkdown-markdown-editor :deep(.milkdown-code-block:hover .tools .language-button) {
+  order: 2;
+  opacity: 1;
+  margin: 0;
+  height: 22px;
+  padding: 0 6px 0 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--panel) 88%, var(--editor-bg));
+  color: var(--muted);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 22px;
+  gap: 2px;
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .tools .language-button:hover) {
+  background: var(--hover);
+  color: var(--editor-text);
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .tools .language-button .expand-icon) {
+  width: 14px;
+  height: 14px;
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .tools .language-button .expand-icon svg) {
+  width: 12px;
+  height: 12px;
+  color: var(--muted);
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .cm-activeLine) {
+  background: transparent;
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .cm-editor:focus-within .cm-activeLine) {
+  background: color-mix(in srgb, var(--hover) 62%, transparent);
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .cm-activeLineGutter) {
+  background: transparent;
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .cm-editor:focus-within .cm-activeLineGutter) {
+  background: color-mix(in srgb, var(--hover) 62%, transparent);
+  color: var(--muted);
+}
+
+@container desk-visual-editor (max-width: 640px) {
+  .milkdown-markdown-editor :deep(.ProseMirror) {
+    /* Keep a handle gutter even in a squeezed pane; never collapse to the
+       content edge (the old 20px padding clipped + / drag controls). */
+    padding: 22px 40px 40px 80px;
+  }
+}

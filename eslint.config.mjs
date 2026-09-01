@@ -36,5 +36,22 @@ export default defineConfig(
       ]
     }
   },
+  {
+    // Shared draft object is intentionally mutated by section panels (same as pre-split SettingsPanel).
+    files: ['src/renderer/src/components/settings/**/*.vue'],
+    rules: {
+      'vue/no-mutating-props': 'off'
+    }
+  },
+  {
+    // Store/domain factory helpers return large method bags; annotate via usage sites instead.
+    files: [
+      'src/renderer/src/stores/workspace/**/*.ts',
+      'src/renderer/src/markdown/createDeskRawBlockView.ts'
+    ],
+    rules: {
+      '@typescript-eslint/explicit-function-return-type': 'off'
+    }
+  },
   eslintConfigPrettier
 )
