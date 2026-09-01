@@ -65,7 +65,8 @@ const groupDefaults: Record<string, Partial<AppSettings>> = {
     defaultNoteView: 'visual',
     autosave: { enabled: true, delayMs: 1000 },
     workspaceLayout: 'kb-dir-content',
-    prettier: true
+    prettier: true,
+    updates: { autoCheck: true }
   },
   tabs: {
     tabs: { maxOpenCount: 10, wrap: true, autoRevealInToc: true }

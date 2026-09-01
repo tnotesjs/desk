@@ -38,6 +38,7 @@ const settings: AppSettings = {
       fileNameFormat: '${YY}-${MM}-${DD}-${HH}-${mm}-${ss}'
     }
   },
+  updates: { autoCheck: true },
   hiddenKnowledgeBases: [],
   knowledgeBases: {}
 }

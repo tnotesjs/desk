@@ -68,6 +68,10 @@ export const IPC_CHANNELS = {
   webOpenRequested: 'web:open-requested',
   previewChanged: 'preview:changed',
   gitStateChanged: 'git:state-changed',
+  updateStatus: 'update:status',
+  updateCheck: 'update:check',
+  updateOpenRelease: 'update:open-release',
+  updateChanged: 'update:changed',
   log: 'desk:log'
 } as const
 
@@ -203,8 +207,22 @@ export interface AppSettings {
     changesCollapsedByDefault: boolean
   }
   imageUpload: ImageUploadSettings
+  updates: {
+    autoCheck: boolean
+  }
   hiddenKnowledgeBases: string[]
   knowledgeBases: Record<string, KnowledgeBaseSettings>
+}
+
+export type UpdateStateKind = 'idle' | 'checking' | 'up-to-date' | 'available' | 'error'
+
+export interface UpdateStatusDto {
+  state: UpdateStateKind
+  currentVersion: string
+  latestVersion?: string
+  releaseUrl?: string
+  checkedAt?: string
+  message?: string
 }
 
 export interface BootstrapPayload {
@@ -606,6 +624,12 @@ export interface DeskApi {
   app: {
     closeWindow(): Promise<DeskResult<void>>
     onTabShortcut(callback: (command: TabShortcutCommand) => void): () => void
+  }
+  updates: {
+    status(): Promise<DeskResult<UpdateStatusDto>>
+    check(): Promise<DeskResult<UpdateStatusDto>>
+    openReleasePage(): Promise<DeskResult<void>>
+    onChanged(callback: (status: UpdateStatusDto) => void): () => void
   }
   workspace: {
     choose(): Promise<DeskResult<WorkspaceOverview>>

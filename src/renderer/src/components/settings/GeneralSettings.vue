@@ -1,8 +1,27 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+
+import { checkForUpdates, useUpdateState } from '../../stores/update'
+
 import type { AppSettings } from '../../../../shared/contracts'
 
 defineProps<{ draft: AppSettings }>()
 const emit = defineEmits<{ reset: [] }>()
+
+const updateState = useUpdateState()
+const updateSummary = computed(() => {
+  const status = updateState.status
+  if (updateState.checking || status?.state === 'checking') return '正在检查更新…'
+  if (!status || status.state === 'idle') return ''
+  if (status.state === 'available')
+    return `发现新版本 v${status.latestVersion ?? ''}，可在提示条中前往下载`
+  if (status.state === 'up-to-date') return `当前 v${status.currentVersion} 已是最新版本`
+  return status.message ?? '检查更新失败'
+})
+
+async function checkNow(): Promise<void> {
+  await checkForUpdates()
+}
 </script>
 
 <template>
@@ -88,6 +107,21 @@ const emit = defineEmits<{ reset: [] }>()
         <span>按 Core 规则格式化</span>
       </label>
     </div>
+    <div class="settings-row update-row">
+      <label class="switch-field">
+        <input v-model="draft.updates.autoCheck" type="checkbox" />
+        <span>自动检查更新</span>
+      </label>
+      <button
+        type="button"
+        class="check-update-btn"
+        :disabled="updateState.checking"
+        @click="checkNow"
+      >
+        检查更新
+      </button>
+      <span v-if="updateSummary" class="update-summary">{{ updateSummary }}</span>
+    </div>
   </section>
 </template>
 
@@ -135,5 +169,30 @@ const emit = defineEmits<{ reset: [] }>()
 .layout-option.active svg rect {
   fill: color-mix(in srgb, var(--accent) 24%, var(--raised));
   stroke: var(--accent);
+}
+
+.update-row {
+  align-items: center;
+  gap: 12px;
+}
+
+.check-update-btn {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--input-bg);
+  color: var(--text);
+  cursor: pointer;
+  padding: 4px 12px;
+  font-size: 10px;
+}
+
+.check-update-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.update-summary {
+  color: var(--muted);
+  font-size: 10px;
 }
 </style>

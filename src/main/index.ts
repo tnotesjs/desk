@@ -7,6 +7,8 @@ import { handleAssetProtocol, registerAssetScheme } from './assetProtocol'
 import { gitManager } from './gitManager'
 import { registerIpc } from './ipc'
 import { deskLog } from './log'
+import { loadSettings } from './settings'
+import { updateManager } from './updateManager'
 import { previewManager } from './preview'
 import { searchManager } from './searchManager'
 import { TabShortcutResolver } from './tabShortcuts'
@@ -205,6 +207,8 @@ if (!hasSingleInstanceLock) {
     scheduleSearchRefresh()
     handleAssetProtocol()
     unregisterIpc = registerIpc(() => mainWindow)
+    updateManager.configure(loadSettings().updates.autoCheck)
+    updateManager.start()
     mainWindow = createWindow()
 
     app.on('activate', () => {
@@ -226,6 +230,7 @@ app.on('will-quit', () => {
   unregisterSearchRefresh = null
   unregisterIpc?.()
   unregisterIpc = null
+  updateManager.stop()
   void workspaceManager.dispose()
   void searchManager.dispose()
   void gitManager.dispose()

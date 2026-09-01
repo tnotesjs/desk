@@ -91,6 +91,11 @@ const settingsSchema = z.object({
       }
     }),
   hiddenKnowledgeBases: z.array(z.string().min(1)).default([]),
+  updates: z
+    .object({
+      autoCheck: z.boolean().default(true)
+    })
+    .default({ autoCheck: true }),
   knowledgeBases: z.record(z.string(), knowledgeBaseSettingsSchema).default({})
 })
 

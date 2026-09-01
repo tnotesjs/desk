@@ -38,6 +38,7 @@ import type {
   TocEntryRefDto,
   TocMoveRequest,
   TocRenameGroupRequest,
+  UpdateStatusDto,
   WebOpenRequestedEvent,
   WebTabState,
   WorkspaceSession,
@@ -57,6 +58,17 @@ const api: DeskApi = {
         callback(command)
       ipcRenderer.on(IPC_CHANNELS.tabShortcut, listener)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.tabShortcut, listener)
+    }
+  },
+  updates: {
+    status: () => invoke<UpdateStatusDto>(IPC_CHANNELS.updateStatus),
+    check: () => invoke<UpdateStatusDto>(IPC_CHANNELS.updateCheck),
+    openReleasePage: () => invoke<void>(IPC_CHANNELS.updateOpenRelease),
+    onChanged: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, status: UpdateStatusDto): void =>
+        callback(status)
+      ipcRenderer.on(IPC_CHANNELS.updateChanged, listener)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.updateChanged, listener)
     }
   },
   workspace: {

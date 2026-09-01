@@ -15,6 +15,12 @@ import {
   NAVIGATOR_SIDEBAR_MIN
 } from './stores/editor'
 import { pushToast } from './stores/toast'
+import {
+  dismissUpdateBanner,
+  initUpdateWatcher,
+  openReleasePage,
+  updateBanner
+} from './stores/update'
 import { useWorkspaceStore } from './stores/workspace'
 
 import type {
@@ -45,6 +51,7 @@ let sessionTimer: ReturnType<typeof setTimeout> | null = null
 let statusTimer: ReturnType<typeof setTimeout> | null = null
 let systemTheme: MediaQueryList | null = null
 let unsubscribeTabShortcut: (() => void) | null = null
+let unsubscribeUpdates: (() => void) | null = null
 
 const workspaceColumns = computed(() => {
   const knowledgeWidth = editor.knowledgeSidebarCollapsed ? 48 : editor.knowledgeSidebarWidth
@@ -334,6 +341,7 @@ onMounted(async () => {
   unsubscribeTabShortcut = window.desk.app.onTabShortcut((command) => {
     void handleTabShortcut(command)
   })
+  unsubscribeUpdates = initUpdateWatcher()
   systemTheme = window.matchMedia('(prefers-color-scheme: dark)')
   systemTheme.addEventListener('change', applyAppearance)
   await store.initialize()
@@ -345,6 +353,8 @@ onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
   unsubscribeTabShortcut?.()
   unsubscribeTabShortcut = null
+  unsubscribeUpdates?.()
+  unsubscribeUpdates = null
   systemTheme?.removeEventListener('change', applyAppearance)
   systemTheme = null
   if (sessionTimer) clearTimeout(sessionTimer)
@@ -373,6 +383,18 @@ onUnmounted(() => {
         </button>
       </div>
     </header>
+
+    <div v-if="updateBanner" class="global-banner status update-banner">
+      <span
+        >发现新版本 v{{ updateBanner.latestVersion }}（当前 v{{
+          updateBanner.currentVersion
+        }}）</span
+      >
+      <button type="button" class="update-download" @click="void openReleasePage()">
+        前往下载
+      </button>
+      <button type="button" aria-label="忽略本次更新" @click="dismissUpdateBanner">×</button>
+    </div>
 
     <main
       v-if="store.hasWorkspace"
@@ -791,6 +813,11 @@ body.is-resizing {
 .global-banner.status {
   background: var(--success-soft);
   color: var(--success);
+}
+
+.update-banner .update-download {
+  font-weight: 600;
+  text-decoration: underline;
 }
 
 .welcome {
