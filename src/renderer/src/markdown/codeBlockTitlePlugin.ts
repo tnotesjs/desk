@@ -1,3 +1,4 @@
+import type { MilkdownPlugin } from '@milkdown/kit/ctx'
 import { Plugin } from '@milkdown/kit/prose/state'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { $prose } from '@milkdown/kit/utils'
@@ -6,7 +7,7 @@ import { $prose } from '@milkdown/kit/utils'
  * Injects a Yuque-style title input into each Crepe code-block tools row and
  * keeps it synced with the `title` attr on `code_block`.
  */
-export function createCodeBlockTitlePlugin() {
+export function createCodeBlockTitlePlugin(): MilkdownPlugin {
   return $prose(() => {
     return new Plugin({
       view: (view) => {

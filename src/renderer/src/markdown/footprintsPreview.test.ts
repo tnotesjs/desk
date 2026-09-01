@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseFootprintsSource } from '@tnotesjs/ui'
+import { parseFootprintsSource, type FootprintsPayload } from '@tnotesjs/ui'
 import { rebuildContainerSource, parseContainerSource } from '../editor/markdown/containerBody'
 import { resolveMarkdownImageUrl } from './markdownAssetUrl'
 
@@ -8,7 +8,7 @@ function resolveFootprintsPreview(
   source: string,
   knowledgeBaseId: string,
   noteUuid: string
-) {
+): FootprintsPayload {
   const payload = parseFootprintsSource(source)
   return {
     ...payload,

@@ -26,7 +26,7 @@ export function parseSwiperSlides(body: string): SwiperSlideEntry[] {
   return slides
 }
 
-export function swiperSlideTabTitle(entry: SwiperSlideEntry, _index?: number): string {
+export function swiperSlideTabTitle(entry: SwiperSlideEntry): string {
   const alt = entry.alt.trim()
   return alt || 'img'
 }

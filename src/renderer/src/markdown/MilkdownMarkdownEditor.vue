@@ -104,9 +104,7 @@ import {
   mountFootprintsPreview,
   mountWordListPreview
 } from '../editor/markdown/componentPreview'
-import {
-  parseFootprintsSource
-} from '@tnotesjs/ui'
+import { parseFootprintsSource, type FootprintsPayload } from '@tnotesjs/ui'
 
 import type { NoteViewMode } from '../../../shared/contracts'
 
@@ -1469,7 +1467,7 @@ onMounted(async () => {
           previewHost.className = 'desk-raw-block__component-preview'
           dom.append(previewHost)
           // Resolve note-local image paths for preview only; source keeps relative URLs.
-          const resolveFootprintsPreview = (source: string) => {
+          const resolveFootprintsPreview = (source: string): FootprintsPayload => {
             const payload = parseFootprintsSource(source)
             return {
               ...payload,
@@ -2123,7 +2121,7 @@ onMounted(async () => {
               if (tab.querySelector('input')) return
               const entry = swiperSlides[index]
               if (!entry) return
-              const previousTitle = swiperSlideTabTitle(entry, index)
+              const previousTitle = swiperSlideTabTitle(entry)
               const input = document.createElement('input')
               input.type = 'text'
               input.className = 'tn-tab__rename'
@@ -2151,12 +2149,12 @@ onMounted(async () => {
                     tab.textContent = previousTitle
                     return
                   }
-                  const label = swiperSlideTabTitle(nextSlides[index]!, index)
+                  const label = swiperSlideTabTitle(nextSlides[index]!)
                   tab.textContent = label
                   slideEls[index]!.dataset.title = label
                   return
                 }
-                tab.textContent = swiperSlideTabTitle(current, index)
+                tab.textContent = swiperSlideTabTitle(current)
               }
 
               input.addEventListener('keydown', (event) => {
@@ -2184,7 +2182,7 @@ onMounted(async () => {
             slides.forEach((slide, index) => {
               const slideEl = document.createElement('div')
               slideEl.className = 'swiper-slide'
-              const title = swiperSlideTabTitle(slide, index)
+              const title = swiperSlideTabTitle(slide)
               slideEl.dataset.title = title
               const img = document.createElement('img')
               img.src = resolveImage(slide.src) || slide.src

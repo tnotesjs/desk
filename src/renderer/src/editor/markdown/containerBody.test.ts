@@ -109,7 +109,8 @@ describe('renderContainerFromSource', () => {
     )
     const next = el.querySelector('.tn-tab-next') as HTMLButtonElement
     const prev = el.querySelector('.tn-tab-prev') as HTMLButtonElement
-    const activeTitle = () => el.querySelector('.tn-tab.active')?.textContent
+    const activeTitle = (): string | undefined =>
+      el.querySelector('.tn-tab.active')?.textContent ?? undefined
 
     next.click()
     expect(activeTitle()).toBe('b')

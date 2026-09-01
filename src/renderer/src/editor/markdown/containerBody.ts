@@ -313,7 +313,7 @@ function buildSwiper(bodyMarkdown: string, resolveImage: ResolveImage): HTMLElem
   slides.forEach((slide, index) => {
     const slideEl = document.createElement('div')
     slideEl.className = 'swiper-slide'
-    const title = swiperSlideTabTitle(slide, index)
+    const title = swiperSlideTabTitle(slide)
     slideEl.dataset.title = title
     const img = document.createElement('img')
     img.src = resolveImage(slide.src) || slide.src
