@@ -54,7 +54,11 @@ pnpm build:win
 pnpm build:linux
 ```
 
-GitHub Actions 会在提交和 Pull Request 上执行静态检查、测试与构建。项目当前不创建版本标签或 GitHub Release；安装包发布、签名和多平台发布验收会在正式开发完成后处理。
+推送 `v*` 标签会触发 GitHub Actions 打多平台安装包并创建 Release。macOS 构建使用 ad-hoc 签名（尚无 Apple Developer ID / 公证）；首次打开若提示无法验证开发者，可右键 App → 打开。若仍提示「已损坏」，在终端执行：
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/TNotes Desk.app"
+```
 
 ## Repository
 

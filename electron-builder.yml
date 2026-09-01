@@ -21,6 +21,13 @@ nsis:
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
 mac:
+  # Ad-hoc sign when no Developer ID cert is present. Unsigned+quarantined
+  # downloads show "is damaged" with no bypass; ad-hoc becomes "unidentified
+  # developer" (right-click → Open). Not a substitute for Apple notarization.
+  identity: '-'
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     - NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
