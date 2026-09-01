@@ -3,7 +3,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Crepe } from '@milkdown/crepe'
 import { editorViewCtx, commandsCtx, remarkStringifyOptionsCtx } from '@milkdown/kit/core'
 import { uploadConfig } from '@milkdown/kit/plugin/upload'
-import { Plugin, TextSelection } from '@milkdown/kit/prose/state'
+import { Plugin, TextSelection, NodeSelection } from '@milkdown/kit/prose/state'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { buildTNotesSlashGroup, installSlashMenuPresentation } from './slashMenu'
 import type { SlashMenuItem } from './slashMenu'
@@ -39,6 +39,7 @@ import GithubSlugger from 'github-slugger'
 import BlockActionMenu from './BlockActionMenu.vue'
 import type { BlockAction } from './BlockActionMenu.vue'
 import { installBlockHandleClickController, type BlockHandleClickTarget } from './blockActionMenu'
+import { createCodeBlockTitlePlugin } from './codeBlockTitlePlugin'
 
 import {
   projectRawBlocksForMilkdown,
@@ -58,9 +59,54 @@ import {
   type ContainerSourceEditorHandle
 } from '../editor/markdown/containerSourceEditor'
 import { deleteDeskRawBlockAt } from '../editor/markdown/rawBlockEmpty'
-import { renderDiagram } from '../editor/markdown/diagramRenderer'
+import { renderDiagram, parseFencedCode, rebuildMermaidFence } from '../editor/markdown/diagramRenderer'
+import { mindmapPreviewMarkdown, rebuildMindmapFence } from '../editor/markdown/mindmapFence'
+import {
+  bodyHasIncludeLines,
+  codeGroupEntryTabTitle,
+  includeLanguage,
+  parseCodeGroupEntries,
+  parseDeskIncludeLine,
+  serializeCodeGroupEntries,
+  withCodeGroupEntryLanguage,
+  withCodeGroupEntryTitle,
+  type CodeGroupEntry
+} from '../editor/markdown/deskInclude'
+import {
+  applySwiperTabsPadding,
+  createSwiperTabNav,
+  parseSwiperSlides,
+  serializeSwiperSlides,
+  swiperSlideTabTitle,
+  withSwiperSlideTitle,
+  wrapSlideIndex,
+  type SwiperSlideEntry
+} from '../editor/markdown/swiperSlides'
+import { mountCodeTabEditor, type CodeTabEditorHandle } from '../editor/markdown/deskCodeTabEditor'
 import { reconcileMarkdownSource } from '../editor/markdown/sourcePreservation'
 import { resolveMarkdownImageUrl } from './markdownAssetUrl'
+import {
+  isBilibiliVideoSource,
+  isWordListSource,
+  isNotesTableSource,
+  parseBilibiliVideoSource,
+  parseWordListSource,
+  parseNotesTableSource,
+  rebuildBilibiliVideoSource,
+  rebuildWordListSource,
+  rebuildNotesTableSource
+} from '../editor/markdown/componentBody'
+import {
+  mountBilibiliVideoPreview,
+  mountMermaidPreview,
+  mountMindmapPreview,
+  mountNotesTablePreview,
+  mountFootprintsPreview,
+  mountWordListPreview
+} from '../editor/markdown/componentPreview'
+import {
+  parseFootprintsSource
+} from '@tnotesjs/ui'
 
 import type { NoteViewMode } from '../../../shared/contracts'
 
@@ -194,6 +240,15 @@ async function writeClipboard(text: string): Promise<void> {
   textarea.remove()
 }
 
+/** CodeMirror splits lines into `.cm-line` divs; parent textContent drops newlines. */
+function readCodeBlockPlainText(block: Element): string {
+  const lines = block.querySelectorAll('.cm-line')
+  if (lines.length > 0) {
+    return Array.from(lines, (line) => line.textContent ?? '').join('\n')
+  }
+  return block.querySelector('pre, code')?.textContent ?? ''
+}
+
 async function copyCurrentBlock(): Promise<boolean> {
   const target = currentBlockTarget()
   const node = target?.view.state.doc.nodeAt(target.position)
@@ -249,6 +304,22 @@ interface RawSourceEditorContext {
   label: string
   /** Structured callouts edit title+body only; fences stay locked. */
   structuredCallout?: boolean
+  /** BilibiliVideo: edit BV id only; rebuild canonical full tag. */
+  structuredBilibili?: boolean
+  /** WordList: edit words + needSort; rebuild canonical full tag. */
+  structuredWordList?: boolean
+  /** Mermaid: edit diagram body only; fence + center stay locked (center via toggle). */
+  structuredMermaid?: boolean
+  /** Mindmap: edit diagram body only; fence locked. */
+  structuredMindmap?: boolean
+  /** NotesTable: edit ids list; rebuild tag. */
+  structuredNotesTable?: boolean
+  /** code-group / swiper: edit body only; container fences locked. */
+  structuredContainerBody?: boolean
+  /** Use the shared icon+Edit pill chrome without enabling a structured form. */
+  editPill?: boolean
+  /** Live atom source when writebacks update the node without remounting. */
+  getSource?: () => string
   renderPreview: (source: string) => void
 }
 
@@ -262,13 +333,23 @@ const EDIT_PILL_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="24" heigh
 const DONE_PILL_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.55 18.2 3.65 12.3l1.4-1.4 4.5 4.5L18.95 5.95l1.4 1.4z"/></svg>`
 
 function attachRawSourceEditor(ctx: RawSourceEditorContext): () => void {
-  const structured = Boolean(ctx.structuredCallout)
+  const liveSource = (): string => ctx.getSource?.() ?? ctx.source
+  const structured = Boolean(
+    ctx.structuredCallout ||
+      ctx.structuredBilibili ||
+      ctx.structuredWordList ||
+      ctx.structuredMermaid ||
+      ctx.structuredMindmap ||
+      ctx.structuredNotesTable ||
+      ctx.structuredContainerBody
+  )
+  const useEditPill = structured || Boolean(ctx.editPill)
   const editButton = document.createElement('button')
   editButton.type = 'button'
-  editButton.className = structured
+  editButton.className = useEditPill
     ? 'desk-raw-block__edit desk-raw-block__edit--pill'
     : 'desk-raw-block__edit'
-  if (structured) {
+  if (useEditPill) {
     editButton.innerHTML = `${EDIT_PILL_ICON}<span>Edit</span>`
     editButton.setAttribute('aria-label', 'Edit')
     editButton.title = 'Edit'
@@ -282,9 +363,18 @@ function attachRawSourceEditor(ctx: RawSourceEditorContext): () => void {
   editorHost.hidden = true
   ctx.dom.append(editButton, editorHost)
 
-  let editorValue = ctx.source
+  let editorValue = liveSource()
   let draftTitle = ''
   let draftBody = ''
+  let draftMermaidBody = ''
+  let draftMindmapBody = ''
+  let draftNotesTableIds = ''
+  let draftContainerBody = ''
+  let draftBilibiliId = ''
+  let draftBilibiliAutoplay = false
+  let draftBilibiliMuted = false
+  let draftWordListText = ''
+  let draftWordListNeedSort = false
   let syncTimer: ReturnType<typeof setTimeout> | null = null
   let blurCommitTimer: ReturnType<typeof setTimeout> | null = null
   let editing = false
@@ -323,7 +413,7 @@ function attachRawSourceEditor(ctx: RawSourceEditorContext): () => void {
         clearTimeout(syncTimer)
         syncTimer = null
       }
-      if (editing) ctx.renderPreview(ctx.source)
+      if (editing) ctx.renderPreview(liveSource())
       closeEditing()
       editButton.hidden = true
       editButton.disabled = true
@@ -341,7 +431,7 @@ function attachRawSourceEditor(ctx: RawSourceEditorContext): () => void {
       applyReadonly(true)
       return
     }
-    if (editorValue === ctx.source) {
+    if (editorValue === liveSource()) {
       setTimeout(closeEditing, 0)
       return
     }
@@ -377,11 +467,59 @@ function attachRawSourceEditor(ctx: RawSourceEditorContext): () => void {
 
   const publishDraft = (): void => {
     if (isEffectivelyReadOnly()) return
-    editorValue = rebuildContainerSource(ctx.source, {
-      title: draftTitle,
-      body: draftBody,
-      name: parseContainerSource(ctx.source).name
-    })
+    if (ctx.structuredBilibili) {
+      const parsed = parseBilibiliVideoSource(liveSource())
+      editorValue = rebuildBilibiliVideoSource({
+        id: draftBilibiliId,
+        autoplay: draftBilibiliAutoplay,
+        muted: draftBilibiliMuted,
+        trailingNewline: parsed?.trailingNewline ?? true
+      })
+    } else if (ctx.structuredWordList) {
+      const parsed = parseWordListSource(liveSource())
+      const words = draftWordListText
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+      editorValue = rebuildWordListSource({
+        words,
+        needSort: draftWordListNeedSort,
+        trailingNewline: parsed?.trailingNewline ?? true
+      })
+    } else if (ctx.structuredMermaid) {
+      const center = parseFencedCode(editorValue).center
+      editorValue = rebuildMermaidFence(liveSource(), center, draftMermaidBody)
+    } else if (ctx.structuredMindmap) {
+      const fence = parseFencedCode(liveSource())
+      const trailingNewline = /\r?\n$/.test(liveSource())
+      const open = fence.title
+        ? `\`\`\`mindmap [${fence.title}]`
+        : '```mindmap'
+      const core = `${open}\n${draftMindmapBody.replace(/\n$/, '')}\n\`\`\``
+      editorValue = trailingNewline ? `${core}\n` : core
+    } else if (ctx.structuredNotesTable) {
+      const ids = draftNotesTableIds
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+      editorValue = rebuildNotesTableSource({
+        ids,
+        trailingNewline: parseNotesTableSource(liveSource())?.trailingNewline ?? true
+      })
+    } else if (ctx.structuredContainerBody) {
+      const parsed = parseContainerSource(liveSource())
+      editorValue = rebuildContainerSource(liveSource(), {
+        title: parsed.title,
+        body: draftContainerBody,
+        name: parsed.name
+      })
+    } else {
+      editorValue = rebuildContainerSource(liveSource(), {
+        title: draftTitle,
+        body: draftBody,
+        name: parseContainerSource(liveSource()).name
+      })
+    }
     fitEditorToSource(editorValue)
     if (syncTimer != null) clearTimeout(syncTimer)
     syncTimer = setTimeout(() => {
@@ -423,15 +561,282 @@ function attachRawSourceEditor(ctx: RawSourceEditorContext): () => void {
   const startEditing = (): void => {
     if (editing || isEffectivelyReadOnly()) return
     editing = true
-    editorValue = ctx.source
+    editorValue = liveSource()
     editButton.hidden = true
     editButton.disabled = true
     expandDetailsPreview()
 
     editorHost.replaceChildren()
 
+    if (ctx.structuredBilibili) {
+      const parsed = parseBilibiliVideoSource(liveSource())
+      draftBilibiliId = parsed?.id ?? ''
+      draftBilibiliAutoplay = parsed?.autoplay ?? false
+      draftBilibiliMuted = parsed?.muted ?? false
+      fitEditorToSource(editorValue)
+
+      const done = document.createElement('button')
+      done.type = 'button'
+      done.className = 'desk-raw-block__edit desk-raw-block__edit--pill desk-raw-block__editor-done'
+      done.innerHTML = `${DONE_PILL_ICON}<span>Done</span>`
+      done.setAttribute('aria-label', 'Done')
+      done.title = 'Done'
+      done.addEventListener('click', (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        commit()
+      })
+
+      const fields = document.createElement('div')
+      fields.className = 'desk-raw-block__editor-fields'
+
+      const idInput = document.createElement('input')
+      idInput.type = 'text'
+      idInput.className = 'desk-raw-block__editor-title'
+      idInput.value = draftBilibiliId
+      idInput.placeholder = 'BVID，例如 BV1QR4y1y7GG'
+      idInput.spellcheck = false
+      idInput.addEventListener('input', () => {
+        draftBilibiliId = idInput.value.trim()
+        publishDraft()
+      })
+      idInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault()
+          commit()
+        }
+        if (
+          event.key === 'Backspace' &&
+          draftBilibiliId === '' &&
+          idInput.selectionStart === 0 &&
+          idInput.selectionEnd === 0
+        ) {
+          event.preventDefault()
+          removeBlockOnEmptyBackspace()
+        }
+      })
+
+      const toggles = document.createElement('div')
+      toggles.className = 'desk-raw-block__editor-toggles'
+
+      const autoplayLabel = document.createElement('label')
+      autoplayLabel.className = 'desk-raw-block__editor-toggle'
+      const autoplayInput = document.createElement('input')
+      autoplayInput.type = 'checkbox'
+      autoplayInput.checked = draftBilibiliAutoplay
+      autoplayInput.addEventListener('change', () => {
+        draftBilibiliAutoplay = autoplayInput.checked
+        publishDraft()
+      })
+      autoplayLabel.append(autoplayInput, document.createTextNode('自动播放'))
+
+      const mutedLabel = document.createElement('label')
+      mutedLabel.className = 'desk-raw-block__editor-toggle'
+      const mutedInput = document.createElement('input')
+      mutedInput.type = 'checkbox'
+      mutedInput.checked = draftBilibiliMuted
+      mutedInput.addEventListener('change', () => {
+        draftBilibiliMuted = mutedInput.checked
+        publishDraft()
+      })
+      mutedLabel.append(mutedInput, document.createTextNode('静音'))
+
+      toggles.append(autoplayLabel, mutedLabel)
+      fields.append(idInput, toggles)
+      editorHost.append(done, fields)
+      editorHost.hidden = false
+      window.setTimeout(() => idInput.focus(), 0)
+      return
+    }
+
+    if (ctx.structuredWordList) {
+      const parsed = parseWordListSource(liveSource())
+      draftWordListText = (parsed?.words ?? []).join('\n')
+      draftWordListNeedSort = parsed?.needSort ?? false
+      fitEditorToSource(editorValue)
+
+      const done = document.createElement('button')
+      done.type = 'button'
+      done.className = 'desk-raw-block__edit desk-raw-block__edit--pill desk-raw-block__editor-done'
+      done.innerHTML = `${DONE_PILL_ICON}<span>Done</span>`
+      done.setAttribute('aria-label', 'Done')
+      done.title = 'Done'
+      done.addEventListener('click', (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        commit()
+      })
+
+      const fields = document.createElement('div')
+      fields.className = 'desk-raw-block__editor-fields'
+
+      const cmHost = document.createElement('div')
+      cmHost.className = 'desk-raw-block__editor-cm'
+
+      const toggles = document.createElement('div')
+      toggles.className = 'desk-raw-block__editor-toggles'
+      const sortLabel = document.createElement('label')
+      sortLabel.className = 'desk-raw-block__editor-toggle'
+      const sortInput = document.createElement('input')
+      sortInput.type = 'checkbox'
+      sortInput.checked = draftWordListNeedSort
+      sortInput.addEventListener('change', () => {
+        draftWordListNeedSort = sortInput.checked
+        publishDraft()
+      })
+      sortLabel.append(sortInput, document.createTextNode('按字母排序'))
+      toggles.append(sortLabel)
+
+      fields.append(cmHost, toggles)
+      editorHost.append(done, fields)
+      editorHost.hidden = false
+
+      editorHandle = createContainerSourceEditor(
+        cmHost,
+        draftWordListText,
+        (value) => {
+          draftWordListText = value
+          publishDraft()
+        },
+        () => commit(),
+        {
+          onEmptyBackspace: removeBlockOnEmptyBackspace,
+          placeholder: '每行一个单词'
+        }
+      )
+      return
+    }
+
+    if (ctx.structuredMermaid) {
+      draftMermaidBody = parseFencedCode(liveSource()).code
+      fitEditorToSource(editorValue)
+
+      const done = document.createElement('button')
+      done.type = 'button'
+      done.className = 'desk-raw-block__edit desk-raw-block__edit--pill desk-raw-block__editor-done'
+      done.innerHTML = `${DONE_PILL_ICON}<span>Done</span>`
+      done.setAttribute('aria-label', 'Done')
+      done.title = 'Done'
+      done.addEventListener('click', (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        commit()
+      })
+
+      const fields = document.createElement('div')
+      fields.className = 'desk-raw-block__editor-fields'
+
+      const cmHost = document.createElement('div')
+      cmHost.className = 'desk-raw-block__editor-cm'
+      fields.append(cmHost)
+      editorHost.append(done, fields)
+      editorHost.hidden = false
+
+      editorHandle = createContainerSourceEditor(
+        cmHost,
+        draftMermaidBody,
+        (value) => {
+          draftMermaidBody = value
+          publishDraft()
+        },
+        () => commit(),
+        {
+          onEmptyBackspace: removeBlockOnEmptyBackspace,
+          placeholder: '输入 Mermaid 图表源码…'
+        }
+      )
+      return
+    }
+
+    if (ctx.structuredMindmap || ctx.structuredContainerBody) {
+      draftMindmapBody = ctx.structuredMindmap ? parseFencedCode(liveSource()).code : ''
+      draftContainerBody = ctx.structuredContainerBody
+        ? parseContainerSource(liveSource()).body
+        : ''
+      const initial = ctx.structuredMindmap ? draftMindmapBody : draftContainerBody
+      fitEditorToSource(editorValue)
+
+      const done = document.createElement('button')
+      done.type = 'button'
+      done.className = 'desk-raw-block__edit desk-raw-block__edit--pill desk-raw-block__editor-done'
+      done.innerHTML = `${DONE_PILL_ICON}<span>Done</span>`
+      done.setAttribute('aria-label', 'Done')
+      done.title = 'Done'
+      done.addEventListener('click', (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        commit()
+      })
+
+      const fields = document.createElement('div')
+      fields.className = 'desk-raw-block__editor-fields'
+      const cmHost = document.createElement('div')
+      cmHost.className = 'desk-raw-block__editor-cm'
+      fields.append(cmHost)
+      editorHost.append(done, fields)
+      editorHost.hidden = false
+
+      editorHandle = createContainerSourceEditor(
+        cmHost,
+        initial,
+        (value) => {
+          if (ctx.structuredMindmap) draftMindmapBody = value
+          else draftContainerBody = value
+          publishDraft()
+        },
+        () => commit(),
+        {
+          onEmptyBackspace: removeBlockOnEmptyBackspace,
+          placeholder: ctx.structuredMindmap
+            ? '输入思维导图 Markdown…'
+            : '编辑容器正文…'
+        }
+      )
+      return
+    }
+
+    if (ctx.structuredNotesTable) {
+      draftNotesTableIds = (parseNotesTableSource(liveSource())?.ids ?? []).join('\n')
+      fitEditorToSource(editorValue)
+
+      const done = document.createElement('button')
+      done.type = 'button'
+      done.className = 'desk-raw-block__edit desk-raw-block__edit--pill desk-raw-block__editor-done'
+      done.innerHTML = `${DONE_PILL_ICON}<span>Done</span>`
+      done.setAttribute('aria-label', 'Done')
+      done.title = 'Done'
+      done.addEventListener('click', (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        commit()
+      })
+
+      const fields = document.createElement('div')
+      fields.className = 'desk-raw-block__editor-fields'
+      const cmHost = document.createElement('div')
+      cmHost.className = 'desk-raw-block__editor-cm'
+      fields.append(cmHost)
+      editorHost.append(done, fields)
+      editorHost.hidden = false
+
+      editorHandle = createContainerSourceEditor(
+        cmHost,
+        draftNotesTableIds,
+        (value) => {
+          draftNotesTableIds = value
+          publishDraft()
+        },
+        () => commit(),
+        {
+          onEmptyBackspace: removeBlockOnEmptyBackspace,
+          placeholder: '每行一个笔记 ID'
+        }
+      )
+      return
+    }
+
     if (structured) {
-      const parsed = parseContainerSource(ctx.source)
+      const parsed = parseContainerSource(liveSource())
       draftTitle = parsed.title
       draftBody = parsed.body
       // Keep the stored source until the user edits — rebuild only normalizes
@@ -506,7 +911,7 @@ function attachRawSourceEditor(ctx: RawSourceEditorContext): () => void {
 
       editorHandle = createContainerSourceEditor(
         cmHost,
-        ctx.source,
+        liveSource(),
         (value) => {
           if (isEffectivelyReadOnly()) return
           editorValue = value
@@ -830,9 +1235,47 @@ function resolveHeadingTarget(targetId: string): HTMLElement | null {
 
 function handleClick(event: MouseEvent): void {
   if (!(event.target instanceof Element)) return
+
+  // Crepe/Milkdown Copy uses navigator.clipboard.writeText and only sync-catches
+  // failures, so Electron's async NotAllowedError never falls back. Intercept
+  // in capture and use Desk's permission-safe path instead.
+  const copyButton = event.target.closest('.milkdown-code-block .copy-button')
+  if (copyButton instanceof HTMLElement) {
+    event.preventDefault()
+    event.stopPropagation()
+    const block = copyButton.closest('.milkdown-code-block')
+    const text = block ? readCodeBlockPlainText(block) : ''
+    void writeClipboard(text)
+      .then(() => {
+        copyButton.dataset.copied = 'true'
+        window.setTimeout(() => {
+          delete copyButton.dataset.copied
+        }, 1200)
+      })
+      .catch(() => {
+        /* writeClipboard already falls back; ignore residual errors */
+      })
+    return
+  }
+
   const anchor = event.target.closest<HTMLAnchorElement>('a[href]')
   if (!anchor) return
   const href = anchor.getAttribute('href') ?? ''
+
+  // NotesTable rows use desk-note://<uuid> so clicks open the note in Desk.
+  if (href.startsWith('desk-note://')) {
+    event.preventDefault()
+    event.stopPropagation()
+    let noteUuid = href.slice('desk-note://'.length)
+    try {
+      noteUuid = decodeURIComponent(noteUuid)
+    } catch {
+      /* keep raw */
+    }
+    if (noteUuid) emit('openNote', noteUuid)
+    return
+  }
+
   if (href.startsWith('#')) {
     event.preventDefault()
     let targetId = href.slice(1)
@@ -913,6 +1356,7 @@ onMounted(async () => {
     }
   })
   editor.editor.use(rawBlockProjectionPlugins)
+  editor.editor.use(createCodeBlockTitlePlugin())
   editor.editor.use(createMarkdownShortcutInputRules())
   editor.editor.use(
     createBlockShortcutPlugin({
@@ -937,102 +1381,1415 @@ onMounted(async () => {
         resolveMarkdownImageUrl(source, props.knowledgeBaseId, props.noteUuid)
       const dom = renderDeskRawBlockElement(block, resolveImage)
       const cleanupTasks: Array<() => void> = []
+      let currentRawNode = node
       if (!block.hidden) {
         cleanupTasks.push(attachRawBlockBoundaryControls({ dom, view, getPos }))
       }
-      if (block.kind === 'raw-container') {
-        let previewEl = dom.querySelector('.custom-block') as HTMLElement | null
-        const structuredCallout = isStructuredCalloutSource(block.source)
-        cleanupTasks.push(
-          attachRawSourceEditor({
-            dom,
-            source: block.source,
-            view,
-            getPos,
-            label: structuredCallout ? '编辑容器' : '编辑容器源码',
-            structuredCallout,
-            renderPreview: (source) => {
-              if (!previewEl) return
-              const fresh = renderContainerFromSource(source, resolveImage)
-              previewEl.replaceWith(fresh)
-              previewEl = fresh
-            }
-          })
-        )
-      }
-      if (block.kind === 'raw-component') {
-        const labelEl = dom.querySelector<HTMLElement>('.desk-raw-block__label')
-        const previewEl = dom.querySelector<HTMLElement>('.desk-raw-block__preview')
-        cleanupTasks.push(
-          attachRawSourceEditor({
-            dom,
-            source: block.source,
-            view,
-            getPos,
-            label: '编辑组件源码',
-            renderPreview: (source) => {
-              // 组件无专用可视化预览：刷新卡片标签/预览两行。
-              const name = source.match(/^ {0,3}<([A-Z][\w.-]*)/)?.[1]
-              if (labelEl) {
-                labelEl.textContent = name ? `组件 · ${name}` : '组件'
-              }
-              if (previewEl) {
-                const firstLine = source.split(/\r?\n/, 1)[0].trim()
-                previewEl.textContent =
-                  firstLine.length <= 96 ? firstLine : `${firstLine.slice(0, 93)}…`
-              }
-            }
-          })
-        )
-      }
-      if (block.kind === 'raw-diagram') {
-        const diagramEl = dom.querySelector('.desk-diagram') as HTMLElement | null
-        let renderToken = 0
-        let currentDiagram: { destroy?: () => void } | null = null
-        const renderInto = (source: string): void => {
-          if (!diagramEl) return
-          const token = ++renderToken
-          currentDiagram?.destroy?.()
-          currentDiagram = null
-          void renderDiagram(source).then((rendered) => {
-            if (token !== renderToken) {
-              rendered.destroy?.()
+      if (block.kind === 'raw-include') {
+        const include = parseDeskIncludeLine(block.source)
+        const editable = !isEffectivelyReadOnly()
+        dom.classList.add('desk-raw-block--include')
+        if (editable) dom.classList.add('desk-raw-block--include-editable')
+
+        const labelEl = dom.querySelector('.desk-raw-block__label')
+        if (labelEl && include) {
+          const titlePart = include.title ? ` · ${include.title}` : ''
+          labelEl.textContent = `文件引用 · ${include.path}${titlePart}`
+        }
+
+        const previewEl = dom.querySelector('.desk-raw-block__preview')
+        const bodyHost = document.createElement('div')
+        bodyHost.className = 'desk-raw-block__include-body'
+        if (previewEl) previewEl.replaceWith(bodyHost)
+        else dom.append(bodyHost)
+
+        let cancelled = false
+        let tabEditor: CodeTabEditorHandle | null = null
+        cleanupTasks.push(() => {
+          cancelled = true
+          tabEditor?.destroy()
+          tabEditor = null
+        })
+
+        void (async () => {
+          if (!include) {
+            bodyHost.textContent = '无法解析文件引用'
+            return
+          }
+          try {
+            const result = await window.desk.attachments.readText({
+              knowledgeBaseId: props.knowledgeBaseId,
+              noteUuid: props.noteUuid,
+              path: include.path
+            })
+            if (cancelled) return
+            if (!result.ok) {
+              bodyHost.textContent = `引用失败：${result.error.message}`
               return
             }
-            currentDiagram = rendered
-            diagramEl.replaceChildren(rendered.node)
-            // The canvas needs the host to be laid out (clientWidth/Height);
-            // defer creation to the next frame so the size is available.
-            const active = rendered.activate
-            if (active) {
-              // Defer past the first layout so the canvas host has real
-              // clientWidth/Height; otherwise zoomToFit can't frame the tree.
-              setTimeout(() => {
-                if (token === renderToken) active(rendered.node)
-              }, 80)
+
+            if (!editable) {
+              const pre = document.createElement('pre')
+              pre.className = 'desk-raw-block__include-pre'
+              pre.textContent = result.value
+              bodyHost.replaceChildren(pre)
+              return
             }
+
+            tabEditor = mountCodeTabEditor(bodyHost, {
+              initialContent: result.value,
+              language: includeLanguage(include),
+              onCopy: (text) => writeClipboard(text),
+              onDirtyChange: (dirty) => {
+                dom.classList.toggle('is-include-dirty', dirty)
+              },
+              onSave: async (content) => {
+                const write = await window.desk.attachments.writeText({
+                  knowledgeBaseId: props.knowledgeBaseId,
+                  noteUuid: props.noteUuid,
+                  path: include.path,
+                  content
+                })
+                if (!write.ok) return { ok: false, message: write.error.message }
+                return { ok: true }
+              }
+            })
+          } catch (error) {
+            if (cancelled) return
+            bodyHost.textContent = `引用失败：${error instanceof Error ? error.message : String(error)}`
+          }
+        })()
+      }
+      if (block.kind === 'raw-container') {
+        const container = parseContainerSource(block.source)
+        if (container.name === 'footprints') {
+          dom.classList.add('desk-raw-block--footprints')
+          dom.replaceChildren()
+          const previewHost = document.createElement('div')
+          previewHost.className = 'desk-raw-block__component-preview'
+          dom.append(previewHost)
+          // Resolve note-local image paths for preview only; source keeps relative URLs.
+          const resolveFootprintsPreview = (source: string) => {
+            const payload = parseFootprintsSource(source)
+            return {
+              ...payload,
+              images: payload.images.map((src) => resolveImage(src))
+            }
+          }
+          const mounted = mountFootprintsPreview(
+            previewHost,
+            resolveFootprintsPreview(block.source)
+          )
+          cleanupTasks.push(() => mounted.unmount())
+          cleanupTasks.push(
+            attachRawSourceEditor({
+              dom,
+              source: block.source,
+              view,
+              getPos,
+              label: '编辑 Footprints',
+              structuredContainerBody: true,
+              renderPreview: (source) => {
+                mounted.update(resolveFootprintsPreview(source))
+              }
+            })
+          )
+        } else {
+          let previewEl = dom.querySelector('.tn-swiper, .custom-block') as HTMLElement | null
+          const structuredCallout = isStructuredCalloutSource(block.source)
+          const structuredContainerBody =
+            container.name === 'code-group' || container.name === 'swiper'
+          const editable = !isEffectivelyReadOnly()
+
+          let cancelledIncludes = false
+          let currentContainerSource = block.source
+          let codeGroupEntries: CodeGroupEntry[] = []
+          let swiperSlides: SwiperSlideEntry[] = []
+          const codeGroupTabEditors: Array<CodeTabEditorHandle | null> = []
+          cleanupTasks.push(() => {
+            cancelledIncludes = true
+            codeGroupTabEditors.splice(0).forEach((handle) => handle?.destroy())
+          })
+
+          const loadIncludeCache = async (body: string): Promise<Map<string, string>> => {
+            const cache = new Map<string, string>()
+            for (const line of body.replace(/\r\n?/g, '\n').split('\n')) {
+              const include = parseDeskIncludeLine(line)
+              if (!include || cache.has(include.path)) continue
+              try {
+                const result = await window.desk.attachments.readText({
+                  knowledgeBaseId: props.knowledgeBaseId,
+                  noteUuid: props.noteUuid,
+                  path: include.path
+                })
+                cache.set(
+                  include.path,
+                  result.ok ? result.value : `// 引用失败：${result.error.message}`
+                )
+              } catch (error) {
+                cache.set(
+                  include.path,
+                  `// 引用失败：${error instanceof Error ? error.message : String(error)}`
+                )
+              }
+            }
+            return cache
+          }
+
+          const applyContainerSource = (nextSource: string): boolean => {
+            const position = getPos()
+            if (position == null) return false
+            const currentNode = view.state.doc.nodeAt(position)
+            if (currentNode?.type.name !== 'deskRawBlock') return false
+            view.dispatch(
+              view.state.tr.setNodeMarkup(position, undefined, {
+                ...(currentNode.attrs as Record<string, unknown>),
+                source: nextSource
+              })
+            )
+            return true
+          }
+
+          const commitCodeGroupEntries = (nextEntries: CodeGroupEntry[]): boolean => {
+            const nextSource = rebuildContainerSource(currentContainerSource, {
+              title: parseContainerSource(currentContainerSource).title,
+              body: serializeCodeGroupEntries(nextEntries),
+              name: 'code-group'
+            })
+            if (!applyContainerSource(nextSource)) return false
+            currentContainerSource = nextSource
+            codeGroupEntries = nextEntries
+            return true
+          }
+
+          const remountEditableCodeGroup = async (): Promise<void> => {
+            if (!previewEl) return
+            const fresh = await mountEditableCodeGroup(currentContainerSource)
+            if (cancelledIncludes || !previewEl || !fresh) return
+            previewEl.replaceWith(fresh)
+            previewEl = fresh
+          }
+
+          const mountEditableCodeGroup = async (source: string): Promise<HTMLElement | null> => {
+            const parsed = parseContainerSource(source)
+            if (parsed.name !== 'code-group') return null
+            const entries = parseCodeGroupEntries(parsed.body)
+            if (entries.length === 0) return null
+
+            const cache = await loadIncludeCache(parsed.body)
+            if (cancelledIncludes) return null
+
+            codeGroupTabEditors.splice(0).forEach((handle) => handle?.destroy())
+            codeGroupEntries = entries
+
+            const group = document.createElement('div')
+            group.className =
+              'custom-block custom-block-code-group desk-raw-block--code-group-editable'
+
+            const useTabs = entries.length > 1
+            const tabs = document.createElement('div')
+            tabs.className = 'code-group-tabs'
+            const panels = document.createElement('div')
+            panels.className = useTabs ? 'code-group-panels' : 'custom-block-body'
+            const tabButtons: HTMLButtonElement[] = []
+            const panelEls: HTMLDivElement[] = []
+            const DRAG_THRESHOLD_PX = 8
+
+            const activateTab = (index: number): void => {
+              tabButtons.forEach((button, buttonIndex) =>
+                button.classList.toggle('active', buttonIndex === index)
+              )
+              panelEls.forEach((pane, paneIndex) =>
+                pane.classList.toggle('active', paneIndex === index)
+              )
+            }
+
+            const swapAdjacent = <T,>(items: T[], index: number, toward: -1 | 1): void => {
+              const other = index + toward
+              const a = items[index]
+              const b = items[other]
+              if (a === undefined || b === undefined) return
+              items[index] = b
+              items[other] = a
+            }
+
+            const naturalLeft = (el: HTMLElement): number => {
+              const prev = el.style.transform
+              el.style.transform = 'none'
+              const left = el.getBoundingClientRect().left
+              el.style.transform = prev
+              return left
+            }
+
+            const finishTabReorder = async (
+              startIndices: number[],
+              didReorder: boolean
+            ): Promise<void> => {
+              if (!didReorder) return
+              await Promise.all(
+                codeGroupTabEditors.map((handle) =>
+                  handle?.isDirty() ? handle.flushSave() : Promise.resolve()
+                )
+              )
+              if (cancelledIncludes) return
+              const snapshot = codeGroupEntries.slice()
+              const nextEntries = startIndices.map((startIndex) => snapshot[startIndex]!)
+              if (nextEntries.some((entry) => entry == null)) return
+              if (!commitCodeGroupEntries(nextEntries)) return
+              await remountEditableCodeGroup()
+            }
+
+            const bindTabDragReorder = (tab: HTMLButtonElement, index: number): void => {
+              tab.dataset.startIndex = String(index)
+              let pointerId: number | null = null
+              let grabOffsetX = 0
+              let startClientX = 0
+              let activated = false
+              let currentIndex = index
+              let suppressClick = false
+
+              const clearDragVisual = (): void => {
+                tab.classList.remove('is-dragging')
+                tab.style.transform = ''
+                tab.style.zIndex = ''
+                tabs.classList.remove('is-reordering')
+              }
+
+              tab.addEventListener('pointerdown', (event) => {
+                if (event.button !== 0) return
+                if (tab.querySelector('input')) return
+                pointerId = event.pointerId
+                currentIndex = tabButtons.indexOf(tab)
+                if (currentIndex < 0) return
+                startClientX = event.clientX
+                grabOffsetX = event.clientX - tab.getBoundingClientRect().left
+                activated = false
+                suppressClick = false
+                tab.setPointerCapture(event.pointerId)
+              })
+
+              tab.addEventListener('pointermove', (event) => {
+                if (pointerId !== event.pointerId) return
+                currentIndex = tabButtons.indexOf(tab)
+                if (currentIndex < 0) return
+
+                if (!activated) {
+                  if (Math.abs(event.clientX - startClientX) < DRAG_THRESHOLD_PX) return
+                  activated = true
+                  suppressClick = true
+                  tab.classList.add('is-dragging')
+                  tabs.classList.add('is-reordering')
+                }
+
+                // Keep the dragged tab under the pointer.
+                const baseLeft = naturalLeft(tab)
+                tab.style.transform = `translateX(${event.clientX - grabOffsetX - baseLeft}px)`
+                tab.style.zIndex = '5'
+
+                const dragCenter = event.clientX - grabOffsetX + tab.offsetWidth / 2
+
+                // Squeeze only after crossing a neighbor's midpoint.
+                if (currentIndex > 0) {
+                  const leftTab = tabButtons[currentIndex - 1]!
+                  const leftCenter =
+                    leftTab.getBoundingClientRect().left + leftTab.offsetWidth / 2
+                  if (dragCenter < leftCenter) {
+                    tabs.insertBefore(tab, leftTab)
+                    swapAdjacent(tabButtons, currentIndex, -1)
+                    currentIndex -= 1
+                    const nextBase = naturalLeft(tab)
+                    tab.style.transform = `translateX(${event.clientX - grabOffsetX - nextBase}px)`
+                  }
+                }
+                if (currentIndex < tabButtons.length - 1) {
+                  const rightTab = tabButtons[currentIndex + 1]!
+                  const rightCenter =
+                    rightTab.getBoundingClientRect().left + rightTab.offsetWidth / 2
+                  if (dragCenter > rightCenter) {
+                    tabs.insertBefore(rightTab, tab)
+                    swapAdjacent(tabButtons, currentIndex, 1)
+                    currentIndex += 1
+                    const nextBase = naturalLeft(tab)
+                    tab.style.transform = `translateX(${event.clientX - grabOffsetX - nextBase}px)`
+                  }
+                }
+              })
+
+              const endPointer = (event: PointerEvent): void => {
+                if (pointerId !== event.pointerId) return
+                pointerId = null
+                try {
+                  tab.releasePointerCapture(event.pointerId)
+                } catch {
+                  /* already released */
+                }
+                const didReorder = activated
+                const startIndices = tabButtons.map((button) => Number(button.dataset.startIndex))
+                const orderChanged =
+                  didReorder && startIndices.some((startIndex, i) => startIndex !== i)
+                clearDragVisual()
+                if (orderChanged) {
+                  void finishTabReorder(startIndices, true)
+                  return
+                }
+                if (!suppressClick) {
+                  const activeIndex = tabButtons.findIndex((button) =>
+                    button.classList.contains('active')
+                  )
+                  const clickIndex = tabButtons.indexOf(tab)
+                  if (clickIndex < 0 || activeIndex === clickIndex) return
+                  const previous = codeGroupTabEditors[activeIndex]
+                  void (async () => {
+                    if (previous?.isDirty()) await previous.flushSave()
+                    if (cancelledIncludes) return
+                    activateTab(clickIndex)
+                  })()
+                }
+              }
+
+              tab.addEventListener('pointerup', endPointer)
+              tab.addEventListener('pointercancel', endPointer)
+            }
+
+            const startTabRename = (tab: HTMLButtonElement, index: number): void => {
+              if (tab.querySelector('input')) return
+              const entry = codeGroupEntries[index]
+              if (!entry) return
+              const previousTitle = codeGroupEntryTabTitle(entry, index)
+              const input = document.createElement('input')
+              input.type = 'text'
+              input.className = 'code-group-tab__rename'
+              input.value = previousTitle
+              input.setAttribute('aria-label', '重命名代码块标题')
+              tab.replaceChildren(input)
+              input.focus()
+              input.select()
+
+              let finished = false
+              const finish = (commit: boolean): void => {
+                if (finished) return
+                finished = true
+                const nextTitle = commit ? input.value.trim() : previousTitle
+                const current = codeGroupEntries[index]
+                if (!current) {
+                  tab.textContent = previousTitle
+                  return
+                }
+                if (commit && nextTitle && nextTitle !== previousTitle) {
+                  const nextEntries = codeGroupEntries.map((item, itemIndex) =>
+                    itemIndex === index ? withCodeGroupEntryTitle(item, nextTitle) : item
+                  )
+                  if (!commitCodeGroupEntries(nextEntries)) {
+                    tab.textContent = previousTitle
+                    return
+                  }
+                  tab.textContent = codeGroupEntryTabTitle(nextEntries[index]!, index)
+                  return
+                }
+                tab.textContent = codeGroupEntryTabTitle(current, index)
+              }
+
+              input.addEventListener('keydown', (event) => {
+                event.stopPropagation()
+                if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') {
+                  event.preventDefault()
+                  input.select()
+                  return
+                }
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  finish(true)
+                } else if (event.key === 'Escape') {
+                  event.preventDefault()
+                  finish(false)
+                }
+              })
+              input.addEventListener('blur', () => finish(true))
+              input.addEventListener('click', (event) => event.stopPropagation())
+              input.addEventListener('mousedown', (event) => event.stopPropagation())
+            }
+
+            entries.forEach((entry, index) => {
+              const panel = document.createElement('div')
+              panel.className = useTabs
+                ? 'code-group-panel desk-raw-block__code-group-panel'
+                : 'desk-raw-block__code-group-panel'
+              const editorHost = document.createElement('div')
+              editorHost.className = 'desk-raw-block__include-body'
+              panel.append(editorHost)
+
+              let initialContent = ''
+              let language = ''
+              if (entry.kind === 'include') {
+                initialContent = cache.get(entry.include.path) ?? `// 引用失败：${entry.include.path}`
+                language = includeLanguage(entry.include)
+              } else {
+                initialContent = entry.code
+                language = entry.lang
+              }
+
+              const tabEditor = mountCodeTabEditor(editorHost, {
+                initialContent,
+                language,
+                onCopy: (text) => writeClipboard(text),
+                onDirtyChange: (dirty) => {
+                  tabButtons[index]?.classList.toggle('is-tab-dirty', dirty)
+                  panel.classList.toggle('is-include-dirty', dirty)
+                },
+                onLanguageChange: async (nextLanguage) => {
+                  const current = codeGroupEntries[index]
+                  if (!current) return
+                  const nextEntries = codeGroupEntries.map((item, itemIndex) =>
+                    itemIndex === index ? withCodeGroupEntryLanguage(item, nextLanguage) : item
+                  )
+                  if (!commitCodeGroupEntries(nextEntries)) {
+                    const revertLang =
+                      current.kind === 'include'
+                        ? includeLanguage(current.include)
+                        : current.lang || 'text'
+                    codeGroupTabEditors[index]?.setLanguage(revertLang)
+                  }
+                },
+                onSave: async (content) => {
+                  const current = codeGroupEntries[index]
+                  if (!current) return { ok: false, message: '代码块已失效' }
+                  if (current.kind === 'include') {
+                    const write = await window.desk.attachments.writeText({
+                      knowledgeBaseId: props.knowledgeBaseId,
+                      noteUuid: props.noteUuid,
+                      path: current.include.path,
+                      content
+                    })
+                    if (!write.ok) return { ok: false, message: write.error.message }
+                    return { ok: true }
+                  }
+                  const nextEntries = codeGroupEntries.map((item, itemIndex) =>
+                    itemIndex === index && item.kind === 'fence'
+                      ? { ...item, code: content.replace(/\n$/, '') }
+                      : item
+                  )
+                  if (!commitCodeGroupEntries(nextEntries)) {
+                    return { ok: false, message: '无法更新笔记节点' }
+                  }
+                  return { ok: true }
+                }
+              })
+              codeGroupTabEditors[index] = tabEditor
+
+              if (useTabs) {
+                const tab = document.createElement('button')
+                tab.type = 'button'
+                tab.className = 'code-group-tab'
+                tab.textContent = codeGroupEntryTabTitle(entry, index)
+                tab.title = '拖拽排序 · 双击重命名'
+                if (index === 0) {
+                  tab.classList.add('active')
+                  panel.classList.add('active')
+                }
+                tab.addEventListener('dblclick', (event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  const entryIndex = Number(tab.dataset.startIndex)
+                  if (Number.isNaN(entryIndex)) return
+                  startTabRename(tab, entryIndex)
+                })
+                tabButtons.push(tab)
+                tabs.append(tab)
+                bindTabDragReorder(tab, index)
+              } else {
+                panel.classList.add('active')
+              }
+              panelEls.push(panel)
+              panels.append(panel)
+            })
+
+            if (useTabs) group.append(tabs, panels)
+            else group.append(panels)
+            return group
+          }
+
+          const commitSwiperSlides = (nextSlides: SwiperSlideEntry[]): boolean => {
+            const nextSource = rebuildContainerSource(currentContainerSource, {
+              title: parseContainerSource(currentContainerSource).title,
+              body: serializeSwiperSlides(nextSlides),
+              name: 'swiper'
+            })
+            if (!applyContainerSource(nextSource)) return false
+            currentContainerSource = nextSource
+            swiperSlides = nextSlides
+            return true
+          }
+
+          const remountEditableSwiper = (activeIndex?: number): void => {
+            if (!previewEl) return
+            const fresh = mountEditableSwiper(currentContainerSource, {
+              activeIndex: activeIndex ?? readActiveSwiperIndex()
+            })
+            if (cancelledIncludes || !previewEl || !fresh) return
+            previewEl.replaceWith(fresh)
+            previewEl = fresh
+          }
+
+          const readActiveSwiperIndex = (): number => {
+            if (!previewEl) return 0
+            const tabs = [...previewEl.querySelectorAll('.tn-swiper-tabs .tn-tab')]
+            const found = tabs.findIndex((tab) => tab.classList.contains('active'))
+            return found >= 0 ? found : 0
+          }
+
+          const mountEditableSwiper = (
+            source: string,
+            options?: { activeIndex?: number }
+          ): HTMLElement | null => {
+            const parsed = parseContainerSource(source)
+            if (parsed.name !== 'swiper') return null
+            const slides = parseSwiperSlides(parsed.body)
+            if (slides.length === 0) return null
+
+            swiperSlides = slides
+            const initialActiveIndex = Math.min(
+              Math.max(0, options?.activeIndex ?? 0),
+              slides.length - 1
+            )
+            const root = document.createElement('div')
+            root.className = 'tn-swiper desk-raw-block--swiper-editable'
+
+            const useTabs = slides.length > 1
+            const tabs = document.createElement('div')
+            tabs.className = 'tn-swiper-tabs'
+            const container = document.createElement('div')
+            container.className = 'swiper-container'
+            const wrapper = document.createElement('div')
+            wrapper.className = 'swiper-wrapper'
+            const tabButtons: HTMLButtonElement[] = []
+            const slideEls: HTMLDivElement[] = []
+            const DRAG_THRESHOLD_PX = 8
+
+            const activateSlide = (index: number): void => {
+              tabButtons.forEach((button, buttonIndex) =>
+                button.classList.toggle('active', buttonIndex === index)
+              )
+              slideEls.forEach((slide, slideIndex) => {
+                const on = slideIndex === index
+                slide.classList.toggle('is-active', on)
+                slide.hidden = !on
+              })
+            }
+
+            const activeSlideIndex = (): number => {
+              const found = tabButtons.findIndex((button) => button.classList.contains('active'))
+              return found >= 0 ? found : 0
+            }
+
+            applySwiperTabsPadding(tabs, useTabs)
+            const nav = useTabs
+              ? createSwiperTabNav({
+                  onPrev: () =>
+                    activateSlide(wrapSlideIndex(activeSlideIndex(), slides.length, -1)),
+                  onNext: () => activateSlide(wrapSlideIndex(activeSlideIndex(), slides.length, 1))
+                })
+              : null
+            if (nav) tabs.append(nav.prev, nav.line)
+
+            const swapAdjacent = <T,>(items: T[], index: number, toward: -1 | 1): void => {
+              const other = index + toward
+              const a = items[index]
+              const b = items[other]
+              if (a === undefined || b === undefined) return
+              items[index] = b
+              items[other] = a
+            }
+
+            const naturalLeft = (el: HTMLElement): number => {
+              const prev = el.style.transform
+              el.style.transform = 'none'
+              const left = el.getBoundingClientRect().left
+              el.style.transform = prev
+              return left
+            }
+
+            const finishTabReorder = (startIndices: number[], didReorder: boolean): void => {
+              if (!didReorder) return
+              const snapshot = swiperSlides.slice()
+              const nextSlides = startIndices.map((startIndex) => snapshot[startIndex]!)
+              if (nextSlides.some((entry) => entry == null)) return
+              const keepIndex = activeSlideIndex()
+              if (!commitSwiperSlides(nextSlides)) return
+              remountEditableSwiper(keepIndex)
+            }
+
+            const bindTabDragReorder = (tab: HTMLButtonElement, index: number): void => {
+              tab.dataset.startIndex = String(index)
+              let pointerId: number | null = null
+              let grabOffsetX = 0
+              let startClientX = 0
+              let activated = false
+              let currentIndex = index
+              let suppressClick = false
+
+              const clearDragVisual = (): void => {
+                tab.classList.remove('is-dragging')
+                tab.style.transform = ''
+                tab.style.zIndex = ''
+                tabs.classList.remove('is-reordering')
+              }
+
+              tab.addEventListener('pointerdown', (event) => {
+                if (event.button !== 0) return
+                if (tab.querySelector('input')) return
+                pointerId = event.pointerId
+                currentIndex = tabButtons.indexOf(tab)
+                if (currentIndex < 0) return
+                startClientX = event.clientX
+                grabOffsetX = event.clientX - tab.getBoundingClientRect().left
+                activated = false
+                suppressClick = false
+                tab.setPointerCapture(event.pointerId)
+              })
+
+              tab.addEventListener('pointermove', (event) => {
+                if (pointerId !== event.pointerId) return
+                currentIndex = tabButtons.indexOf(tab)
+                if (currentIndex < 0) return
+
+                if (!activated) {
+                  if (Math.abs(event.clientX - startClientX) < DRAG_THRESHOLD_PX) return
+                  activated = true
+                  suppressClick = true
+                  tab.classList.add('is-dragging')
+                  tabs.classList.add('is-reordering')
+                }
+
+                const baseLeft = naturalLeft(tab)
+                tab.style.transform = `translateX(${event.clientX - grabOffsetX - baseLeft}px)`
+                tab.style.zIndex = '5'
+
+                const dragCenter = event.clientX - grabOffsetX + tab.offsetWidth / 2
+
+                if (currentIndex > 0) {
+                  const leftTab = tabButtons[currentIndex - 1]!
+                  const leftCenter =
+                    leftTab.getBoundingClientRect().left + leftTab.offsetWidth / 2
+                  if (dragCenter < leftCenter) {
+                    tabs.insertBefore(tab, leftTab)
+                    swapAdjacent(tabButtons, currentIndex, -1)
+                    currentIndex -= 1
+                    const nextBase = naturalLeft(tab)
+                    tab.style.transform = `translateX(${event.clientX - grabOffsetX - nextBase}px)`
+                  }
+                }
+                if (currentIndex < tabButtons.length - 1) {
+                  const rightTab = tabButtons[currentIndex + 1]!
+                  const rightCenter =
+                    rightTab.getBoundingClientRect().left + rightTab.offsetWidth / 2
+                  if (dragCenter > rightCenter) {
+                    tabs.insertBefore(rightTab, tab)
+                    swapAdjacent(tabButtons, currentIndex, 1)
+                    currentIndex += 1
+                    const nextBase = naturalLeft(tab)
+                    tab.style.transform = `translateX(${event.clientX - grabOffsetX - nextBase}px)`
+                  }
+                }
+              })
+
+              const endPointer = (event: PointerEvent): void => {
+                if (pointerId !== event.pointerId) return
+                pointerId = null
+                try {
+                  tab.releasePointerCapture(event.pointerId)
+                } catch {
+                  /* ignore */
+                }
+                const didReorder = activated
+                const startIndices = tabButtons.map((button) => Number(button.dataset.startIndex))
+                const orderChanged =
+                  didReorder && startIndices.some((startIndex, i) => startIndex !== i)
+                clearDragVisual()
+                if (orderChanged) {
+                  finishTabReorder(startIndices, true)
+                  return
+                }
+                if (!suppressClick) {
+                  const clickIndex = tabButtons.indexOf(tab)
+                  if (clickIndex >= 0) activateSlide(clickIndex)
+                }
+              }
+
+              tab.addEventListener('pointerup', endPointer)
+              tab.addEventListener('pointercancel', endPointer)
+            }
+
+            const startTabRename = (tab: HTMLButtonElement, index: number): void => {
+              if (tab.querySelector('input')) return
+              const entry = swiperSlides[index]
+              if (!entry) return
+              const previousTitle = swiperSlideTabTitle(entry, index)
+              const input = document.createElement('input')
+              input.type = 'text'
+              input.className = 'tn-tab__rename'
+              input.value = previousTitle === 'img' && !entry.alt.trim() ? '' : previousTitle
+              input.setAttribute('aria-label', '重命名轮播页标题')
+              tab.replaceChildren(input)
+              input.focus()
+              input.select()
+
+              let finished = false
+              const finish = (commit: boolean): void => {
+                if (finished) return
+                finished = true
+                const nextTitle = commit ? input.value.trim() : previousTitle
+                const current = swiperSlides[index]
+                if (!current) {
+                  tab.textContent = previousTitle
+                  return
+                }
+                if (commit && nextTitle !== previousTitle) {
+                  const nextSlides = swiperSlides.map((item, itemIndex) =>
+                    itemIndex === index ? withSwiperSlideTitle(item, nextTitle) : item
+                  )
+                  if (!commitSwiperSlides(nextSlides)) {
+                    tab.textContent = previousTitle
+                    return
+                  }
+                  const label = swiperSlideTabTitle(nextSlides[index]!, index)
+                  tab.textContent = label
+                  slideEls[index]!.dataset.title = label
+                  return
+                }
+                tab.textContent = swiperSlideTabTitle(current, index)
+              }
+
+              input.addEventListener('keydown', (event) => {
+                // Keep shortcuts (Cmd/Ctrl+A, etc.) on this native input instead of
+                // letting ProseMirror / Milkdown handle them at the doc level.
+                event.stopPropagation()
+                if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') {
+                  event.preventDefault()
+                  input.select()
+                  return
+                }
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  finish(true)
+                } else if (event.key === 'Escape') {
+                  event.preventDefault()
+                  finish(false)
+                }
+              })
+              input.addEventListener('blur', () => finish(true))
+              input.addEventListener('click', (event) => event.stopPropagation())
+              input.addEventListener('mousedown', (event) => event.stopPropagation())
+            }
+
+            slides.forEach((slide, index) => {
+              const slideEl = document.createElement('div')
+              slideEl.className = 'swiper-slide'
+              const title = swiperSlideTabTitle(slide, index)
+              slideEl.dataset.title = title
+              const img = document.createElement('img')
+              img.src = resolveImage(slide.src) || slide.src
+              img.alt = slide.alt
+              slideEl.append(img)
+              if (index === initialActiveIndex) slideEl.classList.add('is-active')
+              else slideEl.hidden = true
+              slideEls.push(slideEl)
+              wrapper.append(slideEl)
+
+              if (useTabs) {
+                const tab = document.createElement('button')
+                tab.type = 'button'
+                tab.className = 'tn-tab'
+                tab.textContent = title
+                tab.title = '拖拽排序 · 双击重命名'
+                if (index === initialActiveIndex) tab.classList.add('active')
+                tab.addEventListener('dblclick', (event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  const entryIndex = Number(tab.dataset.startIndex)
+                  if (Number.isNaN(entryIndex)) return
+                  startTabRename(tab, entryIndex)
+                })
+                tabButtons.push(tab)
+                tabs.append(tab)
+                bindTabDragReorder(tab, index)
+              }
+            })
+
+            if (nav) tabs.append(nav.next)
+
+            container.append(wrapper)
+            if (useTabs) root.append(tabs, container)
+            else root.append(container)
+            return root
+          }
+
+          const refreshContainerPreview = async (source: string): Promise<void> => {
+            if (!previewEl) return
+            currentContainerSource = source
+            const parsed = parseContainerSource(source)
+
+            if (parsed.name === 'code-group' && editable) {
+              const entries = parseCodeGroupEntries(parsed.body)
+              if (entries.length > 0) {
+                const fresh = await mountEditableCodeGroup(source)
+                if (cancelledIncludes || !previewEl || !fresh) return
+                previewEl.replaceWith(fresh)
+                previewEl = fresh
+                return
+              }
+            }
+
+            if (parsed.name === 'swiper' && editable) {
+              const slides = parseSwiperSlides(parsed.body)
+              if (slides.length > 0) {
+                const activeIndex = readActiveSwiperIndex()
+                const fresh = mountEditableSwiper(source, { activeIndex })
+                if (cancelledIncludes || !previewEl || !fresh) return
+                previewEl.replaceWith(fresh)
+                previewEl = fresh
+                return
+              }
+            }
+
+            let resolveIncludeContent: ((path: string) => string | null) | undefined
+            if (parsed.name === 'code-group' && bodyHasIncludeLines(parsed.body)) {
+              const cache = await loadIncludeCache(parsed.body)
+              if (cancelledIncludes) return
+              resolveIncludeContent = (path) => cache.get(path) ?? null
+            }
+            if (cancelledIncludes || !previewEl) return
+            codeGroupTabEditors.splice(0).forEach((handle) => handle?.destroy())
+            const fresh = renderContainerFromSource(source, resolveImage, {
+              resolveIncludeContent
+            })
+            previewEl.replaceWith(fresh)
+            previewEl = fresh
+          }
+
+          if (container.name === 'code-group' || (container.name === 'swiper' && editable)) {
+            void refreshContainerPreview(block.source)
+            if (container.name === 'code-group') {
+              const acceptWriteback = (nextSource: string): boolean => {
+                const nextParsed = parseContainerSource(nextSource)
+                if (nextParsed.name !== 'code-group') return false
+                const nextEntries = parseCodeGroupEntries(nextParsed.body)
+                if (nextEntries.length !== codeGroupEntries.length) return false
+                for (let i = 0; i < codeGroupEntries.length; i++) {
+                  const prev = codeGroupEntries[i]
+                  const next = nextEntries[i]
+                  if (!prev || !next || prev.kind !== next.kind) return false
+                  if (
+                    prev.kind === 'include' &&
+                    next.kind === 'include' &&
+                    prev.include.path !== next.include.path
+                  ) {
+                    return false
+                  }
+                }
+                currentContainerSource = nextSource
+                codeGroupEntries = nextEntries
+                nextEntries.forEach((entry, index) => {
+                  if (entry.kind === 'fence') {
+                    codeGroupTabEditors[index]?.setSavedValue(entry.code)
+                  }
+                })
+                return true
+              }
+              ;(
+                dom as HTMLElement & {
+                  __codeGroupWriteback?: { acceptWriteback: (source: string) => boolean }
+                }
+              ).__codeGroupWriteback = { acceptWriteback }
+              cleanupTasks.push(() => {
+                delete (
+                  dom as HTMLElement & {
+                    __codeGroupWriteback?: { acceptWriteback: (source: string) => boolean }
+                  }
+                ).__codeGroupWriteback
+              })
+            }
+            if (container.name === 'swiper' && editable) {
+              const acceptSwiperWriteback = (nextSource: string): boolean => {
+                const nextParsed = parseContainerSource(nextSource)
+                if (nextParsed.name !== 'swiper') return false
+                const nextSlides = parseSwiperSlides(nextParsed.body)
+                if (nextSlides.length !== swiperSlides.length) return false
+                currentContainerSource = nextSource
+                swiperSlides = nextSlides
+                return true
+              }
+              ;(
+                dom as HTMLElement & {
+                  __swiperWriteback?: { acceptWriteback: (source: string) => boolean }
+                }
+              ).__swiperWriteback = { acceptWriteback: acceptSwiperWriteback }
+              cleanupTasks.push(() => {
+                delete (
+                  dom as HTMLElement & {
+                    __swiperWriteback?: { acceptWriteback: (source: string) => boolean }
+                  }
+                ).__swiperWriteback
+              })
+            }
+          }
+
+          cleanupTasks.push(
+            attachRawSourceEditor({
+              dom,
+              source: block.source,
+              getSource: () => currentContainerSource,
+              view,
+              getPos,
+              label: structuredCallout
+                ? '编辑容器'
+                : structuredContainerBody
+                  ? '编辑容器正文'
+                  : '编辑容器源码',
+              structuredCallout,
+              structuredContainerBody,
+              renderPreview: (source) => {
+                void refreshContainerPreview(source)
+              }
+            })
+          )
+        }
+      }
+      if (block.kind === 'raw-component') {
+        if (isBilibiliVideoSource(block.source)) {
+          dom.classList.add('desk-raw-block--component', 'desk-raw-block--bilibili-video')
+          dom.replaceChildren()
+          const previewHost = document.createElement('div')
+          previewHost.className = 'desk-raw-block__component-preview'
+          dom.append(previewHost)
+          const parsed = parseBilibiliVideoSource(block.source)
+          let mounted = mountBilibiliVideoPreview(previewHost, {
+            id: parsed?.id ?? '',
+            autoplay: parsed?.autoplay,
+            muted: parsed?.muted
+          })
+          cleanupTasks.push(() => mounted.unmount())
+          cleanupTasks.push(
+            attachRawSourceEditor({
+              dom,
+              source: block.source,
+              view,
+              getPos,
+              label: '编辑 B 站视频',
+              structuredBilibili: true,
+              renderPreview: (source) => {
+                const next = parseBilibiliVideoSource(source)
+                mounted.update({
+                  id: next?.id ?? '',
+                  autoplay: next?.autoplay,
+                  muted: next?.muted
+                })
+              }
+            })
+          )
+        } else if (isWordListSource(block.source)) {
+          dom.classList.add('desk-raw-block--component', 'desk-raw-block--word-list')
+          dom.replaceChildren()
+          const previewHost = document.createElement('div')
+          previewHost.className = 'desk-raw-block__component-preview'
+          dom.append(previewHost)
+          const parsed = parseWordListSource(block.source)
+          const mounted = mountWordListPreview(previewHost, {
+            words: parsed?.words ?? [],
+            needSort: parsed?.needSort
+          })
+          cleanupTasks.push(() => mounted.unmount())
+          cleanupTasks.push(
+            attachRawSourceEditor({
+              dom,
+              source: block.source,
+              view,
+              getPos,
+              label: '编辑单词表',
+              structuredWordList: true,
+              renderPreview: (source) => {
+                const next = parseWordListSource(source)
+                mounted.update({
+                  words: next?.words ?? [],
+                  needSort: next?.needSort
+                })
+              }
+            })
+          )
+        } else if (isNotesTableSource(block.source)) {
+          dom.classList.add('desk-raw-block--component', 'desk-raw-block--notes-table')
+          dom.replaceChildren()
+          const previewHost = document.createElement('div')
+          previewHost.className = 'desk-raw-block__component-preview'
+          dom.append(previewHost)
+          const parsed = parseNotesTableSource(block.source)
+          const ids = parsed?.ids ?? []
+          const mounted = mountNotesTablePreview(previewHost, {
+            notes: [],
+            missingIds: [],
+            error: ids.length ? null : '错误: ids 数组不能为空'
+          })
+          cleanupTasks.push(() => mounted.unmount())
+
+          const applyNotesTableIds = (nextIds: string[]): void => {
+            if (!nextIds.length) {
+              mounted.update({
+                notes: [],
+                missingIds: [],
+                error: '错误: ids 数组不能为空'
+              })
+              return
+            }
+            void window.desk.notes
+              .resolveTable({
+                knowledgeBaseId: props.knowledgeBaseId,
+                ids: nextIds
+              })
+              .then((result) => {
+                if (!result.ok) {
+                  mounted.update({
+                    notes: [],
+                    missingIds: [],
+                    error: result.error.message || '无法解析笔记表格'
+                  })
+                  return
+                }
+                mounted.update({
+                  notes: result.value.notes.map((row) => ({
+                    id: row.id,
+                    title: row.title,
+                    description: row.description,
+                    url: row.noteUuid ? `desk-note://${encodeURIComponent(row.noteUuid)}` : '#'
+                  })),
+                  missingIds: result.value.missingIds,
+                  error: null
+                })
+              })
+              .catch((cause: unknown) => {
+                mounted.update({
+                  notes: [],
+                  missingIds: [],
+                  error: cause instanceof Error ? cause.message : String(cause)
+                })
+              })
+          }
+
+          applyNotesTableIds(ids)
+          cleanupTasks.push(
+            attachRawSourceEditor({
+              dom,
+              source: block.source,
+              view,
+              getPos,
+              label: '编辑笔记表格',
+              structuredNotesTable: true,
+              renderPreview: (source) => {
+                const next = parseNotesTableSource(source)
+                applyNotesTableIds(next?.ids ?? [])
+              }
+            })
+          )
+        } else {
+          const labelEl = dom.querySelector<HTMLElement>('.desk-raw-block__label')
+          const previewEl = dom.querySelector<HTMLElement>('.desk-raw-block__preview')
+          cleanupTasks.push(
+            attachRawSourceEditor({
+              dom,
+              source: block.source,
+              view,
+              getPos,
+              label: '编辑组件源码',
+              renderPreview: (source) => {
+                // 组件无专用可视化预览：刷新卡片标签/预览两行。
+                const name = source.match(/^ {0,3}<([A-Z][\w.-]*)/)?.[1]
+                if (labelEl) {
+                  labelEl.textContent = name ? `组件 · ${name}` : '组件'
+                }
+                if (previewEl) {
+                  const firstLine = source.split(/\r?\n/, 1)[0].trim()
+                  previewEl.textContent =
+                    firstLine.length <= 96 ? firstLine : `${firstLine.slice(0, 93)}…`
+                }
+              }
+            })
+          )
+        }
+      }
+      if (block.kind === 'raw-diagram') {
+        const fence = parseFencedCode(block.source)
+        if (fence.lang === 'mermaid') {
+          // Drop --diagram chrome (always-on border/panel); shared Mermaid owns hover frame.
+          dom.classList.remove('desk-raw-block--diagram')
+          dom.classList.add('desk-raw-block--mermaid')
+          dom.replaceChildren()
+          const previewHost = document.createElement('div')
+          previewHost.className = 'desk-raw-block__component-preview'
+          dom.append(previewHost)
+
+          let currentSource = block.source
+          const applyCenterChange = (center: boolean): void => {
+            // Readonly / view mode: Mermaid keeps session-local state; skip write-back.
+            if (isEffectivelyReadOnly()) return
+            const nextSource = rebuildMermaidFence(currentSource, center)
+            if (nextSource === currentSource) return
+            const position = getPos()
+            if (position == null) return
+            const currentNode = view.state.doc.nodeAt(position)
+            if (currentNode?.type.name !== 'deskRawBlock') return
+            currentSource = nextSource
+            view.dispatch(
+              view.state.tr.setNodeMarkup(position, undefined, {
+                ...(currentNode.attrs as Record<string, unknown>),
+                source: nextSource
+              })
+            )
+          }
+
+          const mounted = mountMermaidPreview(previewHost, {
+            source: fence.code,
+            center: fence.center,
+            onCenterChange: applyCenterChange
+          })
+          cleanupTasks.push(() => mounted.unmount())
+          cleanupTasks.push(
+            attachRawSourceEditor({
+              dom,
+              source: block.source,
+              view,
+              getPos,
+              label: '编辑 Mermaid',
+              structuredMermaid: true,
+              renderPreview: (source) => {
+                currentSource = source
+                const next = parseFencedCode(source)
+                mounted.update({
+                  source: next.code,
+                  center: next.center,
+                  onCenterChange: applyCenterChange
+                })
+              }
+            })
+          )
+        } else if (fence.lang === 'mindmap') {
+          dom.classList.remove('desk-raw-block--diagram')
+          dom.classList.add('desk-raw-block--mindmap')
+          if (!isEffectivelyReadOnly()) {
+            dom.classList.add('desk-raw-block--mindmap-editable')
+          }
+          dom.replaceChildren()
+          const previewHost = document.createElement('div')
+          previewHost.className = 'desk-raw-block__component-preview'
+          dom.append(previewHost)
+
+          let currentSource = block.source
+          let writingBack = false
+          const preview = mindmapPreviewMarkdown(currentSource)
+          const editable = !isEffectivelyReadOnly()
+
+          const resolveMindmapImage = (src: string): string =>
+            resolveMarkdownImageUrl(src, props.knowledgeBaseId, props.noteUuid) || src
+
+          const writeMindmapAsset = async (
+            blob: Blob
+          ): Promise<{ relativePath: string; alt?: string }> => {
+            const type = blob.type || 'image/png'
+            const ext =
+              type === 'image/jpeg'
+                ? 'jpg'
+                : type === 'image/gif'
+                  ? 'gif'
+                  : type === 'image/webp'
+                    ? 'webp'
+                    : 'png'
+            const file =
+              blob instanceof File
+                ? blob
+                : new File([blob], `paste-${Date.now()}.${ext}`, { type })
+            const uploaded = await props.uploadImage(file)
+            return {
+              relativePath: uploaded.src,
+              alt: uploaded.alt
+            }
+          }
+
+          const writeFence = (nextSource: string): void => {
+            if (isEffectivelyReadOnly()) return
+            if (nextSource === currentSource) return
+            const position = getPos()
+            if (position == null) return
+            const currentNode = view.state.doc.nodeAt(position)
+            if (currentNode?.type.name !== 'deskRawBlock') return
+            writingBack = true
+            currentSource = nextSource
+            view.dispatch(
+              view.state.tr.setNodeMarkup(position, undefined, {
+                ...(currentNode.attrs as Record<string, unknown>),
+                source: nextSource
+              })
+            )
+            writingBack = false
+          }
+
+          const mindmapHandlers = {
+            onMarkdownChange: (markdown: string) => {
+              writeFence(rebuildMindmapFence(currentSource, { markdown }))
+            },
+            onExpandLevelChange: (level: number) => {
+              writeFence(rebuildMindmapFence(currentSource, { initialExpandLevel: level }))
+            },
+            resolveImageSrc: resolveMindmapImage,
+            writeAsset: editable ? writeMindmapAsset : undefined
+          }
+
+          const mounted = mountMindmapPreview(previewHost, {
+            source: preview.markdown,
+            initialExpandLevel: preview.initialExpandLevel,
+            editable,
+            expandLevelControl: editable,
+            ...mindmapHandlers
+          })
+          cleanupTasks.push(() => mounted.unmount())
+
+          // Interaction island: click inside focuses the canvas editor so Tab/Enter work.
+          // Also move PM off TextSelection so the body virtual caret does not linger.
+          if (editable) {
+            const activateIsland = (event: Event): void => {
+              const target = event.target as Element | null
+              // Toolbar / breadcrumbs must keep the click (view switch, expand, fullscreen).
+              // Focusing .mm-editor here steals the gesture and Electron drops the click.
+              if (
+                target?.closest(
+                  '.mindmap-preview-actions, .mindmap-preview-tabs, .mindmap-preview-action, [data-view-tab], .focus-breadcrumbs, .focus-crumb, .focus-sibling-menu',
+                )
+              ) {
+                return
+              }
+              dom.classList.add('is-mindmap-island-active')
+              const position = getPos()
+              if (position != null && view.editable) {
+                const node = view.state.doc.nodeAt(position)
+                const sel = view.state.selection
+                if (
+                  node?.type.name === 'deskRawBlock' &&
+                  (!(sel instanceof NodeSelection) || sel.from !== position)
+                ) {
+                  view.dispatch(
+                    view.state.tr.setSelection(NodeSelection.create(view.state.doc, position))
+                  )
+                }
+              }
+              const editorEl = previewHost.querySelector<HTMLElement>('.mm-editor')
+              editorEl?.focus({ preventScroll: true })
+            }
+            const deactivateIsland = (event: PointerEvent): void => {
+              if (event.target instanceof Node && dom.contains(event.target)) return
+              dom.classList.remove('is-mindmap-island-active')
+            }
+            previewHost.addEventListener('pointerdown', activateIsland)
+            document.addEventListener('pointerdown', deactivateIsland, true)
+            cleanupTasks.push(() => {
+              previewHost.removeEventListener('pointerdown', activateIsland)
+              document.removeEventListener('pointerdown', deactivateIsland, true)
+              dom.classList.remove('is-mindmap-island-active')
+            })
+          }
+
+          // Keep nodeView alive across our own writebacks so canvas edit state survives.
+          const baseUpdate = {
+            acceptWriteback: (nextSource: string): boolean => {
+              if (!writingBack && nextSource !== currentSource) return false
+              currentSource = nextSource
+              const nextPreview = mindmapPreviewMarkdown(nextSource)
+              mounted.update({
+                source: nextPreview.markdown,
+                initialExpandLevel: nextPreview.initialExpandLevel,
+                editable,
+                expandLevelControl: editable,
+                ...mindmapHandlers
+              })
+              return true
+            }
+          }
+          ;(dom as HTMLElement & { __mindmapWriteback?: typeof baseUpdate }).__mindmapWriteback =
+            baseUpdate
+          cleanupTasks.push(() => {
+            delete (dom as HTMLElement & { __mindmapWriteback?: typeof baseUpdate }).__mindmapWriteback
+          })
+        } else {
+          const diagramEl = dom.querySelector('.desk-diagram') as HTMLElement | null
+          let renderToken = 0
+          let currentDiagram: { destroy?: () => void } | null = null
+          const renderInto = (source: string): void => {
+            if (!diagramEl) return
+            const token = ++renderToken
+            currentDiagram?.destroy?.()
+            currentDiagram = null
+            void renderDiagram(source).then((rendered) => {
+              if (token !== renderToken) {
+                rendered.destroy?.()
+                return
+              }
+              currentDiagram = rendered
+              diagramEl.replaceChildren(rendered.node)
+              const active = rendered.activate
+              if (active) {
+                setTimeout(() => {
+                  if (token === renderToken) active(rendered.node)
+                }, 80)
+              }
+            })
+          }
+          renderInto(block.source)
+          const editorCleanup = attachRawSourceEditor({
+            dom,
+            source: block.source,
+            view,
+            getPos,
+            label: '编辑图表源码',
+            renderPreview: renderInto
+          })
+          cleanupTasks.push(() => {
+            editorCleanup()
+            currentDiagram?.destroy?.()
           })
         }
-        renderInto(block.source)
-        const editorCleanup = attachRawSourceEditor({
-          dom,
-          source: block.source,
-          view,
-          getPos,
-          label: '编辑图表源码',
-          renderPreview: renderInto
-        })
-        cleanupTasks.push(() => {
-          editorCleanup()
-          currentDiagram?.destroy?.()
-        })
       }
       return {
         dom,
         update: (nextNode) => {
           if (nextNode.type.name !== 'deskRawBlock') return false
-          // An external content sync may replace the atom entirely; remount then.
-          if (nextNode.attrs.source !== node.attrs.source) return false
+          if (nextNode.attrs.source !== currentRawNode.attrs.source) {
+            const helper = (
+              dom as HTMLElement & {
+                __mindmapWriteback?: { acceptWriteback: (source: string) => boolean }
+                __codeGroupWriteback?: { acceptWriteback: (source: string) => boolean }
+                __swiperWriteback?: { acceptWriteback: (source: string) => boolean }
+              }
+            ).__mindmapWriteback
+            if (helper?.acceptWriteback(String(nextNode.attrs.source))) {
+              currentRawNode = nextNode
+              return true
+            }
+            const codeGroupHelper = (
+              dom as HTMLElement & {
+                __codeGroupWriteback?: { acceptWriteback: (source: string) => boolean }
+              }
+            ).__codeGroupWriteback
+            if (codeGroupHelper?.acceptWriteback(String(nextNode.attrs.source))) {
+              currentRawNode = nextNode
+              return true
+            }
+            const swiperHelper = (
+              dom as HTMLElement & {
+                __swiperWriteback?: { acceptWriteback: (source: string) => boolean }
+              }
+            ).__swiperWriteback
+            if (swiperHelper?.acceptWriteback(String(nextNode.attrs.source))) {
+              currentRawNode = nextNode
+              return true
+            }
+            return false
+          }
+          currentRawNode = nextNode
           return true
         },
         selectNode: () => dom.classList.add('ProseMirror-selectednode'),
@@ -1042,7 +2799,39 @@ onMounted(async () => {
         stopEvent: (event) => {
           const target = event.target as Element | null
           // CodeMirror / structured fields own keyboard input inside the editor.
-          if (target?.closest('.desk-raw-block__editor')) return true
+          if (target?.closest('.desk-raw-block__editor, .desk-raw-block__include-cm, .desk-code-tab'))
+            return true
+          // Mindmap / Mermaid chrome and canvas editing must keep native events
+          // (including paste images — must not reach Milkdown upload plugin).
+          if (
+            target?.closest(
+              [
+                '.desk-raw-block__component-preview',
+                '.mindmap-preview',
+                '.mindmap-preview-actions',
+                '.mindmap-preview-action',
+                '[data-view-tab]',
+                '.focus-breadcrumbs',
+                '.focus-crumb',
+                '.focus-sibling-menu',
+                '.mm-editor',
+                '.mm-overlay',
+                '.outline-view',
+                '.markdown-view',
+                '.selection-toolbar',
+                '.canvas-context-menu',
+                '.link-popover',
+                '[contenteditable="true"]'
+              ].join(', ')
+            )
+          )
+            return true
+          if (
+            event.type === 'paste' &&
+            target?.closest('.desk-raw-block--mindmap-editable')
+          ) {
+            return true
+          }
           // Let native details toggles and links inside the rendered container
           // keep their default behaviour instead of being turned into a node
           // selection; everything else selects the atom so it stays swipeable.
@@ -1440,6 +3229,29 @@ onBeforeUnmount(() => {
   caret-color: transparent;
 }
 
+/*
+ * Dual-focus fix: while a block owns focus or is node-selected, hide the body
+ * virtual caret (prosemirror-virtual-cursor keeps painting TextSelection even
+ * after DOM focus moves into a nodeView island).
+ */
+.milkdown-markdown-editor:has(.desk-raw-block:focus-within) :deep(.prosemirror-virtual-cursor),
+.milkdown-markdown-editor:has(.desk-raw-block.ProseMirror-selectednode)
+  :deep(.prosemirror-virtual-cursor),
+.milkdown-markdown-editor:has(.desk-raw-block.is-mindmap-island-active)
+  :deep(.prosemirror-virtual-cursor),
+.milkdown-markdown-editor:has(.milkdown-code-block:focus-within)
+  :deep(.prosemirror-virtual-cursor),
+.milkdown-markdown-editor:has(.milkdown-code-block.ProseMirror-selectednode)
+  :deep(.prosemirror-virtual-cursor),
+.milkdown-markdown-editor:has(.desk-raw-block:focus-within) :deep(.ProseMirror-gapcursor),
+.milkdown-markdown-editor:has(.desk-raw-block.ProseMirror-selectednode)
+  :deep(.ProseMirror-gapcursor),
+.milkdown-markdown-editor:has(.desk-raw-block.is-mindmap-island-active)
+  :deep(.ProseMirror-gapcursor) {
+  opacity: 0 !important;
+  visibility: hidden !important;
+}
+
 .milkdown-markdown-editor :deep(.ProseMirror > :first-child) {
   margin-top: 0;
 }
@@ -1644,6 +3456,350 @@ onBeforeUnmount(() => {
   cursor: default;
 }
 
+.milkdown-markdown-editor :deep(.desk-raw-block--bilibili-video) {
+  position: relative;
+  display: block;
+  margin: 12px 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: default;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--bilibili-video .desk-raw-block__component-preview) {
+  min-height: 120px;
+}
+
+/* Match built-in code: no panel fill; border only on hover / focus / editing. */
+.milkdown-markdown-editor :deep(.desk-raw-block--word-list) {
+  position: relative;
+  display: block;
+  margin: 12px 0;
+  padding: 0;
+  overflow: visible;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  transition: border-color 120ms ease;
+  cursor: default;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--word-list:hover),
+.milkdown-markdown-editor :deep(.desk-raw-block--word-list:focus-within),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--word-list:has(.desk-raw-block__editor:not([hidden]))) {
+  border-color: var(--border);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--word-list .desk-raw-block__component-preview) {
+  min-height: 48px;
+  padding: 4px 8px;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--bilibili-video.ProseMirror-selectednode),
+.milkdown-markdown-editor :deep(.desk-raw-block--bilibili-video.desk-raw-block--range-selected) {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--word-list.ProseMirror-selectednode),
+.milkdown-markdown-editor :deep(.desk-raw-block--word-list.desk-raw-block--range-selected) {
+  border-color: var(--accent-strong);
+  box-shadow: 0 0 0 1px var(--accent-strong);
+  background: transparent;
+  outline: none;
+}
+
+/* Mermaid: same shell model as WordList — one border wraps preview + editor. */
+.milkdown-markdown-editor :deep(.desk-raw-block--mermaid),
+.milkdown-markdown-editor :deep(.desk-raw-block--mermaid.desk-raw-block--diagram) {
+  position: relative;
+  display: block;
+  margin: 12px 0;
+  padding: 0;
+  min-height: 0;
+  overflow: visible;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  transition: border-color 120ms ease;
+  cursor: default;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--mermaid:hover),
+.milkdown-markdown-editor :deep(.desk-raw-block--mermaid:focus-within),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--mermaid:has(.desk-raw-block__editor:not([hidden]))) {
+  border-color: var(--border);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--mermaid .tn-mermaid) {
+  margin: 0;
+  border-color: transparent;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* Shell hover/focus should reveal Mermaid actions even when the pointer is on the editor. */
+.milkdown-markdown-editor :deep(.desk-raw-block--mermaid:hover .tn-mermaid__actions:not(.is-suppressed)),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--mermaid:focus-within .tn-mermaid__actions:not(.is-suppressed)) {
+  opacity: 1;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--mermaid.ProseMirror-selectednode),
+.milkdown-markdown-editor :deep(.desk-raw-block--mermaid.desk-raw-block--range-selected) {
+  border-color: var(--accent-strong);
+  box-shadow: 0 0 0 1px var(--accent-strong);
+  outline: none;
+  background: transparent;
+}
+
+/* Structured editor sits inside the shell — no second outer frame. */
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--mermaid > .desk-raw-block__editor--structured),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--word-list > .desk-raw-block__editor--structured),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--mindmap > .desk-raw-block__editor--structured),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--notes-table > .desk-raw-block__editor--structured),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--footprints > .desk-raw-block__editor--structured) {
+  margin-top: 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 7px 7px;
+  background: transparent;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--include) {
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  align-self: stretch;
+  width: 100%;
+  gap: 8px;
+  padding: 10px 12px;
+  overflow: visible;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--include .desk-raw-block__label) {
+  flex: 0 0 auto;
+  align-self: flex-start;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-body) {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-pre) {
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  max-height: 420px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel) 70%, var(--editor-bg));
+  color: var(--editor-text);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  text-align: left;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-toolbar) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-action) {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--editor-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-action:hover:not(:disabled)) {
+  border-color: var(--accent-strong);
+  color: var(--accent-strong);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-action:disabled) {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-action.is-dirty) {
+  border-color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+  color: var(--accent-strong);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-cm) {
+  min-height: 160px;
+  max-height: 480px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--editor-bg);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-cm .cm-editor) {
+  min-height: 160px;
+  background: var(--editor-bg) !important;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-cm .cm-scroller),
+.milkdown-markdown-editor :deep(.desk-raw-block__include-cm .cm-content),
+.milkdown-markdown-editor :deep(.desk-raw-block__include-cm .cm-gutters),
+.milkdown-markdown-editor :deep(.desk-raw-block__include-cm .cm-gutterElement),
+.milkdown-markdown-editor :deep(.desk-raw-block__include-cm .cm-activeLine),
+.milkdown-markdown-editor :deep(.desk-raw-block__include-cm .cm-activeLineGutter) {
+  background-color: var(--editor-bg) !important;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-cm .cm-gutters) {
+  border-right: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--include.is-include-dirty) {
+  border-color: color-mix(in srgb, var(--accent-strong) 55%, var(--border));
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-status) {
+  min-height: 1.2em;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-status[data-kind='error']) {
+  color: var(--danger, #e85d5d);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-status[data-kind='ok']) {
+  color: var(--accent-strong);
+}
+
+/* Mindmap / NotesTable / Footprints: WordList-like transparent shell. */
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap),
+.milkdown-markdown-editor :deep(.desk-raw-block--notes-table),
+.milkdown-markdown-editor :deep(.desk-raw-block--footprints) {
+  position: relative;
+  display: block;
+  margin: 12px 0;
+  padding: 0;
+  overflow: visible;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  transition: border-color 120ms ease;
+  cursor: default;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap:hover),
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap:focus-within),
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap.is-mindmap-island-active),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--mindmap:has(.desk-raw-block__editor:not([hidden]))),
+.milkdown-markdown-editor :deep(.desk-raw-block--notes-table:hover),
+.milkdown-markdown-editor :deep(.desk-raw-block--notes-table:focus-within),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--notes-table:has(.desk-raw-block__editor:not([hidden]))),
+.milkdown-markdown-editor :deep(.desk-raw-block--footprints:hover),
+.milkdown-markdown-editor :deep(.desk-raw-block--footprints:focus-within),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--footprints:has(.desk-raw-block__editor:not([hidden]))) {
+  border-color: var(--border);
+}
+
+/* Match ui NotesTable link chrome (PM/global `a` styles must not force underline). */
+.milkdown-markdown-editor :deep(.desk-raw-block--notes-table .tn-notes-table__link) {
+  color: var(--tn-c-brand);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--notes-table .tn-notes-table__link:hover) {
+  text-decoration: underline;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--notes-table .tn-notes-table) {
+  margin: 0;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap.is-mindmap-island-active) {
+  border-color: var(--accent-strong);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .mindmap-preview) {
+  margin: 0;
+}
+
+/* Escape editor scroll/containment so CSS fullscreen covers the Desk window. */
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .mindmap-preview.is-fullscreen) {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 200000 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
+}
+
+/* ProseMirror virtual-cursor sets caret-color: transparent on the whole doc —
+   restore carets inside the mindmap island (canvas / outline / source). */
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--mindmap .mm-edit-input),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--mindmap .rich-inline-editor),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--mindmap .md-textarea),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--mindmap .markdown-view textarea),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--mindmap [contenteditable='true']) {
+  caret-color: var(--accent-strong, #3b82f6) !important;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .mm-selection-box) {
+  border: 1px solid color-mix(in srgb, var(--accent-strong, #3b82f6) 88%, white);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent-strong, #3b82f6) 16%, transparent);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .mindmap-preview-actions) {
+  z-index: 200;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .mindmap-preview.is-fullscreen .mindmap-preview-actions) {
+  pointer-events: auto !important;
+  opacity: 1 !important;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .mm-editor) {
+  outline: none;
+}
+
 .milkdown-markdown-editor :deep(.desk-raw-block--diagram) {
   position: relative;
   display: block;
@@ -1758,11 +3914,181 @@ onBeforeUnmount(() => {
   background-color: var(--danger-soft);
 }
 
-.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-code-group),
-.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-swiper) {
-  padding: 14px 18px;
-  border: 1px solid var(--border);
+.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-code-group) {
+  /* No outer panel chrome — tabs + inner code block carry the surface. */
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+/* Swiper — align with core `.tn-swiper` (tokenized for Desk). */
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-swiper) {
+  margin: 0;
+  overflow: visible;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.18);
+  background: transparent;
+  padding: 0;
+  border: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-swiper:hover) {
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.28);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-swiper-tabs) {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-bottom: 1px solid var(--border);
+  border-radius: 8px 8px 0 0;
   background: var(--panel);
+  box-shadow: inset 0 -1px var(--border);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-swiper-tabs.is-reordering) {
+  overflow: visible;
+  user-select: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-tab-nav) {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 0 0.3rem;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.8rem;
+  line-height: 1;
+  user-select: none;
+  transition: color 0.2s ease, transform 0.2s ease, font-size 0.2s ease;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-tab-prev) {
+  left: 0.5rem;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tab-tab-line) {
+  left: 1.1rem;
+  color: var(--accent-strong);
+  cursor: default;
+  opacity: 0.5;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-tab-next) {
+  left: 1.5rem;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-tab-prev:hover),
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-tab-next:hover) {
+  color: var(--accent-strong);
+  font-size: 1rem;
+  transform: translateY(-50%) scale(1.5);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-tab-nav:active) {
+  transform: translateY(-50%) scale(0.95);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-tab) {
+  position: relative;
+  flex: none;
+  padding: 0.25rem 0.75rem;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.875rem;
+  line-height: 2rem;
+  white-space: nowrap;
+  transition: color 0.2s ease, transform 0.2s ease;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .desk-raw-block--swiper-editable .tn-tab) {
+  cursor: grab;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-tab::after) {
+  position: absolute;
+  right: 8px;
+  bottom: -1px;
+  left: 8px;
+  z-index: 1;
+  height: 2px;
+  border-radius: 2px;
+  content: '';
+  background-color: transparent;
+  transition: background-color 0.2s ease;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-tab:hover) {
+  color: var(--editor-text);
+  transform: translateY(-1px);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-tab.active) {
+  color: var(--editor-text);
+  font-weight: 500;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-tab.active::after) {
+  background-color: var(--accent-strong);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-tab.is-dragging) {
+  z-index: 5;
+  cursor: grabbing;
+  opacity: 0.92;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.25);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .tn-tab__rename) {
+  width: min(12rem, 40vw);
+  margin: 0;
+  padding: 2px 6px;
+  border: 1px solid var(--accent-strong);
+  border-radius: 4px;
+  background: var(--editor-bg);
+  color: var(--editor-text);
+  /* Nested under ProseMirror.virtual-cursor-enabled which sets caret-color:
+     transparent — restore a visible caret for this native input. */
+  caret-color: var(--accent-strong);
+  font: inherit;
+  font-size: 0.875rem;
+  line-height: 1.6rem;
+  outline: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .swiper-container) {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  margin: 0;
+  border-radius: 0 0 8px 8px;
+  background: var(--editor-bg);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .swiper-slide) {
+  display: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .swiper-slide.is-active) {
+  display: block;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .swiper-slide img) {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+  object-fit: contain;
 }
 
 .milkdown-markdown-editor :deep(.desk-raw-block--container details.custom-block-details > summary) {
@@ -1908,9 +4234,17 @@ onBeforeUnmount(() => {
   display: flex;
   gap: 4px;
   margin-bottom: 8px;
+  position: relative;
+  user-select: none;
+  touch-action: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .code-group-tabs.is-reordering) {
+  cursor: grabbing;
 }
 
 .milkdown-markdown-editor :deep(.desk-raw-block--container .code-group-tab) {
+  position: relative;
   padding: 4px 12px;
   font-size: 12px;
   line-height: 1.6;
@@ -1918,7 +4252,13 @@ onBeforeUnmount(() => {
   background: var(--hover);
   border: 1px solid var(--border);
   border-radius: 6px 6px 0 0;
-  cursor: pointer;
+  cursor: grab;
+  transition: transform 120ms ease;
+  will-change: transform;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .code-group-tab:active) {
+  cursor: grabbing;
 }
 
 .milkdown-markdown-editor :deep(.desk-raw-block--container .code-group-tab:hover) {
@@ -1932,6 +4272,118 @@ onBeforeUnmount(() => {
   border-color: var(--accent-strong);
 }
 
+.milkdown-markdown-editor :deep(.desk-raw-block--container .code-group-tab.is-tab-dirty) {
+  color: var(--accent-strong);
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .code-group-tab.is-dragging) {
+  opacity: 0.92;
+  z-index: 5;
+  box-shadow: 0 4px 12px color-mix(in srgb, #000 28%, transparent);
+  transition: none;
+  cursor: grabbing;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block--container .code-group-tab__rename) {
+  width: 100%;
+  min-width: 48px;
+  max-width: 160px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  caret-color: var(--accent-strong);
+  font: inherit;
+  line-height: inherit;
+  outline: none;
+}
+
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--container .desk-raw-block--code-group-editable .desk-raw-block__include-body) {
+  gap: 0;
+  padding: 0;
+}
+
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--container .desk-raw-block--code-group-editable .code-group-panel) {
+  padding: 0 0 8px;
+}
+
+.milkdown-markdown-editor :deep(.desk-code-tab) {
+  position: relative;
+  margin: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--editor-bg);
+  transition: border-color 120ms ease;
+  overflow: visible;
+  padding: 8px 12px 12px;
+}
+
+.milkdown-markdown-editor :deep(.desk-code-tab:hover),
+.milkdown-markdown-editor :deep(.desk-code-tab:focus-within),
+.milkdown-markdown-editor :deep(.desk-code-tab.is-dirty) {
+  border-color: var(--border);
+}
+
+.milkdown-markdown-editor :deep(.desk-code-tab.is-dirty) {
+  border-color: color-mix(in srgb, var(--accent-strong) 55%, var(--border));
+}
+
+/* Same tools chrome as standalone milkdown code blocks (header row, not overlay). */
+.milkdown-markdown-editor :deep(.desk-code-tab.milkdown-code-block .tools.desk-code-tab__tools) {
+  position: relative;
+  top: auto;
+  right: auto;
+  z-index: 2;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-height: 28px;
+  margin: 0 0 4px;
+  padding: 0 2px;
+  pointer-events: auto;
+}
+
+.milkdown-markdown-editor :deep(.desk-code-tab .tools .language-button),
+.milkdown-markdown-editor :deep(.desk-code-tab:hover .tools .language-button),
+.milkdown-markdown-editor :deep(.desk-code-tab .tools .tools-button-group button),
+.milkdown-markdown-editor :deep(.desk-code-tab:hover .tools .tools-button-group button) {
+  opacity: 1;
+  margin-bottom: 0;
+}
+
+.milkdown-markdown-editor :deep(.desk-code-tab .tools .copy-button svg) {
+  fill: currentColor;
+  stroke: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-code-tab .tools .copy-button svg path) {
+  fill: currentColor;
+}
+
+.milkdown-markdown-editor :deep(.desk-code-tab .tools .language-button .expand-icon svg) {
+  fill: none;
+  stroke: currentColor;
+}
+
+.milkdown-markdown-editor :deep(.desk-code-tab__tools .language-picker) {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  left: auto;
+}
+
+.milkdown-markdown-editor :deep(.desk-code-tab__cm) {
+  min-height: 140px;
+  max-height: 480px;
+  border: 0;
+  border-radius: 0;
+}
+
 .milkdown-markdown-editor :deep(.desk-raw-block--container .code-group-panels .code-group-panel) {
   display: none;
 }
@@ -1939,27 +4391,6 @@ onBeforeUnmount(() => {
 .milkdown-markdown-editor
   :deep(.desk-raw-block--container .code-group-panels .code-group-panel.active) {
   display: block;
-}
-
-.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-swiper .swiper-body) {
-  display: flex;
-  gap: 10px;
-  overflow-x: auto;
-  padding-bottom: 4px;
-}
-
-.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-swiper .swiper-body p) {
-  margin: 0;
-  flex: none;
-}
-
-.milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-swiper .swiper-body img) {
-  display: block;
-  max-height: 260px;
-  width: auto;
-  max-width: none;
-  border: 1px solid var(--border);
-  border-radius: 6px;
 }
 
 .milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__edit) {
@@ -2006,6 +4437,23 @@ onBeforeUnmount(() => {
 .milkdown-markdown-editor :deep(.desk-raw-block.ProseMirror-selectednode .desk-raw-block__edit),
 .milkdown-markdown-editor :deep(.desk-raw-block:focus-within .desk-raw-block__edit) {
   opacity: 1;
+}
+
+/*
+ * Generic edit rule is `.desk-raw-block .desk-raw-block__edit` (top/right).
+ * Beat it with higher specificity so Mermaid edit shares the action-bar row
+ * instead of sitting under the icon cluster (z-index 10 covers top:8px/right:10px).
+ *
+ * Action bar: top 8px, right 8px, ~96px wide (3×28 + gaps + padding).
+ */
+.milkdown-markdown-editor
+  :deep(.desk-raw-block.desk-raw-block--mermaid > .desk-raw-block__edit) {
+  top: 10px;
+  right: 112px;
+  z-index: 11;
+  box-sizing: border-box;
+  height: 32px;
+  padding: 0 12px;
 }
 
 .milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__edit:hover),
@@ -2115,6 +4563,33 @@ onBeforeUnmount(() => {
 }
 
 .milkdown-markdown-editor
+  :deep(.desk-raw-block .desk-raw-block__editor--structured .desk-raw-block__editor-toggles) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  padding: 8px 12px 10px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.milkdown-markdown-editor
+  :deep(.desk-raw-block .desk-raw-block__editor--structured .desk-raw-block__editor-toggle) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.milkdown-markdown-editor
+  :deep(.desk-raw-block .desk-raw-block__editor--structured .desk-raw-block__editor-toggle input) {
+  margin: 0;
+}
+
+.milkdown-markdown-editor
   :deep(.desk-raw-block .desk-raw-block__editor--structured .desk-raw-block__editor-title:focus) {
   border-bottom-color: color-mix(in srgb, var(--accent-strong) 45%, var(--border));
 }
@@ -2139,6 +4614,22 @@ onBeforeUnmount(() => {
 
 .milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-cm .cm-editor) {
   height: 100%;
+  background: var(--editor-bg) !important;
+}
+
+/* Override githubDark/Light panel colors so tip/Mermaid/WordList editors match the document. */
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-cm .cm-scroller),
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-cm .cm-content),
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-cm .cm-gutters),
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-cm .cm-gutterElement),
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-cm .cm-activeLine),
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-cm .cm-activeLineGutter) {
+  background-color: var(--editor-bg) !important;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-cm .cm-gutters) {
+  border-right: 1px solid var(--border);
+  color: var(--muted);
 }
 
 .milkdown-markdown-editor :deep(.desk-generated-title) {
@@ -2275,13 +4766,51 @@ onBeforeUnmount(() => {
   color: var(--editor-text);
 }
 
+/* Tab rename inputs — same blanket wipe as above; restore visible text selection. */
+.milkdown-markdown-editor :deep(.desk-raw-block .tn-tab__rename::selection),
+.milkdown-markdown-editor :deep(.desk-raw-block .code-group-tab__rename::selection) {
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--editor-text);
+}
+
+/* Mindmap island editors — same blanket wipe as above; restore visible text selection. */
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .mm-edit-input::selection),
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .mm-edit-input *::selection),
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .rich-inline-editor::selection),
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .rich-inline-editor *::selection),
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .title-input::selection),
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .md-textarea::selection) {
+  background: color-mix(in srgb, var(--accent-strong, var(--accent)) 55%, transparent);
+  color: inherit;
+}
+
 .milkdown-markdown-editor :deep(.milkdown-code-block .language-picker) {
+  /* Anchor under the tools row (right side) so the 410px list is out of flow
+     and does not push following markdown / grow scroll height. */
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  left: auto;
+  z-index: 30;
+  width: max-content;
+  max-width: min(240px, 100%);
+  padding-top: 0;
   color: var(--editor-text);
 }
 
 .milkdown-markdown-editor :deep(.milkdown-code-block .language-picker .list-wrapper) {
   background: var(--panel);
   color: var(--editor-text);
+  right: 0;
+  left: auto;
+  max-height: min(410px, 55vh);
+  overflow: hidden;
+  box-shadow: var(--shadow, 0 8px 24px color-mix(in srgb, #000 28%, transparent));
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .language-picker .language-list) {
+  height: auto;
+  max-height: min(360px, 48vh);
 }
 
 .milkdown-markdown-editor :deep(.milkdown-code-block .language-list-item) {
@@ -2296,15 +4825,70 @@ onBeforeUnmount(() => {
   color: var(--editor-text);
 }
 
-.milkdown-markdown-editor :deep(.milkdown-code-block .tools .tools-button-group button) {
-  background: var(--panel);
-  color: var(--editor-text);
-  border: 1px solid var(--border);
+.milkdown-markdown-editor :deep(.milkdown-code-block .tools) {
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-height: 28px;
+  margin-bottom: 4px;
+  padding: 0 2px;
 }
 
-.milkdown-markdown-editor :deep(.milkdown-code-block .tools .tools-button-group button:hover) {
-  background: var(--hover);
-  color: var(--text);
+.milkdown-markdown-editor :deep(.milkdown-code-block .tools .desk-code-title) {
+  order: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-right: auto;
+  height: 22px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--editor-text);
+  /* Nested under ProseMirror.virtual-cursor-enabled which sets caret-color:
+     transparent — restore a visible caret for this native input. */
+  caret-color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 22px;
+  outline: none;
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .tools .desk-code-title::placeholder) {
+  color: var(--muted);
+  opacity: 0.85;
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .tools .desk-code-title:focus) {
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .tools .tools-button-group) {
+  /* Copy sits to the right of the language pill. */
+  order: 3;
+  gap: 4px;
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .tools .tools-button-group button) {
+  background: color-mix(in srgb, var(--panel) 88%, var(--editor-bg));
+  color: var(--muted);
+  border: 1px solid var(--border);
+  opacity: 1;
+  border-radius: 4px;
+  padding: 3px 8px;
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .tools .tools-button-group button:first-child),
+.milkdown-markdown-editor :deep(.milkdown-code-block .tools .tools-button-group button:last-child) {
+  border-radius: 4px;
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .tools .tools-button-group button[data-copied='true']) {
+  color: var(--accent-strong);
+  border-color: var(--accent-strong);
 }
 
 .milkdown-markdown-editor :deep(.milkdown-code-block .tools .tools-button-group button svg) {
@@ -2322,6 +4906,7 @@ onBeforeUnmount(() => {
   border: 1px solid transparent;
   border-radius: 8px;
   transition: border-color 120ms ease;
+  overflow: visible;
 }
 
 .milkdown-markdown-editor :deep(.milkdown-code-block:hover) {
@@ -2341,8 +4926,38 @@ onBeforeUnmount(() => {
   border-right: 1px solid var(--border);
 }
 
-.milkdown-markdown-editor :deep(.milkdown-code-block .tools .language-button) {
+/* Yuque-like language pill — left of Copy within the top-right cluster. */
+.milkdown-markdown-editor :deep(.milkdown-code-block .tools .language-button),
+.milkdown-markdown-editor :deep(.milkdown-code-block:hover .tools .language-button) {
+  order: 2;
   opacity: 1;
+  margin: 0;
+  height: 22px;
+  padding: 0 6px 0 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--panel) 88%, var(--editor-bg));
+  color: var(--muted);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 22px;
+  gap: 2px;
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .tools .language-button:hover) {
+  background: var(--hover);
+  color: var(--editor-text);
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .tools .language-button .expand-icon) {
+  width: 14px;
+  height: 14px;
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .tools .language-button .expand-icon svg) {
+  width: 12px;
+  height: 12px;
+  color: var(--muted);
 }
 
 .milkdown-markdown-editor :deep(.milkdown-code-block .cm-activeLine) {
@@ -2368,5 +4983,16 @@ onBeforeUnmount(() => {
        content edge (the old 20px padding clipped + / drag controls). */
     padding: 22px 40px 40px 80px;
   }
+}
+</style>
+
+<!-- Unscoped: hide non-fullscreen mindmap chrome while one owns the overlay. -->
+<style>
+html[data-tn-mindmap-fs] .mindmap-preview:not(.is-fullscreen) .mindmap-preview-actions,
+body[data-tn-mindmap-fs] .mindmap-preview:not(.is-fullscreen) .mindmap-preview-actions {
+  display: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
 }
 </style>

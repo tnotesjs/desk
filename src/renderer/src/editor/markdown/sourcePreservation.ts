@@ -1,3 +1,5 @@
+import { applyFenceTitle, parseFenceTitleFromMeta } from './fenceInfo'
+
 export type MarkdownSourceBlockKind =
   | 'heading'
   | 'paragraph'
@@ -653,6 +655,10 @@ function firstInfoToken(info: string): string {
   return info.trim().match(/^\S+/)?.[0] ?? ''
 }
 
+function fenceOpeningInfo(openingLine: string): string {
+  return openingLine.match(/^ {0,3}(?:`{3,}|~{3,})(.*)$/)?.[1] ?? ''
+}
+
 function splitFencedBlock(source: string): FencedBlockParts | null {
   const lines = readLines(source)
   if (lines.length < 2) return null
@@ -731,10 +737,25 @@ function reconcileChangedFence(
   }
   if (currentBody === null) return null
 
-  const opening =
+  let opening =
     currentLanguage === baselineLanguage
       ? originalFence.opening
       : replaceFenceLanguage(originalFence.opening, currentLanguage)
+
+  if (currentFence) {
+    const baselineTitle = parseFenceTitleFromMeta(
+      fenceOpeningInfo(baselineFence?.opening ?? '')
+    )
+    const currentTitle = parseFenceTitleFromMeta(fenceOpeningInfo(currentFence.opening))
+    const originalTitle = parseFenceTitleFromMeta(fenceOpeningInfo(originalFence.opening))
+    // Only sync titles when Milkdown's canonical dump is participating in the
+    // title channel (baseline/current carry a `[title]`). Legacy dumps without
+    // meta must not strip titles preserved on the original opening line.
+    if ((baselineTitle || currentTitle) && currentTitle !== originalTitle) {
+      opening = applyFenceTitle(opening, currentTitle)
+    }
+  }
+
   const body = normalizeBodyLineEndings(currentBody, originalFence.body, originalFence.lineEnding)
   return opening + originalFence.openingLineEnding + body + originalFence.closing
 }

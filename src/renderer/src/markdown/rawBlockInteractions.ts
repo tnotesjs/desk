@@ -700,8 +700,51 @@ function isWholeSelectKeyEvent(event: KeyboardEvent): boolean {
   )
 }
 
+/**
+ * Editable mindmap islands nest under ProseMirror and briefly take NodeSelection
+ * so the body caret disappears. Arrow/Delete must stay on the canvas (node focus
+ * navigation), not exit/delete the whole fence — same idea as leaving CM alone.
+ */
+function isMindmapIslandKeyboardOwner(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false
+  const block = target.closest('.desk-raw-block--mindmap')
+  if (!block) return false
+  if (block.classList.contains('is-mindmap-island-active')) return true
+  return Boolean(
+    target.closest(
+      [
+        '.mm-editor',
+        '.mindmap-preview',
+        '.outline-view',
+        '.markdown-view',
+        '.mm-edit-input',
+        '.rich-inline-editor',
+        '.md-textarea',
+        '[contenteditable="true"]'
+      ].join(', ')
+    )
+  )
+}
+
+/** True when PM NodeSelection is on a mindmap fence whose interaction island is live. */
+function isActiveMindmapIslandSelection(view: EditorView): boolean {
+  const { selection } = view.state
+  if (!(selection instanceof NodeSelection) || !isSelectableBlockNode(selection.node)) {
+    return false
+  }
+  const nodeDom = view.nodeDOM(selection.from)
+  if (!(nodeDom instanceof Element)) return false
+  const block =
+    nodeDom.closest('.desk-raw-block--mindmap') ??
+    (nodeDom.classList.contains('desk-raw-block--mindmap') ? nodeDom : null)
+  return Boolean(block?.classList.contains('is-mindmap-island-active'))
+}
+
 function handleWholeSelectKeys(view: EditorView, event: KeyboardEvent): boolean {
   if (!isWholeSelectKeyEvent(event)) return false
+  if (isMindmapIslandKeyboardOwner(event.target) || isActiveMindmapIslandSelection(view)) {
+    return false
+  }
   return (
     handleRawBlockRangeDeletion(view, event) ||
     handleCodeBlockWholeSelect(view, event) ||
@@ -783,6 +826,10 @@ export function createRawBlockSelectionPlugin(): MilkdownPlugin[] {
             if (!view.editable) return false
             if (claimedKeyboardEvent === event) return true
             const target = event.target as Element | null
+            // Nested mindmap canvas / outline owns arrows while the island is active.
+            if (isMindmapIslandKeyboardOwner(target) || isActiveMindmapIslandSelection(view)) {
+              return false
+            }
             // Whole-select must win even when Crepe's selectNode() left focus in CM.
             if (handleWholeSelectKeys(view, event)) {
               claimEvent(event)
@@ -828,6 +875,14 @@ export function createRawBlockSelectionPlugin(): MilkdownPlugin[] {
             if (claimedKeyboardEvent === event) return
 
             const eventTarget = event.target
+            // Mindmap island: do not steal Arrow/Delete from .mm-editor (capture runs first).
+            if (
+              isMindmapIslandKeyboardOwner(eventTarget) ||
+              (isActiveMindmapIslandSelection(view) && isWholeSelectKeyEvent(event))
+            ) {
+              return
+            }
+
             const inProseMirror =
               eventTarget instanceof Node &&
               (eventTarget === view.dom || view.dom.contains(eventTarget))
@@ -883,6 +938,8 @@ export function createRawBlockSelectionPlugin(): MilkdownPlugin[] {
               if (active instanceof Element && active.closest('.desk-raw-block__editor-cm')) {
                 return
               }
+              // Mindmap canvas / outline keep focus while the interaction island is live.
+              if (isMindmapIslandKeyboardOwner(active)) return
               if (isForeignTextField(active)) return
               // Reclaim from body / Crepe block-handle after atom NodeSelection.
               view.focus()

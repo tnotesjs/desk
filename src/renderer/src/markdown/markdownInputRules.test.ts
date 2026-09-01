@@ -110,7 +110,7 @@ describe('0006 block shortcuts', () => {
     expect(pressEnter(view)).toBe(true)
     expect(view.state.doc.firstChild?.type.name).toBe('deskRawBlock')
     expect(view.state.doc.firstChild?.attrs.kind).toBe('raw-container')
-    expect(view.state.doc.firstChild?.attrs.source).toBe('::: tip 💡 TIP\n\n:::\n')
+    expect(view.state.doc.firstChild?.attrs.source).toBe('::: tip 💡 TIP\n\n\n\n:::\n')
     await new Promise((resolve) => window.setTimeout(resolve, 0))
     expect(opened).toHaveBeenCalledWith(0)
   })

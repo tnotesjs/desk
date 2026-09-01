@@ -179,7 +179,7 @@ describe('slash menu insert projection', () => {
 
 describe('projectRawBlocksForMilkdown output', () => {
   it('project <B/> component to a marker', () => {
-    const out = projectRawBlocksForMilkdown('<B id="" />\n')
+    const out = projectRawBlocksForMilkdown('<BilibiliVideo id="" />\n')
     expect(out).toContain('<!--desk-raw-block:v1:raw-component')
   })
   it('project mermaid fence to a marker', () => {
@@ -204,7 +204,7 @@ describe('parse marker via parserCtx', () => {
     let parsed: { first: string; childCount: number } | null = null
     editor.action((ctx) => {
       const parser = ctx.get(parserCtx)
-      const doc = parser(projectRawBlocksForMilkdown('<B id="" />\n'))
+      const doc = parser(projectRawBlocksForMilkdown('<BilibiliVideo id="" />\n'))
       parsed = doc
         ? {
             first: doc.content.firstChild?.type?.name ?? '',

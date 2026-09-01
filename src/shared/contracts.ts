@@ -14,6 +14,7 @@ export const IPC_CHANNELS = {
   settingsReadRaw: 'settings:read-raw',
   settingsWriteRaw: 'settings:write-raw',
   noteRead: 'note:read',
+  noteResolveTable: 'note:resolve-table',
   noteSave: 'note:save',
   noteCreate: 'note:create',
   noteRename: 'note:rename',
@@ -23,6 +24,7 @@ export const IPC_CHANNELS = {
   attachmentWriteLocal: 'attachment:write-local',
   attachmentUploadImage: 'attachment:upload-image',
   attachmentReadText: 'attachment:read-text',
+  attachmentWriteText: 'attachment:write-text',
   imageTokenStatus: 'image:token-status',
   imageTokenUpdate: 'image:token-update',
   imageSettingsValidate: 'image:settings-validate',
@@ -365,6 +367,25 @@ export interface NoteDocumentDto {
   readOnly: boolean
 }
 
+/** Rows for `<NotesTable>` preview — Desk adapter over workspace snapshot. */
+export interface NotesTableResolveRowDto {
+  id: string
+  title: string
+  description: string
+  /** Present when the id maps to a note in this knowledge base. */
+  noteUuid: string | null
+}
+
+export interface NotesTableResolveRequest {
+  knowledgeBaseId: string
+  ids: string[]
+}
+
+export interface NotesTableResolveResult {
+  notes: NotesTableResolveRowDto[]
+  missingIds: string[]
+}
+
 export interface NoteMutationDto {
   note: NoteDocumentDto
   knowledgeBase: KnowledgeBaseDetail
@@ -520,6 +541,13 @@ export interface AttachmentReadTextRequest {
   path: string
 }
 
+export interface AttachmentWriteTextRequest {
+  knowledgeBaseId: string
+  noteUuid: string
+  path: string
+  content: string
+}
+
 export type TocEntryRefDto =
   | { type: 'note'; noteUuid: string }
   | { type: 'folder'; folderPath: string[] }
@@ -604,6 +632,7 @@ export interface DeskApi {
   }
   notes: {
     read(knowledgeBaseId: string, noteUuid: string): Promise<DeskResult<NoteDocumentDto>>
+    resolveTable(request: NotesTableResolveRequest): Promise<DeskResult<NotesTableResolveResult>>
     save(request: NoteSaveRequest): Promise<DeskResult<NoteMutationDto>>
     create(request: NoteCreateRequest): Promise<DeskResult<NoteMutationDto>>
     rename(request: NoteRenameRequest): Promise<DeskResult<NoteMutationDto>>
@@ -618,6 +647,7 @@ export interface DeskApi {
     ): Promise<DeskResult<AttachmentWriteLocalResult>>
     uploadImage(request: ImageUploadRequest): Promise<DeskResult<ImageUploadResult>>
     readText(request: AttachmentReadTextRequest): Promise<DeskResult<string>>
+    writeText(request: AttachmentWriteTextRequest): Promise<DeskResult<void>>
   }
   search(request: SearchRequest): Promise<DeskResult<SearchResultDto[]>>
   git: {

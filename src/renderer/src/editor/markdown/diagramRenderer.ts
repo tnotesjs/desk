@@ -4,20 +4,38 @@ interface FencedCode {
   lang: string
   code: string
   title: string
+  /** Mermaid fence keyword `center` (absent → false). */
+  center: boolean
 }
 
 /** Extracts the fence language and code body from a full fenced-code source. */
 export function parseFencedCode(source: string): FencedCode {
   const lines = source.replace(/\r\n?/g, '\n').split('\n')
   const opening = lines[0]?.match(/^ {0,3}(`{3,}|~{3,})\s*([^\s]*)\s*(.*)$/)
-  if (!opening) return { lang: '', code: source, title: '' }
+  if (!opening) return { lang: '', code: source, title: '', center: false }
   const lang = opening[2] ?? ''
-  const title = (opening[3] ?? '').match(/\[([^\]]+)\]/)?.[1]?.trim() ?? ''
+  const meta = opening[3] ?? ''
+  const title = meta.match(/\[([^\]]+)\]/)?.[1]?.trim() ?? ''
+  const center = meta.split(/\s+/).some((part) => part.toLowerCase() === 'center')
   const marker = opening[1][0]
   const length = opening[1].length
   let end = lines.length - 1
   while (end > 0 && !new RegExp(`^ {0,3}${marker}{${length},}[ \\t]*$`).test(lines[end])) end -= 1
-  return { lang, code: lines.slice(1, end).join('\n'), title }
+  return { lang, code: lines.slice(1, end).join('\n'), title, center }
+}
+
+/** Rebuild a mermaid fence; toggles the `center` info keyword and/or body. */
+export function rebuildMermaidFence(
+  source: string,
+  center: boolean,
+  body?: string
+): string {
+  const parsed = parseFencedCode(source)
+  const trailingNewline = /\r?\n$/.test(source)
+  const info = center ? 'mermaid center' : 'mermaid'
+  const code = body ?? parsed.code
+  const fence = `\`\`\`${info}\n${code}\n\`\`\``
+  return trailingNewline ? `${fence}\n` : fence
 }
 
 type MermaidInstance = {

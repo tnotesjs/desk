@@ -26,6 +26,7 @@ import type {
   AttachmentWriteLocalRequest,
   AttachmentWriteLocalResult,
   AttachmentReadTextRequest,
+  AttachmentWriteTextRequest,
   DeskTocNode,
   ExternalNoteChangeEvent,
   KnowledgeBaseDescriptor,
@@ -315,6 +316,51 @@ export class WorkspaceManager {
     return toNoteDocument(handle, await handle.workspace.notes.read(noteUuid))
   }
 
+  /**
+   * Resolve NotesTable ids against the current knowledge-base snapshot
+   * (title + `.tnotes.json` description), same data VitePress notesConfig uses.
+   */
+  resolveNotesTable(
+    knowledgeBaseId: string,
+    ids: string[]
+  ): {
+    notes: Array<{
+      id: string
+      title: string
+      description: string
+      noteUuid: string | null
+    }>
+    missingIds: string[]
+  } {
+    const handle = this.getHandle(knowledgeBaseId)
+    const byIndex = new Map(handle.snapshot.notes.map((note) => [note.index, note]))
+    const missingIds: string[] = []
+    const notes: Array<{
+      id: string
+      title: string
+      description: string
+      noteUuid: string | null
+    }> = []
+
+    for (const id of ids) {
+      const note = byIndex.get(id)
+      if (!note) {
+        missingIds.push(id)
+        continue
+      }
+      const description =
+        typeof note.config.description === 'string' ? note.config.description : ''
+      notes.push({
+        id,
+        title: note.title,
+        description,
+        noteUuid: note.uuid
+      })
+    }
+
+    return { notes, missingIds }
+  }
+
   async saveNote(request: NoteSaveRequest): Promise<NoteMutationDto> {
     const handle = this.getHandle(request.knowledgeBaseId)
     const settings = loadSettings()
@@ -409,6 +455,22 @@ export class WorkspaceManager {
     const content = await fs.readFile(absolutePath, 'utf8')
     if (content.includes('\0')) throw new Error('引用文件不是文本文件')
     return content
+  }
+
+  async writeNoteTextAsset(request: AttachmentWriteTextRequest): Promise<void> {
+    if (Buffer.byteLength(request.content, 'utf8') > 2 * 1024 * 1024) {
+      throw new Error('引用文件不能超过 2 MB')
+    }
+    if (request.content.includes('\0')) throw new Error('引用文件不是文本文件')
+    const absolutePath = await this.resolvePathInsideNote(
+      request.knowledgeBaseId,
+      request.noteUuid,
+      request.path
+    )
+    const stat = await fs.stat(absolutePath)
+    if (!stat.isFile()) throw new Error('引用文件不存在')
+    this.markInternalWrites([{ path: absolutePath, kind: 'updated' }])
+    await fs.writeFile(absolutePath, request.content, 'utf8')
   }
 
   async moveToc(request: TocMoveRequest): Promise<KnowledgeBaseDetail> {

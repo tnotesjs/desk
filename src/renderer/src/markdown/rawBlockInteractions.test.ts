@@ -530,4 +530,30 @@ describe('code_block keyboard selection', () => {
       expect(codeBlockWholeSelectPosition(view.state)).toBe(pos.code)
     })
   })
+
+  it('active mindmap island keeps NodeSelection on ArrowDown (does not exit the fence)', async () => {
+    const editor = await createEditor('上方段落\n\n```mindmap\n# root\n```\n\n下方段落\n')
+    const pos = positions(editor)
+    expect(pos.raw).toBeGreaterThan(-1)
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx)
+      const block = view.nodeDOM(pos.raw)
+      expect(block).toBeInstanceOf(HTMLElement)
+      const host = block as HTMLElement
+      host.classList.add('is-mindmap-island-active')
+      const canvas = document.createElement('div')
+      canvas.className = 'mm-editor'
+      canvas.tabIndex = 0
+      host.append(canvas)
+
+      view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, pos.raw)))
+      canvas.focus()
+      expect(document.activeElement).toBe(canvas)
+
+      canvas.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      expect(view.state.selection).toBeInstanceOf(NodeSelection)
+      expect((view.state.selection as NodeSelection).from).toBe(pos.raw)
+      expect(document.activeElement).toBe(canvas)
+    })
+  })
 })

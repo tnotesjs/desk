@@ -211,17 +211,15 @@ try {
   const slashComponent = page
     .locator('[data-type="desk-raw-block"][data-kind="raw-component"]')
     .last()
-  assert.equal(await rawSource(slashComponent), '<B id="" />\n')
-  await expectSourceEditorAtStart(slashComponent)
-  assert.equal(await slashComponent.locator('.desk-raw-block__editor-header').isVisible(), true)
-  const componentSource = slashComponent.locator('.desk-raw-block__editor-cm .cm-content')
-  await componentSource.click()
-  await page.keyboard.press('Meta+A')
-  await page.keyboard.type('<B id="BV1E2E" />')
+  assert.equal(await rawSource(slashComponent), '<BilibiliVideo id="" />\n')
+  // Structured BVID field opens automatically after slash insert.
+  const idInput = slashComponent.locator('.desk-raw-block__editor-title')
+  assert.equal(await idInput.isVisible(), true)
+  await idInput.fill('BV1E2E')
   await slashComponent.locator('.desk-raw-block__editor-done').click()
   await page.waitForTimeout(100)
-  assert.equal(await rawSource(slashComponent), '<B id="BV1E2E" />')
-  record('component source editor is compact, focused, and commits edits')
+  assert.equal(await rawSource(slashComponent), '<BilibiliVideo id="BV1E2E" />\n')
+  record('component BilibiliVideo inserts canonical tag and commits BVID edits')
 
   await focusEmptyParagraph()
   await page.keyboard.type('/code')
@@ -311,7 +309,7 @@ try {
   const savedMarkdown = readFileSync(join(note, 'README.md'), 'utf8')
   assert.equal(savedMarkdown.includes('::: tip 💡 TIP\n\n:::'), true)
   assert.equal(savedMarkdown.includes('```mermaid\n\n```'), true)
-  assert.equal(savedMarkdown.includes('<B id="BV1E2E" />'), true)
+  assert.equal(savedMarkdown.includes('<BilibiliVideo id="BV1E2E" />'), true)
   console.log(JSON.stringify({ passed: results.length, results }, null, 2))
 } finally {
   await app.close()

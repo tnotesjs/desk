@@ -7,6 +7,7 @@ import type {
   AttachmentWriteLocalRequest,
   AttachmentWriteLocalResult,
   AttachmentReadTextRequest,
+  AttachmentWriteTextRequest,
   ImageSettingsValidateResult,
   ImageTokenStatus,
   ImageUploadResult,
@@ -20,6 +21,8 @@ import type {
   KnowledgeBaseDetail,
   NoteCreateRequest,
   NoteDocumentDto,
+  NotesTableResolveRequest,
+  NotesTableResolveResult,
   NoteMutationDto,
   NoteRenameRequest,
   NoteSaveRequest,
@@ -91,6 +94,8 @@ const api: DeskApi = {
         knowledgeBaseId,
         noteUuid
       }),
+    resolveTable: (request: NotesTableResolveRequest) =>
+      invoke<NotesTableResolveResult>(IPC_CHANNELS.noteResolveTable, request),
     save: (request: NoteSaveRequest) => invoke<NoteMutationDto>(IPC_CHANNELS.noteSave, request),
     create: (request: NoteCreateRequest) =>
       invoke<NoteMutationDto>(IPC_CHANNELS.noteCreate, request),
@@ -117,7 +122,9 @@ const api: DeskApi = {
     uploadImage: (request) =>
       invoke<ImageUploadResult>(IPC_CHANNELS.attachmentUploadImage, request),
     readText: (request: AttachmentReadTextRequest) =>
-      invoke<string>(IPC_CHANNELS.attachmentReadText, request)
+      invoke<string>(IPC_CHANNELS.attachmentReadText, request),
+    writeText: (request: AttachmentWriteTextRequest) =>
+      invoke<void>(IPC_CHANNELS.attachmentWriteText, request)
   },
   search: (request) => invoke<SearchResultDto[]>(IPC_CHANNELS.searchQuery, request),
   git: {

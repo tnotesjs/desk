@@ -35,6 +35,21 @@
   font-family: var(--font-sans);
   font-size: 14px;
   line-height: 1.4;
+
+  /* @tnotesjs/ui tokens */
+  --tn-c-brand: var(--accent-strong);
+  --tn-c-text: var(--editor-text);
+  --tn-c-text-2: var(--muted);
+  --tn-c-bg: var(--editor-bg);
+  --tn-c-bg-soft: var(--panel);
+  --tn-c-bg-elv: var(--raised);
+  --tn-c-divider: var(--border);
+  --tn-c-danger: var(--danger);
+  --tn-c-danger-soft: var(--danger-soft);
+  --tn-c-success-soft: var(--success-soft);
+  --tn-c-default-soft: var(--hover);
+  --tn-shadow-2: 0 4px 12px rgb(0 0 0 / 0.35);
+  --tn-font-mono: var(--font-mono);
 }
 
 :root[data-theme='light'] {

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { describe, expect, it } from 'vitest'
-import { parseFencedCode, renderDiagram } from './diagramRenderer'
+import { parseFencedCode, rebuildMermaidFence, renderDiagram } from './diagramRenderer'
 
 describe('parseFencedCode', () => {
   it('extracts the language and body from a mermaid fence', () => {
@@ -9,8 +9,28 @@ describe('parseFencedCode', () => {
     expect(result).toEqual({
       lang: 'mermaid',
       code: 'flowchart TD\n  A[开始] --> B[结束]',
-      title: ''
+      title: '',
+      center: false
     })
+  })
+
+  it('detects the center keyword on mermaid fences', () => {
+    expect(parseFencedCode('```mermaid center\nA-->B\n```').center).toBe(true)
+  })
+})
+
+describe('rebuildMermaidFence', () => {
+  it('adds and removes the center keyword', () => {
+    const base = '```mermaid\nA-->B\n```\n'
+    expect(rebuildMermaidFence(base, true)).toBe('```mermaid center\nA-->B\n```\n')
+    expect(rebuildMermaidFence('```mermaid center\nA-->B\n```\n', false)).toBe(base)
+  })
+
+  it('replaces the body while preserving center', () => {
+    const source = '```mermaid center\nA-->B\n```\n'
+    expect(rebuildMermaidFence(source, true, 'flowchart LR\n  X --> Y')).toBe(
+      '```mermaid center\nflowchart LR\n  X --> Y\n```\n'
+    )
   })
 })
 

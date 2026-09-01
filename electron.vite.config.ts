@@ -20,6 +20,10 @@ export default defineConfig({
         '@renderer': resolve('src/renderer/src')
       }
     },
-    plugins: [vue()]
+    plugins: [vue()],
+    // Local file: packages change often; prebundling freezes an old export map.
+    optimizeDeps: {
+      exclude: ['@tnotesjs/ui']
+    }
   }
 })

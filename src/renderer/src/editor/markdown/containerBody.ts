@@ -3,6 +3,20 @@ import taskLists from 'markdown-it-task-lists'
 import linkAttributes from 'markdown-it-link-attributes'
 import DOMPurify from 'dompurify'
 
+import {
+  bodyHasIncludeLines,
+  expandIncludeLinesToFences,
+  includeTabTitle,
+  parseDeskIncludeLine
+} from './deskInclude'
+import {
+  applySwiperTabsPadding,
+  createSwiperTabNav,
+  parseSwiperSlides,
+  swiperSlideTabTitle,
+  wrapSlideIndex
+} from './swiperSlides'
+
 export interface ParsedContainer {
   name: string
   title: string
@@ -158,12 +172,9 @@ function buildFencePanel(fence: CodeFence): HTMLElement {
   return panel
 }
 
-function buildCodeGroup(bodyMarkdown: string): HTMLElement {
-  const group = document.createElement('div')
-  group.className = 'custom-block custom-block-code-group'
+function collectFences(bodyMarkdown: string): CodeFence[] {
   const fences: CodeFence[] = []
-  const md = getMarkdownIt()
-  const tokens = md.parse(bodyMarkdown, {})
+  const tokens = getMarkdownIt().parse(bodyMarkdown, {})
   for (const token of tokens) {
     if (token.type !== 'fence') continue
     const info = String(token.info ?? '')
@@ -172,6 +183,27 @@ function buildCodeGroup(bodyMarkdown: string): HTMLElement {
     const filename = meta.replace(/^\[|\]$/g, '').trim()
     fences.push({ filename, lang, code: token.content.replace(/\n$/, '') })
   }
+  return fences
+}
+
+/** Placeholder tabs from unresolved `<<<` lines (before async hydrate). */
+function collectIncludePlaceholders(bodyMarkdown: string): CodeFence[] {
+  const fences: CodeFence[] = []
+  for (const line of bodyMarkdown.replace(/\r\n?/g, '\n').split('\n')) {
+    const include = parseDeskIncludeLine(line)
+    if (!include) continue
+    fences.push({
+      filename: includeTabTitle(include),
+      lang: '',
+      code: '加载中…'
+    })
+  }
+  return fences
+}
+
+function assembleCodeGroup(fences: CodeFence[]): HTMLElement {
+  const group = document.createElement('div')
+  group.className = 'custom-block custom-block-code-group'
 
   if (fences.length <= 1) {
     const body = document.createElement('div')
@@ -214,6 +246,104 @@ function buildCodeGroup(bodyMarkdown: string): HTMLElement {
   return group
 }
 
+function buildCodeGroup(
+  bodyMarkdown: string,
+  resolveIncludeContent?: (path: string) => string | null | undefined
+): HTMLElement {
+  let body = bodyMarkdown
+  if (resolveIncludeContent && bodyHasIncludeLines(body)) {
+    body = expandIncludeLinesToFences(body, (path) => {
+      const content = resolveIncludeContent(path)
+      return content == null ? `// 引用失败：${path}` : content
+    })
+  }
+  let fences = collectFences(body)
+  if (fences.length === 0 && bodyHasIncludeLines(bodyMarkdown)) {
+    fences = collectIncludePlaceholders(bodyMarkdown)
+  }
+  return assembleCodeGroup(fences)
+}
+
+function buildSwiper(bodyMarkdown: string, resolveImage: ResolveImage): HTMLElement {
+  const slides = parseSwiperSlides(bodyMarkdown)
+  const root = document.createElement('div')
+  root.className = 'tn-swiper'
+  const tabs = document.createElement('div')
+  tabs.className = 'tn-swiper-tabs'
+  const container = document.createElement('div')
+  container.className = 'swiper-container'
+  const wrapper = document.createElement('div')
+  wrapper.className = 'swiper-wrapper'
+
+  if (slides.length === 0) {
+    container.append(wrapper)
+    root.append(tabs, container)
+    return root
+  }
+
+  const useTabs = slides.length > 1
+  const tabButtons: HTMLButtonElement[] = []
+  const slideEls: HTMLDivElement[] = []
+
+  const activate = (index: number): void => {
+    tabButtons.forEach((button, buttonIndex) =>
+      button.classList.toggle('active', buttonIndex === index)
+    )
+    slideEls.forEach((slide, slideIndex) => {
+      const on = slideIndex === index
+      slide.classList.toggle('is-active', on)
+      slide.hidden = !on
+    })
+  }
+
+  const activeIndex = (): number => {
+    const found = tabButtons.findIndex((button) => button.classList.contains('active'))
+    return found >= 0 ? found : 0
+  }
+
+  applySwiperTabsPadding(tabs, useTabs)
+  const nav = useTabs
+    ? createSwiperTabNav({
+        onPrev: () => activate(wrapSlideIndex(activeIndex(), slides.length, -1)),
+        onNext: () => activate(wrapSlideIndex(activeIndex(), slides.length, 1))
+      })
+    : null
+  if (nav) tabs.append(nav.prev, nav.line)
+
+  slides.forEach((slide, index) => {
+    const slideEl = document.createElement('div')
+    slideEl.className = 'swiper-slide'
+    const title = swiperSlideTabTitle(slide, index)
+    slideEl.dataset.title = title
+    const img = document.createElement('img')
+    img.src = resolveImage(slide.src) || slide.src
+    img.alt = slide.alt
+    slideEl.append(img)
+    if (index !== 0) slideEl.hidden = true
+    else slideEl.classList.add('is-active')
+    slideEls.push(slideEl)
+    wrapper.append(slideEl)
+
+    if (useTabs) {
+      const tab = document.createElement('button')
+      tab.type = 'button'
+      tab.className = 'tn-tab'
+      tab.textContent = title
+      if (index === 0) tab.classList.add('active')
+      tab.addEventListener('click', () => activate(index))
+      tabButtons.push(tab)
+      tabs.append(tab)
+    }
+  })
+
+  if (nav) tabs.append(nav.next)
+
+  container.append(wrapper)
+  if (useTabs) root.append(tabs, container)
+  else root.append(container)
+  return root
+}
+
 function buildContainerDom(name: string, title: string, bodyHtml: string): HTMLElement {
   const body = document.createElement('div')
   body.className = 'custom-block-body'
@@ -245,16 +375,6 @@ function buildContainerDom(name: string, title: string, bodyHtml: string): HTMLE
     return block
   }
 
-  if (name === 'swiper') {
-    const block = document.createElement('div')
-    block.className = 'custom-block custom-block-swiper'
-    const gallery = document.createElement('div')
-    gallery.className = 'custom-block-body swiper-body'
-    gallery.innerHTML = bodyHtml
-    block.append(gallery)
-    return block
-  }
-
   const block = document.createElement('div')
   block.className = `custom-block custom-block-${name}`
   block.append(body)
@@ -272,10 +392,22 @@ const defaultResolveImage: ResolveImage = (src) =>
  */
 export function renderContainerFromSource(
   source: string,
-  resolveImage: ResolveImage = defaultResolveImage
+  resolveImage: ResolveImage = defaultResolveImage,
+  options?: {
+    /** Sync lookup for `<<<` paths inside code-group bodies. */
+    resolveIncludeContent?: (path: string) => string | null | undefined
+  }
 ): HTMLElement {
   const { name, title, body, hasBody } = parseContainerSource(source)
-  if (name === 'code-group') return buildCodeGroup(body)
+  if (name === 'code-group') return buildCodeGroup(body, options?.resolveIncludeContent)
+  if (name === 'swiper') return buildSwiper(body, resolveImage)
+  if (name === 'footprints') {
+    // Desk mounts the shared Vue Footprints; return a lightweight host shell here.
+    const host = document.createElement('div')
+    host.className = 'desk-raw-block__component-preview desk-footprints-host'
+    host.dataset.footprints = '1'
+    return host
+  }
   const bodyHtml = hasBody ? renderBody(body, resolveImage) : ''
   return buildContainerDom(name, title, bodyHtml)
 }

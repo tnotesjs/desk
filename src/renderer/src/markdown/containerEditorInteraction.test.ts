@@ -83,12 +83,12 @@ describe('container inline source editor', () => {
     wrapper.unmount()
   })
 
-  it('keeps full source editing for swiper containers', async () => {
+  it('keeps structured body editing for swiper containers', async () => {
     const wrapper = await mountSwiper()
     const edit = wrapper.find('.desk-raw-block__edit')
-    expect(edit.text()).toBe('编辑源码')
+    expect(edit.text()).toContain('Edit')
     await edit.trigger('click')
-    expect(wrapper.find('.desk-raw-block__editor--structured').exists()).toBe(false)
+    expect(wrapper.find('.desk-raw-block__editor--structured').exists()).toBe(true)
     expect(wrapper.find('.desk-raw-block__editor-cm .cm-editor').exists()).toBe(true)
     wrapper.unmount()
   })
@@ -110,7 +110,7 @@ describe('container inline source editor', () => {
     await vi.waitFor(() => expect(wrapper.find('.desk-raw-block__edit').exists()).toBe(true))
     await wrapper.find('.desk-raw-block__edit').trigger('click')
     expect(wrapper.find('.desk-raw-block__editor-cm .cm-editor').exists()).toBe(true)
-    expect(wrapper.find('.desk-raw-block--diagram .desk-diagram').exists()).toBe(true)
+    expect(wrapper.find('.desk-raw-block--mermaid .tn-mermaid').exists()).toBe(true)
     wrapper.unmount()
   })
 

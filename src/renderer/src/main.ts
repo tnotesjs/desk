@@ -1,4 +1,5 @@
 import './assets/main.css'
+import '@tnotesjs/ui/styles/tokens.css'
 import 'katex/dist/katex.min.css'
 import '@milkdown/crepe/theme/common/style.css'
 import '@milkdown/crepe/theme/frame.css'

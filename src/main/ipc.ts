@@ -30,6 +30,7 @@ import type {
   AppSettings,
   AttachmentWriteLocalRequest,
   AttachmentReadTextRequest,
+  AttachmentWriteTextRequest,
   ImageUploadRequest,
   DeskError,
   DeskResult,
@@ -208,6 +209,13 @@ const attachmentReadTextSchema = z.object({
   knowledgeBaseId: z.string().min(1),
   noteUuid: z.string().min(1),
   path: z.string().min(1).max(1024)
+})
+
+const attachmentWriteTextSchema = z.object({
+  knowledgeBaseId: z.string().min(1),
+  noteUuid: z.string().min(1),
+  path: z.string().min(1).max(1024),
+  content: z.string().max(2 * 1024 * 1024)
 })
 
 const githubImageSettingsSchema = z.object({
@@ -494,6 +502,15 @@ export function registerIpc(getWindow: () => BrowserWindow | null): () => void {
     }),
     ({ knowledgeBaseId, noteUuid }) => workspaceManager.readNote(knowledgeBaseId, noteUuid)
   )
+  handle(
+    IPC_CHANNELS.noteResolveTable,
+    getWindow,
+    z.object({
+      knowledgeBaseId: z.string().min(1),
+      ids: z.array(z.string())
+    }),
+    ({ knowledgeBaseId, ids }) => workspaceManager.resolveNotesTable(knowledgeBaseId, ids)
+  )
   handle(IPC_CHANNELS.noteSave, getWindow, noteSaveSchema, (input) =>
     workspaceManager.saveNote(input as NoteSaveRequest)
   )
@@ -533,6 +550,9 @@ export function registerIpc(getWindow: () => BrowserWindow | null): () => void {
   )
   handle(IPC_CHANNELS.attachmentReadText, getWindow, attachmentReadTextSchema, (input) =>
     workspaceManager.readNoteTextAsset(input as AttachmentReadTextRequest)
+  )
+  handle(IPC_CHANNELS.attachmentWriteText, getWindow, attachmentWriteTextSchema, (input) =>
+    workspaceManager.writeNoteTextAsset(input as AttachmentWriteTextRequest)
   )
 
   handle(IPC_CHANNELS.tocMove, getWindow, tocMoveSchema, (input) =>

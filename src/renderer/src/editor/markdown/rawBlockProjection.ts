@@ -3,6 +3,8 @@ import { $nodeSchema, $prose, $remark } from '@milkdown/kit/utils'
 import { codeBlockSchema } from '@milkdown/kit/preset/commonmark'
 
 import { renderContainerFromSource, type ResolveImage } from './containerBody'
+import { parseFencedCode } from './diagramRenderer'
+import { parseFenceTitleFromMeta } from './fenceInfo'
 import {
   parseMarkdownSource,
   serializeMarkdownSource,
@@ -53,7 +55,7 @@ const REGION_COMMENT = /^ {0,3}<!--\s*(?:end)?region(?::[\s\S]*?)?\s*-->\s*$/i
 const HTML_TAG = /<\/?[A-Za-z][\w.-]*(?=[\s/>])/
 /** Standalone HTML breaks stay in the source for Milkdown's remark-preserve-empty-line. */
 const STANDALONE_BREAK = /^ {0,3}<br\s*\/?>(?:[ \t]*)$/i
-const DIAGRAM_LANGUAGES = new Set(['mermaid', 'mindmap', 'markmap'])
+const DIAGRAM_LANGUAGES = new Set(['mermaid', 'mindmap'])
 
 interface ProjectionMarkdownNode extends MarkdownNode {
   type: string
@@ -330,10 +332,18 @@ export function renderDeskRawBlockElement(
     wrapper.dataset.source = encodeBase64(block.source)
     wrapper.dataset.hidden = 'false'
     wrapper.contentEditable = 'false'
-    wrapper.className = 'desk-raw-block desk-raw-block--diagram'
-    const diagram = document.createElement('div')
-    diagram.className = 'desk-diagram'
-    wrapper.append(diagram)
+    const fence = parseFencedCode(block.source)
+    wrapper.className =
+      fence.lang === 'mermaid'
+        ? 'desk-raw-block desk-raw-block--mermaid'
+        : fence.lang === 'mindmap'
+          ? 'desk-raw-block desk-raw-block--mindmap'
+          : 'desk-raw-block desk-raw-block--diagram'
+    if (fence.lang !== 'mermaid' && fence.lang !== 'mindmap') {
+      const diagram = document.createElement('div')
+      diagram.className = 'desk-diagram'
+      wrapper.append(diagram)
+    }
     return wrapper
   }
   if (block.kind === 'raw-container' && !block.hidden) {
@@ -485,13 +495,16 @@ export const sourcePreservingCodeBlockSchema = codeBlockSchema.extendSchema((bas
     ...schema,
     attrs: {
       ...schema.attrs,
-      deskMathSource: { default: null }
+      deskMathSource: { default: null },
+      title: { default: '' }
     },
     parseMarkdown: {
       match: schema.parseMarkdown.match,
       runner: (state, node, type) => {
+        const meta = typeof node.meta === 'string' ? node.meta : ''
         state.openNode(type, {
           language: node.lang ?? '',
+          title: parseFenceTitleFromMeta(meta),
           deskMathSource: node.deskMathSource === true
         })
         if (typeof node.value === 'string' && node.value) state.addText(node.value)
@@ -508,7 +521,13 @@ export const sourcePreservingCodeBlockSchema = codeBlockSchema.extendSchema((bas
           state.addNode('math', undefined, node.content.firstChild?.text ?? '')
           return
         }
-        schema.toMarkdown.runner(state, node)
+        const language = String(node.attrs.language ?? '')
+        const title = String(node.attrs.title ?? '').trim()
+        const value = node.content.firstChild?.text ?? ''
+        state.addNode('code', undefined, value, {
+          lang: language,
+          ...(title ? { meta: `[${title}]` } : {})
+        })
       }
     }
   }

@@ -72,8 +72,53 @@ describe('renderContainerFromSource', () => {
     const el = renderContainerFromSource('::: swiper\n\n![1](./assets/1.png)\n\n:::', (src) => {
       return src === './assets/1.png' ? 'tnotes-asset://asset?path=1' : src
     })
+    expect(el.classList.contains('tn-swiper')).toBe(true)
     const img = el.querySelector('img')
     expect(img?.getAttribute('src')).toBe('tnotes-asset://asset?path=1')
+    expect(el.querySelector('.swiper-slide')?.getAttribute('data-title')).toBe('1')
+  })
+
+  it('builds tabbed swiper slides from image alts', () => {
+    const el = renderContainerFromSource(
+      '::: swiper\n\n![封面](./a.png)\n\n![细节](./b.png)\n\n:::',
+      (src) => src
+    )
+    const tabs = [...el.querySelectorAll('.tn-tab')].map((tab) => tab.textContent)
+    expect(tabs).toEqual(['封面', '细节'])
+    expect(el.querySelector('.tn-tab.active')?.textContent).toBe('封面')
+    expect(el.querySelectorAll('.swiper-slide')).toHaveLength(2)
+    expect(el.querySelector('.tn-tab-prev')?.textContent).toBe('<')
+    expect(el.querySelector('.tab-tab-line')?.textContent).toBe('/')
+    expect(el.querySelector('.tn-tab-next')?.textContent).toBe('>')
+    expect((el.querySelector('.tn-swiper-tabs') as HTMLElement).style.padding).toBe(
+      '0px 0.8rem 0px 3rem'
+    )
+  })
+
+  it('omits swiper tab nav for a single slide', () => {
+    const el = renderContainerFromSource('::: swiper\n\n![only](./a.png)\n\n:::', (src) => src)
+    expect(el.querySelector('.tn-tab')).toBeNull()
+    expect(el.querySelector('.tn-tab-prev')).toBeNull()
+    expect(el.querySelector('.tn-tab-next')).toBeNull()
+  })
+
+  it('cycles swiper slides via prev/next nav', () => {
+    const el = renderContainerFromSource(
+      '::: swiper\n\n![a](./a.png)\n\n![b](./b.png)\n\n![c](./c.png)\n\n:::',
+      (src) => src
+    )
+    const next = el.querySelector('.tn-tab-next') as HTMLButtonElement
+    const prev = el.querySelector('.tn-tab-prev') as HTMLButtonElement
+    const activeTitle = () => el.querySelector('.tn-tab.active')?.textContent
+
+    next.click()
+    expect(activeTitle()).toBe('b')
+    next.click()
+    expect(activeTitle()).toBe('c')
+    next.click()
+    expect(activeTitle()).toBe('a')
+    prev.click()
+    expect(activeTitle()).toBe('c')
   })
 
   it('sanitizes script tags in the body', () => {
@@ -119,5 +164,57 @@ describe('renderContainerFromSource', () => {
     tabs[1].dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
     expect(panels[1].classList.contains('active')).toBe(true)
     expect(panels[0].classList.contains('active')).toBe(false)
+  })
+
+  it('expands <<< includes inside code-group when content is provided', () => {
+    const el = renderContainerFromSource(
+      ['::: code-group', '', '<<< ./demos/17/1.js', '', '<<< ./demos/17/2.js', '', ':::'].join(
+        '\n'
+      ),
+      undefined,
+      {
+        resolveIncludeContent: (path) =>
+          path.endsWith('1.js') ? 'console.log(1)' : 'console.log(2)'
+      }
+    )
+    const tabs = Array.from(el.querySelectorAll('.code-group-tab'))
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['1.js', '2.js'])
+    const panels = Array.from(el.querySelectorAll('.code-group-panel'))
+    expect(panels[0]?.textContent).toContain('console.log(1)')
+    expect(panels[1]?.textContent).toContain('console.log(2)')
+  })
+
+  it('keeps inline fences alongside expanded <<< includes', () => {
+    const el = renderContainerFromSource(
+      [
+        '::: code-group',
+        '',
+        '<<< ./a.js',
+        '',
+        '```ts [b.ts]',
+        'export const b = 2',
+        '```',
+        '',
+        ':::'
+      ].join('\n'),
+      undefined,
+      {
+        resolveIncludeContent: () => 'export const a = 1'
+      }
+    )
+    const tabs = Array.from(el.querySelectorAll('.code-group-tab'))
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['a.js', 'b.ts'])
+    const panels = Array.from(el.querySelectorAll('.code-group-panel'))
+    expect(panels[0]?.textContent).toContain('export const a = 1')
+    expect(panels[1]?.textContent).toContain('export const b = 2')
+  })
+
+  it('shows placeholder tabs for unresolved <<< includes', () => {
+    const el = renderContainerFromSource(
+      ['::: code-group', '', '<<< ./a.js', '', '<<< ./b.js', '', ':::'].join('\n')
+    )
+    const tabs = Array.from(el.querySelectorAll('.code-group-tab'))
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['a.js', 'b.js'])
+    expect(el.textContent).toContain('加载中…')
   })
 })

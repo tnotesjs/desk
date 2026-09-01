@@ -95,31 +95,31 @@ export const TN_NOTES_SLASH_ITEMS: SlashMenuItem[] = [
     kind: 'swiper',
     shortcut: '/swiper',
     keywords: ['swiper', ':::swiper', '轮播'],
-    insert: '::: swiper\n\n<!-- 图片 1 -->\n\n<!-- 图片 2 -->\n\n:::\n'
+    insert: '::: swiper\n\n![](./assets/1.png)\n\n![](./assets/2.png)\n\n:::\n'
   },
   {
     id: 'notes-table',
     label: '笔记表格',
     kind: 'component',
     shortcut: '/N',
-    keywords: ['N', 'notestable', ':::notestable', '笔记表格'],
-    insert: '<N :ids="[\n  \'\',\n]" />\n'
+    keywords: ['N', 'NotesTable', '笔记表格'],
+    insert: '<NotesTable :ids="[\n  \'\',\n]" />\n'
   },
   {
     id: 'bilibili',
     label: 'B站视频',
     kind: 'component',
     shortcut: '/B',
-    keywords: ['B', 'bilibili', '视频'],
-    insert: '<B id="" />\n'
+    keywords: ['B', 'BilibiliVideo', 'bilibili', '视频'],
+    insert: '<BilibiliVideo id="" />\n'
   },
   {
     id: 'word-list',
     label: '单词表',
     kind: 'component',
     shortcut: '/E',
-    keywords: ['E', 'EnWordList', '单词'],
-    insert: '<E :words="[\n  \'\',\n]" />\n'
+    keywords: ['E', 'WordList', '单词'],
+    insert: '<WordList :words="[\n  \'\',\n]" />\n'
   },
   {
     id: 'footprints',
@@ -127,8 +127,7 @@ export const TN_NOTES_SLASH_ITEMS: SlashMenuItem[] = [
     kind: 'component',
     shortcut: '/F',
     keywords: ['F', 'Footprints', '足迹'],
-    insert:
-      '<F :times="[]">\n  <template #text-area>\n  </template>\n  <template #image-list="{ openModal }">\n  </template>\n</F>\n'
+    insert: '::: footprints 2025-01-01 12:00\n\n第一段文字\n\n第二段文字\n\n![](./assets/demo.png)\n\n:::\n'
   },
   {
     id: 'mermaid',

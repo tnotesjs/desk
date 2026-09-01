@@ -8,6 +8,7 @@ import {
   indentOnInput,
   syntaxHighlighting
 } from '@codemirror/language'
+import { languages } from '@codemirror/language-data'
 import { searchKeymap } from '@codemirror/search'
 import { Compartment, EditorState, type Extension } from '@codemirror/state'
 import {
@@ -28,6 +29,8 @@ import { isEmptyRawBlockSource } from './rawBlockEmpty'
 
 export interface ContainerSourceEditorHandle {
   getValue(): string
+  setValue(value: string): void
+  setLanguage(language: string): void
   focus(): void
   destroy(): void
 }
@@ -41,6 +44,11 @@ export interface ContainerSourceEditorOptions {
   onEmptyBackspace?: () => boolean
   /** Shown when the document is empty (CodeMirror placeholder). */
   placeholder?: string
+  /**
+   * Fence / file language id (js, json, bash, …). Defaults to markdown for
+   * container raw-source editing. Loaded via `@codemirror/language-data`.
+   */
+  language?: string
 }
 
 /**
@@ -63,10 +71,39 @@ function themeExtension(): Extension {
   return document.documentElement.dataset.theme === 'light' ? githubLight : githubDark
 }
 
+function normalizeLanguageName(language: string): string {
+  const trimmed = language.trim().toLowerCase()
+  if (!trimmed) return ''
+  if (trimmed === 'js' || trimmed === 'mjs' || trimmed === 'cjs') return 'javascript'
+  if (trimmed === 'ts') return 'typescript'
+  if (trimmed === 'sh' || trimmed === 'zsh' || trimmed === 'shell') return 'bash'
+  if (trimmed === 'md') return 'markdown'
+  if (trimmed === 'yml') return 'yaml'
+  if (trimmed === 'plaintext' || trimmed === 'text' || trimmed === 'txt') return ''
+  return trimmed
+}
+
+/** Resolve a CodeMirror language extension for a fence/file language id. */
+export async function resolveLanguageExtension(language?: string): Promise<Extension> {
+  const name = normalizeLanguageName(language ?? '')
+  if (!name || name === 'markdown') return markdown()
+
+  const matched =
+    languages.find((item) => item.name.toLowerCase() === name) ??
+    languages.find((item) => item.alias.some((alias) => alias.toLowerCase() === name)) ??
+    languages.find((item) => item.extensions.includes(name))
+
+  if (!matched) return []
+  try {
+    return await matched.load()
+  } catch {
+    return []
+  }
+}
+
 /**
- * Mounts a CodeMirror 6 markdown editor into `host` for editing the raw source
- * of an advanced block (container / special fence). Returns a small handle so
- * the caller can read the value, focus and tear the editor down.
+ * Mounts a CodeMirror 6 editor into `host`. Defaults to markdown highlighting;
+ * pass `options.language` for fence/file languages (js, json, …).
  */
 export function createContainerSourceEditor(
   host: HTMLElement,
@@ -76,6 +113,14 @@ export function createContainerSourceEditor(
   options: ContainerSourceEditorOptions = {}
 ): ContainerSourceEditorHandle {
   const themeCompartment = new Compartment()
+  const languageCompartment = new Compartment()
+  let destroyed = false
+
+  const initialLanguage =
+    !options.language || normalizeLanguageName(options.language) === 'markdown'
+      ? markdown()
+      : []
+
   const view = new EditorView({
     state: EditorState.create({
       doc: initialValue,
@@ -93,7 +138,7 @@ export function createContainerSourceEditor(
         highlightActiveLine(),
         autocompletion({ activateOnTyping: true, icons: false, maxRenderedOptions: 60 }),
         syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-        markdown(),
+        languageCompartment.of(initialLanguage),
         EditorState.allowMultipleSelections.of(true),
         ...(options.placeholder ? [placeholder(options.placeholder)] : []),
         keymap.of([
@@ -155,9 +200,39 @@ export function createContainerSourceEditor(
     parent: host
   })
 
+  if (options.language && normalizeLanguageName(options.language) !== 'markdown') {
+    void resolveLanguageExtension(options.language).then((extension) => {
+      if (destroyed) return
+      view.dispatch({
+        effects: languageCompartment.reconfigure(extension)
+      })
+    })
+  }
+
   return {
     getValue: () => view.state.doc.toString(),
+    setValue: (value: string) => {
+      const current = view.state.doc.toString()
+      if (current === value) return
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: value }
+      })
+    },
+    setLanguage: (language: string) => {
+      const name = normalizeLanguageName(language)
+      if (!name || name === 'markdown') {
+        view.dispatch({ effects: languageCompartment.reconfigure(markdown()) })
+        return
+      }
+      void resolveLanguageExtension(language).then((extension) => {
+        if (destroyed) return
+        view.dispatch({ effects: languageCompartment.reconfigure(extension) })
+      })
+    },
     focus: () => view.focus(),
-    destroy: () => view.destroy()
+    destroy: () => {
+      destroyed = true
+      view.destroy()
+    }
   }
 }
