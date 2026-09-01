@@ -58,7 +58,7 @@ jobs:
 
       - name: Build package
         working-directory: desk
-        run: pnpm run ${{ matrix.command }} -- ${{ matrix.args }} --publish never
+        run: pnpm run ${{ matrix.command }} -- ${{ matrix.args }}
 
       - name: Upload package
         uses: actions/upload-artifact@v4
@@ -77,6 +77,7 @@ jobs:
   publish:
     name: Publish GitHub Release
     needs: package
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
 
     steps:
@@ -89,4 +90,11 @@ jobs:
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" artifacts/* --generate-notes --title "TNotes Desk $GITHUB_REF_NAME"
+        run: |
+          shopt -s nullglob
+          files=(artifacts/*)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No package artifacts uploaded; skipping release."
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" "${files[@]}" --generate-notes --title "TNotes Desk $GITHUB_REF_NAME"

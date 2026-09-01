@@ -1,5 +1,6 @@
 appId: com.tnotesjs.desk
 productName: TNotes Desk
+publish: null
 directories:
   buildResources: build
 files:
