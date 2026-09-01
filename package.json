@@ -36,7 +36,7 @@
     "@electron-toolkit/utils": "^4.0.0",
     "@milkdown/crepe": "7.22.1",
     "@milkdown/kit": "7.22.1",
-    "@tnotesjs/core": "0.7.0",
+    "@tnotesjs/core": "0.8.0",
     "@tnotesjs/mindmap-core": "^0.2.2",
     "@tnotesjs/ui": "^0.1.1",
     "@types/markdown-it": "^14.2.0",

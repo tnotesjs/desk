@@ -48,14 +48,14 @@ importers:
         specifier: 7.22.1
         version: 7.22.1(@codemirror/language@6.12.4)(@codemirror/state@6.7.1)(@codemirror/view@6.43.9)(typescript@5.9.3)
       '@tnotesjs/core':
-        specifier: 0.7.0
-        version: 0.7.0(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(sass-embedded@1.103.1)(sass@1.103.1)(yaml@2.9.0))(vitepress@1.6.4(@algolia/client-search@5.57.0)(@types/node@22.20.1)(markdown-it-mathjax3@4.3.2)(postcss@8.5.26)(sass-embedded@1.103.1)(sass@1.103.1)(search-insights@2.17.3)(typescript@5.9.3))(vue@3.5.41(typescript@5.9.3))
+        specifier: 0.8.0
+        version: 0.8.0(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(sass-embedded@1.103.1)(sass@1.103.1)(yaml@2.9.0))(vitepress@1.6.4(@algolia/client-search@5.57.0)(@types/node@22.20.1)(markdown-it-mathjax3@4.3.2)(postcss@8.5.26)(sass-embedded@1.103.1)(sass@1.103.1)(search-insights@2.17.3)(typescript@5.9.3))(vue@3.5.41(typescript@5.9.3))
       '@tnotesjs/mindmap-core':
         specifier: ^0.2.2
         version: 0.2.2
       '@tnotesjs/ui':
-        specifier: ^0.1.0
-        version: 0.1.0(vue@3.5.41(typescript@5.9.3))
+        specifier: ^0.1.1
+        version: 0.1.1(vue@3.5.41(typescript@5.9.3))
       '@types/markdown-it':
         specifier: ^14.2.0
         version: 14.2.0
@@ -1492,8 +1492,8 @@ packages:
     resolution: {integrity: sha512-4BAffykYOgO+5nzBWYwE3W90sBgLJoUPRWWcL8wlyiM8IB8ipJz3UMJ9KXQd1RKQXpKp8Tutn80HZtWsu2u76w==}
     engines: {node: '>=10'}
 
-  '@tnotesjs/core@0.7.0':
-    resolution: {integrity: sha512-4SNWQvYatOJu3zO8Rc4soKy12p5slVliCjmSHvtOoHU/vcFAovcxo/7CmnEINDYczWuxtbuXuTnqodGaPGX8Jw==}
+  '@tnotesjs/core@0.8.0':
+    resolution: {integrity: sha512-hplO6LrKbaVaHP0XF0OckN/5myBA9+TgXGj7df3QGxkokNCDlhouz4/kQp6qSt7qKGIS5yYQ9AB0uMPfYmCn0A==}
     engines: {node: '>=18.0.0'}
     hasBin: true
     peerDependencies:
@@ -1501,16 +1501,12 @@ packages:
       vitepress: ^1.6.0
       vue: ^3.5.0
 
-  '@tnotesjs/mindmap-core@0.2.1':
-    resolution: {integrity: sha512-9VgLdaebnotmyxrHv1Ax4CajLfEZqAfePBQGSkc6m0sIAi9Xj2Z/izaeVurOBk8mccIbmWLZYFLdR3fhk+l8Ww==}
-    engines: {node: '>=18.0.0'}
-
   '@tnotesjs/mindmap-core@0.2.2':
     resolution: {integrity: sha512-uDMllL2l7zq0d63K8i1cnzdBZfwnkXLw+t48cXIhYg3tvVCpb38YOy0QFAhHTg8xRreV+Jdh3jBaf+wo0FAEFg==}
     engines: {node: '>=18.0.0'}
 
-  '@tnotesjs/ui@0.1.0':
-    resolution: {integrity: sha512-uWxCIrU5DFnCVSIMtHa7RfJfV9wj6sOzajK+/Jt8LkyjvA4gDEglUTn4bpJJXwKSLta+Kt1NREa/v1yesf7h0A==}
+  '@tnotesjs/ui@0.1.1':
+    resolution: {integrity: sha512-BuVmFzwkT/HdbttL4QBziycpgoTA6sLWIj7HkOge3sw3ULdvy/jM72vOYxfrc31RAgAiXUZ+DhFl2b0X8hzQrg==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
       vue: ^3.5.0
@@ -1935,7 +1931,6 @@ packages:
   '@xmldom/xmldom@0.9.10':
     resolution: {integrity: sha512-A9gOqLdi6cV4ibazAjcQufGj0B1y/vDqYrcuP6d/6x8P27gRS8643Dj9o1dEKtB6O7fwxb2FgBmJS2mX7gpvdw==}
     engines: {node: '>=14.6'}
-    deprecated: this version has critical issues, please update to the latest version
 
   '@xmldom/xmldom@0.9.12':
     resolution: {integrity: sha512-5AXjrcMClTryPe9LgZrygpB1lj7s0S9E0+W+AHaVKAVyHanafK86iPSvG5xHVSp/jC+VH1UXu0TAEmY279xH7A==}
@@ -6162,9 +6157,10 @@ snapshots:
     dependencies:
       defer-to-connect: 2.0.1
 
-  '@tnotesjs/core@0.7.0(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(sass-embedded@1.103.1)(sass@1.103.1)(yaml@2.9.0))(vitepress@1.6.4(@algolia/client-search@5.57.0)(@types/node@22.20.1)(markdown-it-mathjax3@4.3.2)(postcss@8.5.26)(sass-embedded@1.103.1)(sass@1.103.1)(search-insights@2.17.3)(typescript@5.9.3))(vue@3.5.41(typescript@5.9.3))':
+  '@tnotesjs/core@0.8.0(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(sass-embedded@1.103.1)(sass@1.103.1)(yaml@2.9.0))(vitepress@1.6.4(@algolia/client-search@5.57.0)(@types/node@22.20.1)(markdown-it-mathjax3@4.3.2)(postcss@8.5.26)(sass-embedded@1.103.1)(sass@1.103.1)(search-insights@2.17.3)(typescript@5.9.3))(vue@3.5.41(typescript@5.9.3))':
     dependencies:
-      '@tnotesjs/mindmap-core': 0.2.1
+      '@tnotesjs/mindmap-core': 0.2.2
+      '@tnotesjs/ui': 0.1.1(vue@3.5.41(typescript@5.9.3))
       echarts: 6.1.0
       github-slugger: 2.0.0
       markdown-it-container: 4.0.0
@@ -6185,11 +6181,9 @@ snapshots:
     transitivePeerDependencies:
       - encoding
 
-  '@tnotesjs/mindmap-core@0.2.1': {}
-
   '@tnotesjs/mindmap-core@0.2.2': {}
 
-  '@tnotesjs/ui@0.1.0(vue@3.5.41(typescript@5.9.3))':
+  '@tnotesjs/ui@0.1.1(vue@3.5.41(typescript@5.9.3))':
     dependencies:
       '@tnotesjs/mindmap-core': 0.2.2
       marked: 15.0.12
