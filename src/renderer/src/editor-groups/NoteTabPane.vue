@@ -19,6 +19,17 @@ const MilkdownMarkdownEditor = defineAsyncComponent(
   () => import('../markdown/MilkdownMarkdownEditor.vue')
 )
 
+// Warm the editor chunk after idle so the first note open pays less JS parse cost.
+if (typeof requestIdleCallback === 'function') {
+  requestIdleCallback(() => {
+    void import('../markdown/MilkdownMarkdownEditor.vue')
+  })
+} else {
+  window.setTimeout(() => {
+    void import('../markdown/MilkdownMarkdownEditor.vue')
+  }, 1_200)
+}
+
 const props = defineProps<{ tab: NoteEditorTab; groupId: string; active: boolean }>()
 const editor = useEditorStore()
 const workspace = useWorkspaceStore()

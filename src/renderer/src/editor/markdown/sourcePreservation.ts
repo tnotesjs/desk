@@ -767,6 +767,51 @@ function reconcileChangedFence(
  * `originalSource`. Exact baseline/current block matches reuse the original bytes. Only
  * changed or inserted blocks are emitted from `currentCanonical`.
  */
+const PARSE_CACHE_LIMIT = 12
+const parseCache = new Map<string, MarkdownSourceDocument>()
+
+function cachedParseMarkdownSource(source: string): MarkdownSourceDocument {
+  const hit = parseCache.get(source)
+  if (hit) {
+    // Refresh insertion order for a simple LRU-ish eviction.
+    parseCache.delete(source)
+    parseCache.set(source, hit)
+    return hit
+  }
+  const parsed = parseMarkdownSource(source)
+  parseCache.set(source, parsed)
+  if (parseCache.size > PARSE_CACHE_LIMIT) {
+    const oldest = parseCache.keys().next().value
+    if (oldest !== undefined) parseCache.delete(oldest)
+  }
+  return parsed
+}
+
+/**
+ * When block counts match and only one block's fingerprint changed, pair linearly
+ * and skip the O(B²) LCS. Returns null when the fast path does not apply.
+ */
+function tryLinearSingleChangeMatch(
+  baseline: MarkdownSourceBlock[],
+  current: MarkdownSourceBlock[]
+): Array<CanonicalMatch | undefined> | null {
+  if (baseline.length !== current.length || baseline.length === 0) return null
+  let changedIndex = -1
+  for (let index = 0; index < baseline.length; index += 1) {
+    if (fingerprint(baseline[index]!) === fingerprint(current[index]!)) continue
+    if (changedIndex >= 0) return null
+    changedIndex = index
+  }
+  if (changedIndex < 0) {
+    return current.map((_block, index) => ({ baselineIndex: index, relation: 'unchanged' }))
+  }
+  return current.map((_block, index) =>
+    index === changedIndex
+      ? { baselineIndex: index, relation: 'changed' }
+      : { baselineIndex: index, relation: 'unchanged' }
+  )
+}
+
 export function reconcileMarkdownSource(
   originalSource: string,
   baselineCanonical: string,
@@ -774,13 +819,15 @@ export function reconcileMarkdownSource(
 ): string {
   if (baselineCanonical === currentCanonical) return originalSource
 
-  const original = parseMarkdownSource(originalSource)
-  const baseline = parseMarkdownSource(baselineCanonical)
+  const original = cachedParseMarkdownSource(originalSource)
+  const baseline = cachedParseMarkdownSource(baselineCanonical)
   const current = parseMarkdownSource(currentCanonical)
   if (current.blocks.length === 0) return currentCanonical
 
   const baselineToOriginal = mapBaselineToOriginal(original.blocks, baseline.blocks)
-  const matches = matchCanonicalBlocks(baseline.blocks, current.blocks)
+  const matches =
+    tryLinearSingleChangeMatch(baseline.blocks, current.blocks) ??
+    matchCanonicalBlocks(baseline.blocks, current.blocks)
   let result = ''
 
   current.blocks.forEach((currentBlock, currentIndex) => {

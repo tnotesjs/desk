@@ -333,16 +333,21 @@ export const useEditorStore = defineStore('editor', () => {
         (candidate) => candidate.type === 'note' && candidate.preview && !candidate.pinned
       )
       if (openBehavior === 'preview' && previewTab && activeGroup.value) {
+        // Reuse the preview tab id so Vue keeps the pane mounted across note swaps
+        // (EditorGroup keys panes by tab.id). Milkdown still remounts via noteUuid/content.
+        const reused: NoteEditorTab = { ...tab, id: previewTab.id }
         const groupId = activeGroup.value.id
         layout.value = updateGroup(layout.value, groupId, (group) => ({
           ...group,
-          tabs: group.tabs.map((candidate) => (candidate.id === previewTab.id ? tab : candidate)),
-          activeTabId: tab.id
+          tabs: group.tabs.map((candidate) =>
+            candidate.id === previewTab.id ? reused : candidate
+          ),
+          activeTabId: reused.id
         }))
-      } else {
-        ensureRoomForTab()
-        layout.value = insertTab(layout.value, activeGroupId.value, tab)
+        return reused.id
       }
+      ensureRoomForTab()
+      layout.value = insertTab(layout.value, activeGroupId.value, tab)
     }
     return tab.id
   }

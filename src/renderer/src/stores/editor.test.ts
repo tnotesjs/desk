@@ -68,11 +68,12 @@ describe('editor store tab semantics', () => {
     const editor = useEditorStore()
     editor.configure(settings)
 
-    editor.openNote(knowledgeBase, 'note-a', 'A', 'visual')
-    editor.openNote(knowledgeBase, 'note-b', 'B', 'visual')
+    const firstId = editor.openNote(knowledgeBase, 'note-a', 'A', 'visual')
+    const secondId = editor.openNote(knowledgeBase, 'note-b', 'B', 'visual')
 
     expect(editor.activeGroup?.tabs).toHaveLength(1)
-    expect(editor.activeTab).toMatchObject({ noteUuid: 'note-b', preview: true })
+    expect(secondId).toBe(firstId)
+    expect(editor.activeTab).toMatchObject({ id: firstId, noteUuid: 'note-b', preview: true })
 
     editor.keepOpen(editor.activeTab!.id)
     editor.openNote(knowledgeBase, 'note-c', 'C', 'visual')

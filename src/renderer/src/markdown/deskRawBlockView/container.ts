@@ -33,6 +33,7 @@ import {
 } from '../../editor/markdown/deskCodeTabEditor'
 import { mountFootprintsPreview } from '../../editor/markdown/componentPreview'
 import { attachRawSourceEditor } from '../attachRawSourceEditor'
+import { deferUntilVisible } from './deferUntilVisible'
 import type { DeskRawBlockMountContext } from './types'
 
 export function mountRawContainer(ctx: DeskRawBlockMountContext): void {
@@ -53,24 +54,26 @@ export function mountRawContainer(ctx: DeskRawBlockMountContext): void {
         images: payload.images.map((src) => resolveImage(src))
       }
     }
-    const mounted = mountFootprintsPreview(previewHost, resolveFootprintsPreview(block.source))
-    cleanupTasks.push(() => mounted.unmount())
-    cleanupTasks.push(
-      attachRawSourceEditor(
-        {
-          dom,
-          source: block.source,
-          view,
-          getPos,
-          label: '编辑 Footprints',
-          structuredContainerBody: true,
-          renderPreview: (source) => {
-            mounted.update(resolveFootprintsPreview(source))
-          }
-        },
-        deps
+    deferUntilVisible(dom, cleanupTasks, () => {
+      const mounted = mountFootprintsPreview(previewHost, resolveFootprintsPreview(block.source))
+      cleanupTasks.push(() => mounted.unmount())
+      cleanupTasks.push(
+        attachRawSourceEditor(
+          {
+            dom,
+            source: block.source,
+            view,
+            getPos,
+            label: '编辑 Footprints',
+            structuredContainerBody: true,
+            renderPreview: (source) => {
+              mounted.update(resolveFootprintsPreview(source))
+            }
+          },
+          deps
+        )
       )
-    )
+    })
   } else {
     let previewEl = dom.querySelector('.tn-swiper, .custom-block') as HTMLElement | null
     const structuredCallout = isStructuredCalloutSource(block.source)
@@ -89,23 +92,35 @@ export function mountRawContainer(ctx: DeskRawBlockMountContext): void {
 
     const loadIncludeCache = async (body: string): Promise<Map<string, string>> => {
       const cache = new Map<string, string>()
+      const paths: string[] = []
       for (const line of body.replace(/\r\n?/g, '\n').split('\n')) {
         const include = parseDeskIncludeLine(line)
-        if (!include || cache.has(include.path)) continue
-        try {
-          const result = await window.desk.attachments.readText({
-            knowledgeBaseId: deps.knowledgeBaseId(),
-            noteUuid: deps.noteUuid(),
-            path: include.path
-          })
-          cache.set(include.path, result.ok ? result.value : `// 引用失败：${result.error.message}`)
-        } catch (error) {
-          cache.set(
-            include.path,
-            `// 引用失败：${error instanceof Error ? error.message : String(error)}`
-          )
-        }
+        if (!include || cache.has(include.path) || paths.includes(include.path)) continue
+        paths.push(include.path)
       }
+      await Promise.all(
+        paths.map(async (includePath) => {
+          if (cancelledIncludes) return
+          try {
+            const result = await window.desk.attachments.readText({
+              knowledgeBaseId: deps.knowledgeBaseId(),
+              noteUuid: deps.noteUuid(),
+              path: includePath
+            })
+            if (cancelledIncludes) return
+            cache.set(
+              includePath,
+              result.ok ? result.value : `// 引用失败：${result.error.message}`
+            )
+          } catch (error) {
+            if (cancelledIncludes) return
+            cache.set(
+              includePath,
+              `// 引用失败：${error instanceof Error ? error.message : String(error)}`
+            )
+          }
+        })
+      )
       return cache
     }
 

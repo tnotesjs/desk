@@ -6,24 +6,37 @@ import { $prose } from '@milkdown/kit/utils'
 /**
  * Injects a Yuque-style title input into each Crepe code-block tools row and
  * keeps it synced with the `title` attr on `code_block`.
+ *
+ * Sync runs on create (with short retries for Crepe's async tools mount) and
+ * when the document changes — not on every caret move.
  */
 export function createCodeBlockTitlePlugin(): MilkdownPlugin {
   return $prose(() => {
     return new Plugin({
       view: (view) => {
-        const sync = (): void => syncCodeBlockTitles(view)
-        // Crepe mounts tools asynchronously; retry a few frames after updates.
         let raf = 0
+        let bootFrames = 0
+        const sync = (): void => syncCodeBlockTitles(view)
         const schedule = (): void => {
           cancelAnimationFrame(raf)
           raf = requestAnimationFrame(() => {
             sync()
+            // Crepe mounts `.tools` asynchronously after the code block appears.
             requestAnimationFrame(sync)
           })
         }
-        schedule()
+        const boot = (): void => {
+          sync()
+          bootFrames += 1
+          if (bootFrames < 8 && !view.isDestroyed) {
+            raf = requestAnimationFrame(boot)
+          }
+        }
+        boot()
         return {
-          update: schedule,
+          update: (current, previous) => {
+            if (!previous.doc.eq(current.state.doc)) schedule()
+          },
           destroy: () => cancelAnimationFrame(raf)
         }
       }

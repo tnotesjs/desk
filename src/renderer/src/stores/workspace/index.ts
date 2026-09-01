@@ -349,18 +349,22 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   ): Promise<void> {
     if (!selectedKnowledgeBaseId.value || !selectedKnowledgeBase.value) return
     error.value = null
+    // Open the tab shell first so chrome can paint while notes.read runs.
+    editor.openNote(
+      selectedKnowledgeBase.value,
+      node.uuid,
+      node.title,
+      settings.value?.defaultNoteView ?? 'visual',
+      split,
+      permanent ? 'permanent' : 'preview'
+    )
     try {
       await ensureDocument(selectedKnowledgeBaseId.value, node.uuid)
-      editor.openNote(
-        selectedKnowledgeBase.value,
-        node.uuid,
-        node.title,
-        settings.value?.defaultNoteView ?? 'visual',
-        split,
-        permanent ? 'permanent' : 'preview'
-      )
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : String(cause)
+      if (!documents.value[documentKey(selectedKnowledgeBaseId.value, node.uuid)]) {
+        editor.closeNote(selectedKnowledgeBaseId.value, node.uuid)
+      }
     }
   }
 
@@ -377,8 +381,16 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       stack.unshift(...node.children)
     }
     if (!target) throw new Error(`关联笔记不存在：${noteUuid}`)
-    await ensureDocument(knowledgeBaseId, noteUuid)
     editor.openNote(detail, noteUuid, target.title, settings.value?.defaultNoteView ?? 'visual')
+    try {
+      await ensureDocument(knowledgeBaseId, noteUuid)
+    } catch (cause) {
+      error.value = cause instanceof Error ? cause.message : String(cause)
+      if (!documents.value[documentKey(knowledgeBaseId, noteUuid)]) {
+        editor.closeNote(knowledgeBaseId, noteUuid)
+      }
+      throw cause
+    }
     await syncToActiveTab()
   }
 

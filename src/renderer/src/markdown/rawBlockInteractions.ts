@@ -23,6 +23,12 @@ interface RawBlockKeyboardRange extends RawBlockOwnedRange {
   positions: number[]
 }
 
+let decorationCache: {
+  key: string
+  doc: EditorState['doc'] | null
+  set: DecorationSet | null | undefined
+} = { key: '', doc: null, set: undefined }
+
 /**
  * Whole-block selection for Crepe `code_block` (not NodeSelection).
  * Crepe's code nodeView.selectNode() focuses CodeMirror, so NodeSelection cannot
@@ -170,6 +176,22 @@ function selectedRawBlockDecorations(state: EditorState): DecorationSet | null {
     (!selection.empty && !(selection instanceof NodeSelection)
       ? { from: selection.from, to: selection.to }
       : null)
+  const codeWhole = codeBlockWholeSelectKey.getState(state)
+  const cacheKey = [
+    selection.from,
+    selection.to,
+    selection.empty ? 1 : 0,
+    selection instanceof NodeSelection ? 1 : 0,
+    keyboardRange ? `${keyboardRange.from}:${keyboardRange.to}` : '',
+    codeWhole ?? ''
+  ].join('|')
+  if (
+    cacheKey === decorationCache.key &&
+    decorationCache.doc === state.doc &&
+    decorationCache.set !== undefined
+  ) {
+    return decorationCache.set
+  }
   if (range) {
     state.doc.nodesBetween(range.from, range.to, (node, position) => {
       if (range.from >= position + node.nodeSize || range.to <= position) return
@@ -190,7 +212,6 @@ function selectedRawBlockDecorations(state: EditorState): DecorationSet | null {
     })
   }
 
-  const codeWhole = codeBlockWholeSelectKey.getState(state)
   const codeNode = codeWhole != null ? state.doc.nodeAt(codeWhole) : null
   if (codeWhole != null && codeNode && isCodeBlock(codeNode)) {
     decorations.push(
@@ -200,7 +221,9 @@ function selectedRawBlockDecorations(state: EditorState): DecorationSet | null {
     )
   }
 
-  return decorations.length ? DecorationSet.create(state.doc, decorations) : null
+  const next = decorations.length ? DecorationSet.create(state.doc, decorations) : null
+  decorationCache = { key: cacheKey, doc: state.doc, set: next }
+  return next
 }
 
 function adjacentVisibleRawBlockPosition(
@@ -790,6 +813,7 @@ export function createRawBlockSelectionPlugin(): MilkdownPlugin[] {
   // Capture-phase and ProseMirror handleKeyDown can both see the same key
   // event. Claiming it once prevents double-steps (e.g. code1→code3).
   let claimedKeyboardEvent: KeyboardEvent | null = null
+  const evaluatedKeydowns = new WeakSet<KeyboardEvent>()
 
   const claimEvent = (event: KeyboardEvent): void => {
     claimedKeyboardEvent = event
@@ -824,6 +848,8 @@ export function createRawBlockSelectionPlugin(): MilkdownPlugin[] {
           decorations: selectedRawBlockDecorations,
           handleKeyDown: (view, event) => {
             if (!view.editable) return false
+            // Document capture already evaluated this event; only honor claims.
+            if (evaluatedKeydowns.has(event)) return claimedKeyboardEvent === event
             if (claimedKeyboardEvent === event) return true
             const target = event.target as Element | null
             // Nested mindmap canvas / outline owns arrows while the island is active.
@@ -851,6 +877,7 @@ export function createRawBlockSelectionPlugin(): MilkdownPlugin[] {
           }
         },
         view: (view) => {
+          let wasWholeSelect = false
           const hasWholeSelectSelection = (): boolean => {
             if (codeBlockWholeSelectKey.getState(view.state) != null) return true
             const { selection } = view.state
@@ -871,6 +898,7 @@ export function createRawBlockSelectionPlugin(): MilkdownPlugin[] {
           }
 
           const keydown = (event: KeyboardEvent): void => {
+            evaluatedKeydowns.add(event)
             if (!view.editable) return
             if (claimedKeyboardEvent === event) return
 
@@ -931,7 +959,10 @@ export function createRawBlockSelectionPlugin(): MilkdownPlugin[] {
           view.dom.ownerDocument.addEventListener('keydown', keydown, true)
           return {
             update: () => {
-              if (!hasWholeSelectSelection()) return
+              const whole = hasWholeSelectSelection()
+              const entering = whole && !wasWholeSelect
+              wasWholeSelect = whole
+              if (!whole) return
               if (view.hasFocus()) return
               const active = view.dom.ownerDocument.activeElement
               // Inline raw-source CM and other real fields keep focus.
@@ -941,7 +972,11 @@ export function createRawBlockSelectionPlugin(): MilkdownPlugin[] {
               // Mindmap canvas / outline keep focus while the interaction island is live.
               if (isMindmapIslandKeyboardOwner(active)) return
               if (isForeignTextField(active)) return
-              // Reclaim from body / Crepe block-handle after atom NodeSelection.
+              // Reclaim when entering whole-select, or when focus left PM while still whole-selected.
+              const focusOutsidePm =
+                !(active instanceof Node) ||
+                (active !== view.dom && !view.dom.contains(active))
+              if (!entering && !focusOutsidePm) return
               view.focus()
             },
             destroy: () => view.dom.ownerDocument.removeEventListener('keydown', keydown, true)

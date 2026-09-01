@@ -571,6 +571,8 @@ export const immutableRawBlockPlugin = $prose(
       filterTransaction: (transaction, state) => {
         if (!transaction.docChanged) return true
         const before = rawBlockSignatures(state.doc)
+        // Notes without locked atoms skip the after-walk entirely.
+        if (before.length === 0) return true
         const after = rawBlockSignatures(transaction.doc)
         if (before.length > after.length) return false
         // Every pre-existing card signature must survive in order; new cards

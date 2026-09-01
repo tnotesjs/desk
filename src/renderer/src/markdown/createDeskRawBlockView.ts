@@ -13,6 +13,7 @@ import { mountRawInclude } from './deskRawBlockView/include'
 import { mountRawContainer } from './deskRawBlockView/container'
 import { mountRawComponent } from './deskRawBlockView/component'
 import { mountRawDiagram } from './deskRawBlockView/diagram'
+import { deferUntilVisible } from './deskRawBlockView/deferUntilVisible'
 import type { DeskRawBlockViewDeps } from './deskRawBlockView/types'
 
 export type { DeskRawBlockViewDeps } from './deskRawBlockView/types'
@@ -50,9 +51,16 @@ export function createDeskRawBlockView(deps: DeskRawBlockViewDeps) {
       }
 
       if (block.kind === 'raw-include') mountRawInclude(ctx)
-      if (block.kind === 'raw-container') mountRawContainer(ctx)
-      if (block.kind === 'raw-component') mountRawComponent(ctx)
-      if (block.kind === 'raw-diagram') mountRawDiagram(ctx)
+      if (block.kind === 'raw-container') {
+        // Callouts/code-group/swiper mount immediately; footprints (heavy) is deferred inside.
+        mountRawContainer(ctx)
+      }
+      if (block.kind === 'raw-component') {
+        deferUntilVisible(dom, cleanupTasks, () => mountRawComponent(ctx))
+      }
+      if (block.kind === 'raw-diagram') {
+        deferUntilVisible(dom, cleanupTasks, () => mountRawDiagram(ctx))
+      }
       return {
         dom,
         update: (nextNode) => {
