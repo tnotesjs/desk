@@ -36,6 +36,7 @@ import BlockActionMenu from './BlockActionMenu.vue'
 import type { BlockAction } from './BlockActionMenu.vue'
 import { installBlockHandleClickController, type BlockHandleClickTarget } from './blockActionMenu'
 import { createCodeBlockTitlePlugin } from './codeBlockTitlePlugin'
+import { createCodeBlockHighlightBundle } from './codeBlockHighlightPlugin'
 
 import {
   projectRawBlocksForMilkdown,
@@ -615,6 +616,7 @@ onMounted(async () => {
   if (!host.value) return
   slashMenuPresentationCleanup = installSlashMenuPresentation(host.value)
   originalSource = props.content
+  const codeBlockHighlights = createCodeBlockHighlightBundle()
   const editor = new Crepe({
     root: host.value,
     defaultValue: projectRawBlocksForMilkdown(props.content),
@@ -622,6 +624,9 @@ onMounted(async () => {
       [Crepe.Feature.ImageBlock]: false
     },
     featureConfigs: {
+      [Crepe.Feature.CodeMirror]: {
+        extensions: codeBlockHighlights.extensions
+      },
       [Crepe.Feature.Placeholder]: {
         text: '输入 / 插入内容',
         mode: 'block'
@@ -644,6 +649,7 @@ onMounted(async () => {
   })
   editor.editor.use(rawBlockProjectionPlugins)
   editor.editor.use(createCodeBlockTitlePlugin())
+  editor.editor.use(codeBlockHighlights.plugin)
   editor.editor.use(createMarkdownShortcutInputRules())
   editor.editor.use(
     createBlockShortcutPlugin({

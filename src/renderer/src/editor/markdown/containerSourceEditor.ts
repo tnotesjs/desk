@@ -25,6 +25,7 @@ import {
 } from '@codemirror/view'
 import { githubDark, githubLight } from '@uiw/codemirror-theme-github'
 
+import { createCodeLineHighlightExtension } from './codeLineHighlightExtension'
 import { isEmptyRawBlockSource } from './rawBlockEmpty'
 
 export interface ContainerSourceEditorHandle {
@@ -49,6 +50,15 @@ export interface ContainerSourceEditorOptions {
    * container raw-source editing. Loaded via `@codemirror/language-data`.
    */
   language?: string
+  /**
+   * VitePress-style line highlights. Host already provides `lineNumbers()`,
+   * so the extension is installed with `provideLineNumbers: false`.
+   */
+  lineHighlight?: {
+    initial?: string
+    onChange?: (encoded: string) => void
+    readOnly?: () => boolean
+  }
 }
 
 /**
@@ -121,6 +131,15 @@ export function createContainerSourceEditor(
       ? markdown()
       : []
 
+  const lineHighlight = options.lineHighlight
+    ? createCodeLineHighlightExtension({
+        initial: options.lineHighlight.initial,
+        provideLineNumbers: false,
+        readOnly: options.lineHighlight.readOnly,
+        onChange: (encoded) => options.lineHighlight?.onChange?.(encoded)
+      })
+    : null
+
   const view = new EditorView({
     state: EditorState.create({
       doc: initialValue,
@@ -141,6 +160,7 @@ export function createContainerSourceEditor(
         languageCompartment.of(initialLanguage),
         EditorState.allowMultipleSelections.of(true),
         ...(options.placeholder ? [placeholder(options.placeholder)] : []),
+        ...(lineHighlight ? lineHighlight.extensions : []),
         keymap.of([
           {
             key: 'Mod-Enter',

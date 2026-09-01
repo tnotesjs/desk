@@ -13,6 +13,7 @@ import {
   parseCodeGroupEntries,
   parseDeskIncludeLine,
   serializeCodeGroupEntries,
+  withCodeGroupEntryHighlights,
   withCodeGroupEntryLanguage,
   withCodeGroupEntryTitle,
   type CodeGroupEntry
@@ -32,7 +33,7 @@ import {
   type CodeTabEditorHandle
 } from '../../editor/markdown/deskCodeTabEditor'
 import { mountFootprintsPreview } from '../../editor/markdown/componentPreview'
-import { attachRawSourceEditor } from '../attachRawSourceEditor'
+import { attachRawSourceEditor, type RawSourceEditorHandle } from '../attachRawSourceEditor'
 import { deferUntilVisible } from './deferUntilVisible'
 import type { DeskRawBlockMountContext } from './types'
 
@@ -85,6 +86,7 @@ export function mountRawContainer(ctx: DeskRawBlockMountContext): void {
     let codeGroupEntries: CodeGroupEntry[] = []
     let swiperSlides: SwiperSlideEntry[] = []
     const codeGroupTabEditors: Array<CodeTabEditorHandle | null> = []
+    let rawSourceEditor: RawSourceEditorHandle | null = null
     cleanupTasks.push(() => {
       cancelledIncludes = true
       codeGroupTabEditors.splice(0).forEach((handle) => handle?.destroy())
@@ -147,6 +149,7 @@ export function mountRawContainer(ctx: DeskRawBlockMountContext): void {
       if (!applyContainerSource(nextSource)) return false
       currentContainerSource = nextSource
       codeGroupEntries = nextEntries
+      rawSourceEditor?.syncFromAtom()
       return true
     }
 
@@ -418,6 +421,22 @@ export function mountRawContainer(ctx: DeskRawBlockMountContext): void {
             tabButtons[index]?.classList.toggle('is-tab-dirty', dirty)
             panel.classList.toggle('is-include-dirty', dirty)
           },
+          lineHighlight:
+            entry.kind === 'fence'
+              ? {
+                  initial: entry.highlights,
+                  readOnly: () => deps.isEffectivelyReadOnly(),
+                  onChange: (encoded) => {
+                    if (deps.isEffectivelyReadOnly()) return
+                    const current = codeGroupEntries[index]
+                    if (!current || current.kind !== 'fence') return
+                    const nextEntries = codeGroupEntries.map((item, itemIndex) =>
+                      itemIndex === index ? withCodeGroupEntryHighlights(item, encoded) : item
+                    )
+                    commitCodeGroupEntries(nextEntries)
+                  }
+                }
+              : undefined,
           onLanguageChange: async (nextLanguage) => {
             const current = codeGroupEntries[index]
             if (!current) return
@@ -868,6 +887,7 @@ export function mountRawContainer(ctx: DeskRawBlockMountContext): void {
               codeGroupTabEditors[index]?.setSavedValue(entry.code)
             }
           })
+          rawSourceEditor?.syncFromAtom()
           return true
         }
         ;(
@@ -908,27 +928,29 @@ export function mountRawContainer(ctx: DeskRawBlockMountContext): void {
       }
     }
 
-    cleanupTasks.push(
-      attachRawSourceEditor(
-        {
-          dom,
-          source: block.source,
-          getSource: () => currentContainerSource,
-          view,
-          getPos,
-          label: structuredCallout
-            ? '编辑容器'
-            : structuredContainerBody
-              ? '编辑容器正文'
-              : '编辑容器源码',
-          structuredCallout,
-          structuredContainerBody,
-          renderPreview: (source) => {
-            void refreshContainerPreview(source)
-          }
-        },
-        deps
-      )
+    rawSourceEditor = attachRawSourceEditor(
+      {
+        dom,
+        source: block.source,
+        getSource: () => currentContainerSource,
+        view,
+        getPos,
+        label: structuredCallout
+          ? '编辑容器'
+          : structuredContainerBody
+            ? '编辑容器正文'
+            : '编辑容器源码',
+        structuredCallout,
+        structuredContainerBody,
+        renderPreview: (source) => {
+          void refreshContainerPreview(source)
+        }
+      },
+      deps
     )
+    cleanupTasks.push(() => {
+      rawSourceEditor?.destroy()
+      rawSourceEditor = null
+    })
   }
 }

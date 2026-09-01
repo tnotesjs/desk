@@ -1,3 +1,10 @@
+import {
+  applyFenceHighlights,
+  encodeHighlightsAttr,
+  parseHighlightRanges
+} from './lineHighlight'
+import { parseFenceTitleFromMeta } from './fenceInfo'
+
 /** Parse a VitePress-style body include line: `<<< ./path [title]` / `{lang}`. */
 export interface DeskIncludeRef {
   path: string
@@ -99,7 +106,15 @@ export function bodyHasIncludeLines(body: string): boolean {
 /** One tab in a code-group body: either a VitePress include or an inline fence. */
 export type CodeGroupEntry =
   | { kind: 'include'; include: DeskIncludeRef; rawLine: string }
-  | { kind: 'fence'; filename: string; lang: string; info: string; code: string }
+  | {
+      kind: 'fence'
+      filename: string
+      lang: string
+      info: string
+      code: string
+      /** Encoded `{1-3,7}` or empty. */
+      highlights: string
+    }
 
 /**
  * Order-preserving parse of a code-group body so `<<<` and ``` fences can coexist.
@@ -123,7 +138,8 @@ export function parseCodeGroupEntries(body: string): CodeGroupEntry[] {
       const info = (fenceOpen[2] ?? '').trim()
       const lang = info.match(/^\S+/)?.[0] ?? ''
       const meta = info.slice(lang.length).trim()
-      const filename = meta.replace(/^\[|\]$/g, '').trim()
+      const filename = parseFenceTitleFromMeta(meta)
+      const highlights = encodeHighlightsAttr(parseHighlightRanges(meta))
       i += 1
       const contentLines: string[] = []
       while (i < lines.length) {
@@ -140,7 +156,8 @@ export function parseCodeGroupEntries(body: string): CodeGroupEntry[] {
         filename,
         lang,
         info,
-        code: contentLines.join('\n').replace(/\n$/, '')
+        code: contentLines.join('\n').replace(/\n$/, ''),
+        highlights
       })
       continue
     }
@@ -174,8 +191,10 @@ export function withCodeGroupEntryTitle(entry: CodeGroupEntry, title: string): C
     return { kind: 'include', include, rawLine: serializeIncludeLine(include) }
   }
   const lang = entry.lang || 'text'
-  const info = trimmed ? `${lang} [${trimmed}]` : lang
-  return { ...entry, filename: trimmed, info }
+  const highlights = parseHighlightRanges(entry.highlights || entry.info)
+  const withHighlights = applyFenceHighlights(lang, highlights)
+  const info = trimmed ? `${withHighlights} [${trimmed}]` : withHighlights
+  return { ...entry, filename: trimmed, info, highlights: encodeHighlightsAttr(highlights) }
 }
 
 export function withCodeGroupEntryLanguage(entry: CodeGroupEntry, language: string): CodeGroupEntry {
@@ -185,8 +204,23 @@ export function withCodeGroupEntryLanguage(entry: CodeGroupEntry, language: stri
     return { kind: 'include', include, rawLine: serializeIncludeLine(include) }
   }
   const title = entry.filename
-  const info = title ? `${lang} [${title}]` : lang
-  return { ...entry, lang, info }
+  const highlights = parseHighlightRanges(entry.highlights || entry.info)
+  const withHighlights = applyFenceHighlights(lang, highlights)
+  const info = title ? `${withHighlights} [${title}]` : withHighlights
+  return { ...entry, lang, info, highlights: encodeHighlightsAttr(highlights) }
+}
+
+export function withCodeGroupEntryHighlights(
+  entry: CodeGroupEntry,
+  highlightsEncoded: string
+): CodeGroupEntry {
+  if (entry.kind === 'include') return entry
+  const highlights = parseHighlightRanges(highlightsEncoded)
+  const lang = entry.lang || 'text'
+  const title = entry.filename
+  const base = applyFenceHighlights(lang, highlights)
+  const info = title ? `${base} [${title}]` : base
+  return { ...entry, info, highlights: encodeHighlightsAttr(highlights) }
 }
 
 /** Serialize entries back to a code-group body (used when an inline fence is saved). */

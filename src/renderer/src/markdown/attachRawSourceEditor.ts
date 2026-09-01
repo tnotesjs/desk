@@ -48,6 +48,13 @@ export interface RawSourceEditorContext {
   renderPreview: (source: string) => void
 }
 
+export interface RawSourceEditorHandle {
+  (): void
+  destroy(): void
+  /** Pull the latest atom source into an open Edit panel (e.g. after highlight writeback). */
+  syncFromAtom(): void
+}
+
 /**
  * Wires the edit button + inline editor onto an editable raw block. Structured
  * callouts (tip/info/…) expose title + body only; other blocks still edit the
@@ -60,7 +67,7 @@ export const DONE_PILL_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="24
 export function attachRawSourceEditor(
   ctx: RawSourceEditorContext,
   deps: AttachRawSourceEditorDeps
-): () => void {
+): RawSourceEditorHandle {
   const { isEffectivelyReadOnly, rawSourceReadonlyListeners } = deps
   const liveSource = (): string => ctx.getSource?.() ?? ctx.source
   const structured = Boolean(
@@ -93,6 +100,8 @@ export function attachRawSourceEditor(
   ctx.dom.append(editButton, editorHost)
 
   let editorValue = liveSource()
+  /** Skip publishDraft while pulling atom → Edit panel (avoids preview remount). */
+  let suppressPublish = false
   let draftTitle = ''
   let draftBody = ''
   let draftMermaidBody = ''
@@ -195,7 +204,7 @@ export function attachRawSourceEditor(
   }
 
   const publishDraft = (): void => {
-    if (isEffectivelyReadOnly()) return
+    if (suppressPublish || isEffectivelyReadOnly()) return
     if (ctx.structuredBilibili) {
       const parsed = parseBilibiliVideoSource(liveSource())
       editorValue = rebuildBilibiliVideoSource({
@@ -659,7 +668,7 @@ export function attachRawSourceEditor(
   rawSourceReadonlyListeners.add(applyReadonly)
   applyReadonly(isEffectivelyReadOnly())
 
-  return () => {
+  const destroy = (): void => {
     rawSourceReadonlyListeners.delete(applyReadonly)
     if (structured) {
       editorHost.removeEventListener('focusout', scheduleCommitOnBlur)
@@ -669,4 +678,48 @@ export function attachRawSourceEditor(
     editorHandle?.destroy()
     editorHandle = null
   }
+
+  const syncFromAtom = (): void => {
+    if (!editing || !editorHandle) return
+    const next = liveSource()
+    editorValue = next
+    // setValue fires docChanged → onChange → publishDraft; suppress so we don't
+    // re-render the visual preview (and remount tab editors) while syncing.
+    suppressPublish = true
+    try {
+      if (ctx.structuredCallout) {
+        const parsed = parseContainerSource(next)
+        draftTitle = parsed.title
+        draftBody = parsed.body
+        editorHandle.setValue(draftBody)
+        const titleInput = editorHost.querySelector(
+          '.desk-raw-block__editor-title'
+        ) as HTMLInputElement | null
+        if (titleInput && document.activeElement !== titleInput) {
+          titleInput.value = draftTitle
+        }
+        return
+      }
+      if (ctx.structuredContainerBody) {
+        draftContainerBody = parseContainerSource(next).body
+        editorHandle.setValue(draftContainerBody)
+        return
+      }
+      if (ctx.structuredMermaid) {
+        draftMermaidBody = parseFencedCode(next).code
+        editorHandle.setValue(draftMermaidBody)
+        return
+      }
+      if (ctx.structuredMindmap) {
+        draftMindmapBody = parseFencedCode(next).code
+        editorHandle.setValue(draftMindmapBody)
+        return
+      }
+      editorHandle.setValue(next)
+    } finally {
+      suppressPublish = false
+    }
+  }
+
+  return Object.assign(destroy, { destroy, syncFromAtom })
 }

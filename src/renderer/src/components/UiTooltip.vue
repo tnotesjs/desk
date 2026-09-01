@@ -4,15 +4,21 @@ withDefaults(
     label: string
     shortcut?: string
     placement?: 'top' | 'bottom'
+    /** Horizontal alignment relative to the host. Use `end` near a right edge. */
+    align?: 'center' | 'start' | 'end'
   }>(),
-  { shortcut: '', placement: 'bottom' }
+  { shortcut: '', placement: 'bottom', align: 'center' }
 )
 </script>
 
 <template>
   <span class="ui-tooltip-host">
     <slot />
-    <span class="ui-tooltip-popover" :class="`placement-${placement}`" role="tooltip">
+    <span
+      class="ui-tooltip-popover"
+      :class="[`placement-${placement}`, `align-${align}`]"
+      role="tooltip"
+    >
       <strong>{{ label }}</strong>
       <kbd v-if="shortcut">{{ shortcut }}</kbd>
     </span>
@@ -30,13 +36,11 @@ withDefaults(
 .ui-tooltip-popover {
   position: absolute;
   z-index: 1000;
-  left: 50%;
   min-width: max-content;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 3px;
-  transform: translateX(-50%) translateY(-3px);
   visibility: hidden;
   opacity: 0;
   pointer-events: none;
@@ -53,21 +57,56 @@ withDefaults(
     visibility 0s linear 360ms;
 }
 
+.align-center {
+  left: 50%;
+  transform: translateX(-50%) translateY(-3px);
+}
+
+.align-start {
+  left: 0;
+  transform: translateY(-3px);
+}
+
+.align-end {
+  right: 0;
+  left: auto;
+  transform: translateY(-3px);
+}
+
 .placement-bottom {
   top: calc(100% + 8px);
 }
 
 .placement-top {
   bottom: calc(100% + 8px);
+}
+
+.placement-top.align-center {
   transform: translateX(-50%) translateY(3px);
+}
+
+.placement-top.align-start,
+.placement-top.align-end {
+  transform: translateY(3px);
 }
 
 .ui-tooltip-host:hover .ui-tooltip-popover,
 .ui-tooltip-host:has(:focus-visible) .ui-tooltip-popover {
   visibility: visible;
   opacity: 1;
-  transform: translateX(-50%) translateY(0);
   transition-delay: 260ms;
+}
+
+.ui-tooltip-host:hover .align-center,
+.ui-tooltip-host:has(:focus-visible) .align-center {
+  transform: translateX(-50%) translateY(0);
+}
+
+.ui-tooltip-host:hover .align-start,
+.ui-tooltip-host:has(:focus-visible) .align-start,
+.ui-tooltip-host:hover .align-end,
+.ui-tooltip-host:has(:focus-visible) .align-end {
+  transform: translateY(0);
 }
 
 .ui-tooltip-popover strong {

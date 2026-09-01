@@ -6,6 +6,12 @@ import { renderContainerFromSource, type ResolveImage } from './containerBody'
 import { parseFencedCode } from './diagramRenderer'
 import { parseFenceTitleFromMeta } from './fenceInfo'
 import {
+  buildFenceInfo,
+  decodeHighlightsAttr,
+  encodeHighlightsAttr,
+  parseHighlightRanges
+} from './lineHighlight'
+import {
   parseMarkdownSource,
   serializeMarkdownSource,
   type MarkdownSourceBlock,
@@ -496,7 +502,9 @@ export const sourcePreservingCodeBlockSchema = codeBlockSchema.extendSchema((bas
     attrs: {
       ...schema.attrs,
       deskMathSource: { default: null },
-      title: { default: '' }
+      title: { default: '' },
+      /** Encoded VitePress highlight ranges, e.g. `{1-3,7}` or `''`. */
+      highlights: { default: '' }
     },
     parseMarkdown: {
       match: schema.parseMarkdown.match,
@@ -505,6 +513,7 @@ export const sourcePreservingCodeBlockSchema = codeBlockSchema.extendSchema((bas
         state.openNode(type, {
           language: node.lang ?? '',
           title: parseFenceTitleFromMeta(meta),
+          highlights: encodeHighlightsAttr(parseHighlightRanges(meta)),
           deskMathSource: node.deskMathSource === true
         })
         if (typeof node.value === 'string' && node.value) state.addText(node.value)
@@ -523,10 +532,16 @@ export const sourcePreservingCodeBlockSchema = codeBlockSchema.extendSchema((bas
         }
         const language = String(node.attrs.language ?? '')
         const title = String(node.attrs.title ?? '').trim()
+        const highlights = decodeHighlightsAttr(String(node.attrs.highlights ?? ''))
         const value = node.content.firstChild?.text ?? ''
+        const info = buildFenceInfo(language, highlights, title)
+        // remark code node: lang is first token; meta is the rest.
+        const langMatch = info.match(/^(\S+)(?:\s+([\s\S]*))?$/)
+        const lang = langMatch?.[1] ?? language
+        const meta = (langMatch?.[2] ?? '').trim()
         state.addNode('code', undefined, value, {
-          lang: language,
-          ...(title ? { meta: `[${title}]` } : {})
+          lang,
+          ...(meta ? { meta } : {})
         })
       }
     }

@@ -272,7 +272,7 @@ const previewLabel = computed(() => {
           </button>
           <em>{{ gitState?.changes.length ?? 0 }}</em>
           <div class="git-actions">
-            <UiTooltip label="刷新 Git 状态">
+            <UiTooltip label="刷新 Git 状态" align="end">
               <button
                 type="button"
                 aria-label="刷新本地 Git 状态"
@@ -282,7 +282,7 @@ const previewLabel = computed(() => {
                 ↻
               </button>
             </UiTooltip>
-            <UiTooltip label="拉取远端更新">
+            <UiTooltip label="拉取远端更新" align="end">
               <button
                 type="button"
                 aria-label="获取并拉取远端更新"
@@ -292,7 +292,7 @@ const previewLabel = computed(() => {
                 ⇣
               </button>
             </UiTooltip>
-            <UiTooltip label="提交并推送">
+            <UiTooltip label="提交并推送" align="end">
               <button
                 type="button"
                 aria-label="提交并推送当前变更"

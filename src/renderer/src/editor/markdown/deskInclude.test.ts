@@ -8,6 +8,7 @@ import {
   parseCodeGroupEntries,
   parseDeskIncludeLine,
   serializeCodeGroupEntries,
+  withCodeGroupEntryHighlights,
   withCodeGroupEntryLanguage,
   withCodeGroupEntryTitle
 } from './deskInclude'
@@ -87,7 +88,8 @@ describe('include helpers', () => {
       kind: 'fence',
       filename: 'inline.js',
       lang: 'js',
-      code: 'const x = 1'
+      code: 'const x = 1',
+      highlights: ''
     })
     const serialized = serializeCodeGroupEntries(entries)
     expect(serialized).toContain('<<< ./demos/17/1.js')
@@ -96,13 +98,29 @@ describe('include helpers', () => {
     expect(serialized).toContain('<<< ./demos/17/2.js [two]')
   })
 
+  it('parses and rewrites fence highlight ranges', () => {
+    const entries = parseCodeGroupEntries('```js {1,2,3} [demo]\nconst a = 1\n```\n')
+    expect(entries[0]).toMatchObject({
+      kind: 'fence',
+      filename: 'demo',
+      highlights: '{1-3}'
+    })
+    const updated = withCodeGroupEntryHighlights(entries[0]!, '{1,4}')
+    expect(updated).toMatchObject({
+      kind: 'fence',
+      highlights: '{1,4}',
+      info: 'js {1,4} [demo]'
+    })
+  })
+
   it('updates title and language on fence / include entries', () => {
     const fence: ReturnType<typeof parseCodeGroupEntries>[number] = {
       kind: 'fence',
       filename: '1',
       lang: 'js',
       info: 'js [1]',
-      code: 'const a = 1'
+      code: 'const a = 1',
+      highlights: ''
     }
     expect(withCodeGroupEntryTitle(fence, 'alpha')).toMatchObject({
       filename: 'alpha',

@@ -649,9 +649,20 @@
 .milkdown-markdown-editor :deep(.desk-raw-block__include-cm .cm-content),
 .milkdown-markdown-editor :deep(.desk-raw-block__include-cm .cm-gutters),
 .milkdown-markdown-editor :deep(.desk-raw-block__include-cm .cm-gutterElement),
-.milkdown-markdown-editor :deep(.desk-raw-block__include-cm .cm-activeLine),
 .milkdown-markdown-editor :deep(.desk-raw-block__include-cm .cm-activeLineGutter) {
   background-color: var(--editor-bg) !important;
+}
+
+/* Hide the active-line wash unless the line is also a highlight mark. */
+.milkdown-markdown-editor
+  :deep(.desk-raw-block__include-cm .cm-activeLine:not(.cm-highlighted-line)) {
+  background-color: var(--editor-bg) !important;
+}
+
+.milkdown-markdown-editor :deep(.desk-raw-block__include-cm .cm-highlighted-line),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block__include-cm .cm-highlighted-line.cm-activeLine) {
+  background-color: color-mix(in srgb, var(--accent) 18%, transparent) !important;
 }
 
 .milkdown-markdown-editor :deep(.desk-raw-block__include-cm .cm-gutters) {
@@ -1943,8 +1954,17 @@
   background: transparent;
 }
 
-.milkdown-markdown-editor :deep(.milkdown-code-block .cm-editor:focus-within .cm-activeLine) {
+.milkdown-markdown-editor
+  :deep(.milkdown-code-block .cm-editor:focus-within .cm-activeLine:not(.cm-highlighted-line)) {
   background: color-mix(in srgb, var(--hover) 62%, transparent);
+}
+
+.milkdown-markdown-editor :deep(.milkdown-code-block .cm-highlighted-line),
+.milkdown-markdown-editor
+  :deep(.milkdown-code-block .cm-highlighted-line.cm-activeLine),
+.milkdown-markdown-editor
+  :deep(.milkdown-code-block .cm-editor:focus-within .cm-highlighted-line.cm-activeLine) {
+  background: color-mix(in srgb, var(--accent) 18%, transparent) !important;
 }
 
 .milkdown-markdown-editor :deep(.milkdown-code-block .cm-activeLineGutter) {

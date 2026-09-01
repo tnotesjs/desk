@@ -40,7 +40,7 @@ describe('Crepe source preservation integration', () => {
       const current = crepe.editor.action(getMarkdown())
 
       expect(baseline).toBe(
-        '```ts\nconst x = 1\n```\n\n```latex\n$$\nx^2\n$$\n```\n\n$$\ny^2\n$$\n'
+        '```ts {30-51}\nconst x = 1\n```\n\n```latex\n$$\nx^2\n$$\n```\n\n$$\ny^2\n$$\n'
       )
       expect(reconcileMarkdownSource(source, baseline, current)).toBe(edited)
     } finally {
