@@ -2895,8 +2895,8 @@ onMounted(async () => {
     // Prefer GitHub / TNotes style list markers (`-`) over remark's default `*`.
     ctx.update(remarkStringifyOptionsCtx, (current) => ({
       ...current,
-      bullet: '-',
-      bulletOther: '*'
+      bullet: '-' as const,
+      bulletOther: '*' as const
     }))
     ctx.update(uploadConfig.key, (current) => ({
       ...current,

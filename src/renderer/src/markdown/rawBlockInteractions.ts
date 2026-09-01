@@ -192,7 +192,7 @@ function selectedRawBlockDecorations(state: EditorState): DecorationSet | null {
 
   const codeWhole = codeBlockWholeSelectKey.getState(state)
   const codeNode = codeWhole != null ? state.doc.nodeAt(codeWhole) : null
-  if (codeNode && isCodeBlock(codeNode)) {
+  if (codeWhole != null && codeNode && isCodeBlock(codeNode)) {
     decorations.push(
       Decoration.node(codeWhole, codeWhole + codeNode.nodeSize, {
         class: 'desk-code-block--whole-selected'

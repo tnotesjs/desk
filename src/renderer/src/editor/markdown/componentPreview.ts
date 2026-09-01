@@ -280,7 +280,7 @@ export function mountNotesTablePreview(
       error: props.error ?? null
     } as Record<string, unknown>,
     (a, b) => JSON.stringify(a) === JSON.stringify(b)
-  ) as MountedVuePreview<NotesTablePreviewProps>
+  ) as unknown as MountedVuePreview<NotesTablePreviewProps>
 }
 
 export function mountFootprintsPreview(
@@ -298,5 +298,5 @@ export function mountFootprintsPreview(
       otherInfo: props.otherInfo ?? ''
     } as Record<string, unknown>,
     (a, b) => JSON.stringify(a) === JSON.stringify(b)
-  ) as MountedVuePreview<FootprintsPayload>
+  ) as unknown as MountedVuePreview<FootprintsPayload>
 }
