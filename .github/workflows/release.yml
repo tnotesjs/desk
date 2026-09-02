@@ -68,8 +68,11 @@ jobs:
           app_path=$(find dist -maxdepth 2 -type d -name 'TNotes Desk.app' -print -quit)
           test -n "$app_path"
           codesign --verify --deep --strict --verbose=2 "$app_path"
-          codesign -d --entitlements :- "$app_path" > /tmp/tnotes-desk-entitlements.plist
-          test "$(plutil -extract com.apple.security.cs.disable-library-validation raw -o - /tmp/tnotes-desk-entitlements.plist)" = "true"
+          entitlements=$(codesign -d --entitlements - "$app_path")
+          printf '%s\n' "$entitlements"
+          printf '%s\n' "$entitlements" \
+            | grep -A2 -F '[Key] com.apple.security.cs.disable-library-validation' \
+            | grep -Fq '[Bool] true'
 
       - name: Upload package
         uses: actions/upload-artifact@v4
