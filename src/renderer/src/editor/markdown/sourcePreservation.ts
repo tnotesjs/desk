@@ -743,9 +743,7 @@ function reconcileChangedFence(
       : replaceFenceLanguage(originalFence.opening, currentLanguage)
 
   if (currentFence) {
-    const baselineTitle = parseFenceTitleFromMeta(
-      fenceOpeningInfo(baselineFence?.opening ?? '')
-    )
+    const baselineTitle = parseFenceTitleFromMeta(fenceOpeningInfo(baselineFence?.opening ?? ''))
     const currentTitle = parseFenceTitleFromMeta(fenceOpeningInfo(currentFence.opening))
     const originalTitle = parseFenceTitleFromMeta(fenceOpeningInfo(originalFence.opening))
     // Only sync titles when Milkdown's canonical dump is participating in the

@@ -12,8 +12,7 @@ export interface ParsedBilibiliVideo {
   trailingNewline: boolean
 }
 
-const BILIBILI_TAG =
-  /^ {0,3}<(?<tag>BilibiliVideo|BilibiliOutsidePlayer|B)\b([^>]*)\/?\s*>\s*$/m
+const BILIBILI_TAG = /^ {0,3}<(?<tag>BilibiliVideo|BilibiliOutsidePlayer|B)\b([^>]*)\/?\s*>\s*$/m
 
 /** True when source is a Bilibili video tag (canonical or legacy). */
 export function isBilibiliVideoSource(source: string): boolean {
@@ -34,7 +33,10 @@ function readBooleanAttr(attrs: string, name: string, defaultValue = false): boo
   const plain = attrs.match(new RegExp(`\\b${name}\\s*=\\s*["']?(true|false|1|0)["']?`))
   if (plain) return plain[1] === 'true' || plain[1] === '1'
   // Presence-only boolean attribute: <X autoplay />
-  if (new RegExp(`\\b${name}(?:\\s|/|>|$)`).test(attrs) && !new RegExp(`\\b${name}\\s*=`).test(attrs)) {
+  if (
+    new RegExp(`\\b${name}(?:\\s|/|>|$)`).test(attrs) &&
+    !new RegExp(`\\b${name}\\s*=`).test(attrs)
+  ) {
     return true
   }
   return defaultValue
@@ -83,8 +85,7 @@ export interface ParsedWordList {
   trailingNewline: boolean
 }
 
-const WORD_LIST_OPEN =
-  /^ {0,3}<(?<tag>WordList|EnWordList|E)\b/m
+const WORD_LIST_OPEN = /^ {0,3}<(?<tag>WordList|EnWordList|E)\b/m
 
 /** True when source is a WordList tag (canonical or legacy). */
 export function isWordListSource(source: string): boolean {

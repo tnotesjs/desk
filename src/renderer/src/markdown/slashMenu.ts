@@ -127,7 +127,8 @@ export const TN_NOTES_SLASH_ITEMS: SlashMenuItem[] = [
     kind: 'component',
     shortcut: '/F',
     keywords: ['F', 'Footprints', '足迹'],
-    insert: '::: footprints 2025-01-01 12:00\n\n第一段文字\n\n第二段文字\n\n![](./assets/demo.png)\n\n:::\n'
+    insert:
+      '::: footprints 2025-01-01 12:00\n\n第一段文字\n\n第二段文字\n\n![](./assets/demo.png)\n\n:::\n'
   },
   {
     id: 'mermaid',

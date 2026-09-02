@@ -127,9 +127,7 @@ export function createContainerSourceEditor(
   let destroyed = false
 
   const initialLanguage =
-    !options.language || normalizeLanguageName(options.language) === 'markdown'
-      ? markdown()
-      : []
+    !options.language || normalizeLanguageName(options.language) === 'markdown' ? markdown() : []
 
   const lineHighlight = options.lineHighlight
     ? createCodeLineHighlightExtension({

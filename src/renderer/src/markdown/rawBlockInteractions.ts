@@ -372,9 +372,7 @@ function extendSelectionThroughAdjacentCode(
     headOutside = next?.isTextblock ? after + 1 : after
   } else {
     const prev = view.state.doc.resolve(codePos).nodeBefore
-    headOutside = prev?.isTextblock
-      ? codePos - prev.nodeSize + 1 + prev.content.size
-      : codePos
+    headOutside = prev?.isTextblock ? codePos - prev.nodeSize + 1 + prev.content.size : codePos
   }
   const newAnchor = selection.empty ? head : anchor
   const newHead = headOutside
@@ -638,10 +636,7 @@ function moveFromSelectableBlock(
   const chainedPos = neighborSelectableBlockPosition(view.state, boundary, direction, {
     skipEmptyTextblocks: true
   })
-  if (
-    chainedPos != null &&
-    onlyEmptyTextblocksUntilSelectable(view.state, boundary, direction)
-  ) {
+  if (chainedPos != null && onlyEmptyTextblocksUntilSelectable(view.state, boundary, direction)) {
     return selectSelectableBlock(view, chainedPos)
   }
   exitSelectableBlock(view, boundary, direction === 'down' ? 1 : -1)
@@ -664,7 +659,10 @@ function handleCodeBlockWholeSelect(view: EditorView, event: KeyboardEvent): boo
       )
     )
     view.dispatch(
-      tr.setMeta(codeBlockWholeSelectKey, null).setMeta(rawBlockKeyboardRangeKey, null).scrollIntoView()
+      tr
+        .setMeta(codeBlockWholeSelectKey, null)
+        .setMeta(rawBlockKeyboardRangeKey, null)
+        .scrollIntoView()
     )
     return true
   }
@@ -695,7 +693,10 @@ function handleSelectedSelectableBlock(view: EditorView, event: KeyboardEvent): 
       )
     )
     view.dispatch(
-      tr.setMeta(codeBlockWholeSelectKey, null).setMeta(rawBlockKeyboardRangeKey, null).scrollIntoView()
+      tr
+        .setMeta(codeBlockWholeSelectKey, null)
+        .setMeta(rawBlockKeyboardRangeKey, null)
+        .scrollIntoView()
     )
     return true
   }
@@ -717,9 +718,7 @@ function isWholeSelectKeyEvent(event: KeyboardEvent): boolean {
     !event.ctrlKey &&
     !event.metaKey &&
     !event.isComposing &&
-    ['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft', 'Delete', 'Backspace'].includes(
-      event.key
-    )
+    ['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft', 'Delete', 'Backspace'].includes(event.key)
   )
 }
 
@@ -837,8 +836,7 @@ export function createRawBlockSelectionPlugin(): MilkdownPlugin[] {
         state: {
           init: () => null,
           apply: (transaction, value) => {
-            const meta = transaction.getMeta(codeBlockWholeSelectKey) as
-              number | null | undefined
+            const meta = transaction.getMeta(codeBlockWholeSelectKey) as number | null | undefined
             if (meta !== undefined) return meta
             if (transaction.docChanged || transaction.selectionSet) return null
             return value
@@ -881,9 +879,7 @@ export function createRawBlockSelectionPlugin(): MilkdownPlugin[] {
           const hasWholeSelectSelection = (): boolean => {
             if (codeBlockWholeSelectKey.getState(view.state) != null) return true
             const { selection } = view.state
-            return (
-              selection instanceof NodeSelection && isSelectableBlockNode(selection.node)
-            )
+            return selection instanceof NodeSelection && isSelectableBlockNode(selection.node)
           }
 
           /** True when the event target is an outside field we must not hijack. */
@@ -974,8 +970,7 @@ export function createRawBlockSelectionPlugin(): MilkdownPlugin[] {
               if (isForeignTextField(active)) return
               // Reclaim when entering whole-select, or when focus left PM while still whole-selected.
               const focusOutsidePm =
-                !(active instanceof Node) ||
-                (active !== view.dom && !view.dom.contains(active))
+                !(active instanceof Node) || (active !== view.dom && !view.dom.contains(active))
               if (!entering && !focusOutsidePm) return
               view.focus()
             },

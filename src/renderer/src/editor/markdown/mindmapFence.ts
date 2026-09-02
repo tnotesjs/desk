@@ -1,8 +1,4 @@
-import {
-  normalizeMindmapMarkdown,
-  parseMindmapFence,
-  type MindmapFenceOptions
-} from '@tnotesjs/ui'
+import { normalizeMindmapMarkdown, parseMindmapFence, type MindmapFenceOptions } from '@tnotesjs/ui'
 
 export interface MindmapFenceParts {
   openLine: string
@@ -59,9 +55,7 @@ export function rebuildMindmapFence(
   } = {}
 ): string {
   const parts = parseMindmapFenceSource(source)
-  const full =
-    next.markdown ??
-    normalizeMindmapMarkdown(parts.body, { title: parts.options.title })
+  const full = next.markdown ?? normalizeMindmapMarkdown(parts.body, { title: parts.options.title })
   const normalized = normalizeMindmapMarkdown(full)
   const lines = normalized.replace(/\r\n?/g, '\n').split('\n')
   let rootTitle = 'root'
@@ -69,7 +63,11 @@ export function rebuildMindmapFence(
   for (let i = 0; i < lines.length; i++) {
     const match = lines[i].match(/^\s{0,3}#(?!#)\s+(.+?)\s*$/)
     if (!match) continue
-    rootTitle = match[1].trim().replace(/\s+#+\s*$/, '').trim() || 'root'
+    rootTitle =
+      match[1]
+        .trim()
+        .replace(/\s+#+\s*$/, '')
+        .trim() || 'root'
     rootIndex = i
     break
   }
@@ -77,9 +75,7 @@ export function rebuildMindmapFence(
   while (bodyLines[0]?.trim() === '') bodyLines.shift()
   while (bodyLines[bodyLines.length - 1]?.trim() === '') bodyLines.pop()
 
-  const title =
-    next.title ??
-    (parts.hasFenceTitle ? rootTitle : parts.options.title)
+  const title = next.title ?? (parts.hasFenceTitle ? rootTitle : parts.options.title)
   const level = next.initialExpandLevel ?? parts.options.initialExpandLevel
   const useFenceTitle = parts.hasFenceTitle || Boolean(next.title)
 
@@ -91,10 +87,7 @@ export function rebuildMindmapFence(
   if (useFenceTitle) {
     body = bodyLines.join('\n')
   } else if (parts.hasBodyH1 || rootTitle !== 'root') {
-    body =
-      bodyLines.length > 0
-        ? `# ${rootTitle}\n\n${bodyLines.join('\n')}`
-        : `# ${rootTitle}`
+    body = bodyLines.length > 0 ? `# ${rootTitle}\n\n${bodyLines.join('\n')}` : `# ${rootTitle}`
   } else {
     body = bodyLines.join('\n')
   }

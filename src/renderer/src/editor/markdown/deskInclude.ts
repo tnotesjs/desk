@@ -1,8 +1,4 @@
-import {
-  applyFenceHighlights,
-  encodeHighlightsAttr,
-  parseHighlightRanges
-} from './lineHighlight'
+import { applyFenceHighlights, encodeHighlightsAttr, parseHighlightRanges } from './lineHighlight'
 import { parseFenceTitleFromMeta } from './fenceInfo'
 
 /** Parse a VitePress-style body include line: `<<< ./path [title]` / `{lang}`. */
@@ -33,7 +29,10 @@ export function parseDeskIncludeLine(line: string): DeskIncludeRef | null {
 
   // Strip VitePress highlight / region suffixes before the path settles:
   // `./file.js#region{1,2}` → `./file.js`
-  rest = rest.replace(/#[\w-]+$/, '').replace(/\{[^}]*\}\s*$/, '').trim()
+  rest = rest
+    .replace(/#[\w-]+$/, '')
+    .replace(/\{[^}]*\}\s*$/, '')
+    .trim()
 
   const path = rest.replace(/^(?:"([\s\S]*)"|'([\s\S]*)')$/, '$1$2').trim()
   return path ? { path, title, lang } : null
@@ -144,7 +143,9 @@ export function parseCodeGroupEntries(body: string): CodeGroupEntry[] {
       const contentLines: string[] = []
       while (i < lines.length) {
         const cur = lines[i] ?? ''
-        if (new RegExp(`^ {0,3}${marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[ \\t]*$`).test(cur)) {
+        if (
+          new RegExp(`^ {0,3}${marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[ \\t]*$`).test(cur)
+        ) {
           i += 1
           break
         }
@@ -197,7 +198,10 @@ export function withCodeGroupEntryTitle(entry: CodeGroupEntry, title: string): C
   return { ...entry, filename: trimmed, info, highlights: encodeHighlightsAttr(highlights) }
 }
 
-export function withCodeGroupEntryLanguage(entry: CodeGroupEntry, language: string): CodeGroupEntry {
+export function withCodeGroupEntryLanguage(
+  entry: CodeGroupEntry,
+  language: string
+): CodeGroupEntry {
   const lang = language.trim() || 'text'
   if (entry.kind === 'include') {
     const include: DeskIncludeRef = { ...entry.include, lang }

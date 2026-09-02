@@ -33,9 +33,7 @@ export interface MountedVuePreview<TProps> {
   update: (props: TProps) => void
 }
 
-function normalizeBilibili(
-  props: BilibiliVideoPreviewProps
-): Required<BilibiliVideoPreviewProps> {
+function normalizeBilibili(props: BilibiliVideoPreviewProps): Required<BilibiliVideoPreviewProps> {
   return {
     id: props.id ?? '',
     autoplay: Boolean(props.autoplay),
@@ -115,21 +113,15 @@ export function mountWordListPreview(
     ...initial,
     features: WORD_LIST_FEATURES_STATIC
   }
-  const handle = mountVuePreview(
-    host,
-    'desk-word-list-root',
-    WordList,
-    withFeatures,
-    (a, b) => {
-      const na = normalizeWordList(a as WordListPreviewProps)
-      const nb = normalizeWordList(b as WordListPreviewProps)
-      return (
-        na.needSort === nb.needSort &&
-        na.words.length === nb.words.length &&
-        na.words.every((w, i) => w === nb.words[i])
-      )
-    }
-  )
+  const handle = mountVuePreview(host, 'desk-word-list-root', WordList, withFeatures, (a, b) => {
+    const na = normalizeWordList(a as WordListPreviewProps)
+    const nb = normalizeWordList(b as WordListPreviewProps)
+    return (
+      na.needSort === nb.needSort &&
+      na.words.length === nb.words.length &&
+      na.words.every((w, i) => w === nb.words[i])
+    )
+  })
   return {
     update: (next) =>
       handle.update({

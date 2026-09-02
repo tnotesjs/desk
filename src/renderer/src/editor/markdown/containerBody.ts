@@ -40,13 +40,7 @@ const COLLAPSIBLE_TYPES = new Set(['details'])
 const CALLOUT_TYPES = new Set(['info', 'tip', 'warning', 'danger', 'note'])
 
 /** Callouts that use structured title+body editing (fences stay locked). */
-export const STRUCTURED_CALLOUT_TYPES = new Set([
-  'tip',
-  'info',
-  'warning',
-  'danger',
-  'details'
-])
+export const STRUCTURED_CALLOUT_TYPES = new Set(['tip', 'info', 'warning', 'danger', 'details'])
 
 export function isStructuredCalloutName(name: string): boolean {
   return STRUCTURED_CALLOUT_TYPES.has(name.toLowerCase())

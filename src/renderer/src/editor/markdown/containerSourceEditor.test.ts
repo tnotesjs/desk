@@ -1,10 +1,7 @@
 // @vitest-environment happy-dom
 
 import { describe, expect, it, vi } from 'vitest'
-import {
-  createContainerSourceEditor,
-  handleEmptyRawBlockBackspace
-} from './containerSourceEditor'
+import { createContainerSourceEditor, handleEmptyRawBlockBackspace } from './containerSourceEditor'
 
 describe('createContainerSourceEditor', () => {
   it('creates a CodeMirror editor and reports the initial value', () => {
@@ -83,9 +80,9 @@ describe('handleEmptyRawBlockBackspace', () => {
 
   it('removes fully-cleared non-container sources', () => {
     const onEmptyBackspace = vi.fn(() => true)
-    expect(
-      handleEmptyRawBlockBackspace('', { empty: true, anchor: 0 }, 1, onEmptyBackspace)
-    ).toBe(true)
+    expect(handleEmptyRawBlockBackspace('', { empty: true, anchor: 0 }, 1, onEmptyBackspace)).toBe(
+      true
+    )
     expect(onEmptyBackspace).toHaveBeenCalledTimes(1)
   })
 })

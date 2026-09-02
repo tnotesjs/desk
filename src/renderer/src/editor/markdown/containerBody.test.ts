@@ -37,9 +37,9 @@ describe('rebuildContainerSource', () => {
   })
 
   it('keeps an empty body shell valid', () => {
-    expect(rebuildContainerSource('::: info ℹ️ INFO\n\n\n\n:::\n', { title: 'ℹ️ INFO', body: '' })).toBe(
-      '::: info ℹ️ INFO\n\n\n:::\n'
-    )
+    expect(
+      rebuildContainerSource('::: info ℹ️ INFO\n\n\n\n:::\n', { title: 'ℹ️ INFO', body: '' })
+    ).toBe('::: info ℹ️ INFO\n\n\n:::\n')
   })
 
   it('identifies structured callout names', () => {

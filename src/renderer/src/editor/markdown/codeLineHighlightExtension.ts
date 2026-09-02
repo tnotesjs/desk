@@ -112,7 +112,10 @@ export function createCodeLineHighlightExtension(options: CodeLineHighlightOptio
           event.preventDefault()
           event.stopPropagation()
           const current = view.state.field(highlightsField)
-          const next = clampHighlightRanges(toggleHighlightLine(current, line), view.state.doc.lines)
+          const next = clampHighlightRanges(
+            toggleHighlightLine(current, line),
+            view.state.doc.lines
+          )
           view.dispatch({ effects: setHighlightsEffect.of(next) })
           emitIfChanged(next, view)
         }

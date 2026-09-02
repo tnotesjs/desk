@@ -111,10 +111,11 @@ try {
   await pm.waitFor({ timeout: 30000 })
 
   // Consecutive standalone <br /> are Milkdown empty paragraphs, not desk raw atoms.
-  const emptyParagraphCount = await pm.evaluate((element) =>
-    [...element.querySelectorAll(':scope > p')].filter(
-      (paragraph) => (paragraph.textContent ?? '').trim() === ''
-    ).length
+  const emptyParagraphCount = await pm.evaluate(
+    (element) =>
+      [...element.querySelectorAll(':scope > p')].filter(
+        (paragraph) => (paragraph.textContent ?? '').trim() === ''
+      ).length
   )
   assert.ok(emptyParagraphCount >= 3)
   console.log('✓ consecutive standalone <br /> render as empty paragraphs')

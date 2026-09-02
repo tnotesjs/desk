@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { parseDeskIncludeLine } from './deskInclude'
-import {
-  mindmapPreviewMarkdown,
-  rebuildMindmapFence
-} from './mindmapFence'
+import { mindmapPreviewMarkdown, rebuildMindmapFence } from './mindmapFence'
 
 describe('parseDeskIncludeLine', () => {
   it('parses path, optional lang, and title', () => {

@@ -91,7 +91,10 @@ export function applyFenceHighlights(info: string, lines: Set<number>): string {
   if (!trimmed && !formatted) return ''
 
   // Strip existing `{…}` highlight block(s); keep the rest (title, etc.).
-  const rest = trimmed.replace(/\s*\{[0-9,\s-]*\}\s*/g, ' ').replace(/\s+/g, ' ').trim()
+  const rest = trimmed
+    .replace(/\s*\{[0-9,\s-]*\}\s*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 
   if (!formatted) return rest
 

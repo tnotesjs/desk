@@ -25,11 +25,7 @@ export function parseFencedCode(source: string): FencedCode {
 }
 
 /** Rebuild a mermaid fence; toggles the `center` info keyword and/or body. */
-export function rebuildMermaidFence(
-  source: string,
-  center: boolean,
-  body?: string
-): string {
+export function rebuildMermaidFence(source: string, center: boolean, body?: string): string {
   const parsed = parseFencedCode(source)
   const trailingNewline = /\r?\n$/.test(source)
   const info = center ? 'mermaid center' : 'mermaid'

@@ -44,10 +44,7 @@ export function applySwiperTabsPadding(tabs: HTMLElement, hasNav: boolean): void
   tabs.style.padding = hasNav ? '0 0.8rem 0 3rem' : '0 0.8rem'
 }
 
-export function createSwiperTabNav(handlers: {
-  onPrev: () => void
-  onNext: () => void
-}): {
+export function createSwiperTabNav(handlers: { onPrev: () => void; onNext: () => void }): {
   prev: HTMLButtonElement
   line: HTMLSpanElement
   next: HTMLButtonElement

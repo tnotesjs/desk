@@ -1,5 +1,4 @@
-<style>
-html[data-tn-mindmap-fs] .mindmap-preview:not(.is-fullscreen) .mindmap-preview-actions,
+<style > html[data-tn-mindmap-fs] .mindmap-preview:not(.is-fullscreen) .mindmap-preview-actions,
 body[data-tn-mindmap-fs] .mindmap-preview:not(.is-fullscreen) .mindmap-preview-actions {
   display: none !important;
   opacity: 0 !important;

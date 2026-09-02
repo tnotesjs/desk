@@ -129,7 +129,9 @@ describe('raw block keyboard selection', () => {
     const pos2 = positions(editor2)
     editor2.action((ctx) => {
       const view = ctx.get(editorViewCtx)
-      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, pos2.beforeEnd)))
+      view.dispatch(
+        view.state.tr.setSelection(TextSelection.create(view.state.doc, pos2.beforeEnd))
+      )
       view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
       view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
       expect(view.state.selection).toBeInstanceOf(TextSelection)
@@ -364,7 +366,9 @@ describe('raw block keyboard selection', () => {
   })
 
   it('does not hijack ArrowDown from a non-last visual line', async () => {
-    const editor = await createEditor('第一行\n第二行还在段内\n\n<B id="selection" />\n\n下方段落\n')
+    const editor = await createEditor(
+      '第一行\n第二行还在段内\n\n<B id="selection" />\n\n下方段落\n'
+    )
     editor.action((ctx) => {
       const state = ctx.get(editorStateCtx)
       // Caret after first character of a multi-line paragraph (still on first line).
@@ -453,9 +457,7 @@ describe('code_block keyboard selection', () => {
       view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, textEnd)))
       // Immediate neighbor is the blank line — leave ArrowDown to ProseMirror.
       expect(adjacentRawBlockSelectionPosition(view.state, 'down')).toBeNull()
-      view.dispatch(
-        view.state.tr.setSelection(TextSelection.create(view.state.doc, emptyPos + 1))
-      )
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, emptyPos + 1)))
       expect(adjacentRawBlockSelectionPosition(view.state, 'down')).toBe(codePos)
     })
   })
@@ -476,7 +478,9 @@ describe('code_block keyboard selection', () => {
     const pos2 = codePositions(editor2)
     editor2.action((ctx) => {
       const view = ctx.get(editorViewCtx)
-      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, pos2.afterStart)))
+      view.dispatch(
+        view.state.tr.setSelection(TextSelection.create(view.state.doc, pos2.afterStart))
+      )
       view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
       expect(codeBlockWholeSelectPosition(view.state)).toBe(pos2.code)
       view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }))
@@ -485,9 +489,7 @@ describe('code_block keyboard selection', () => {
   })
 
   it('ArrowDown from a whole-selected code chains into the next adjacent code', async () => {
-    const editor = await createEditor(
-      '上方\n\n```js\none\n```\n\n```ts\ntwo\n```\n\n下方\n'
-    )
+    const editor = await createEditor('上方\n\n```js\none\n```\n\n```ts\ntwo\n```\n\n下方\n')
     const codes: number[] = []
     editor.action((ctx) => {
       ctx.get(editorStateCtx).doc.descendants((node, position) => {
@@ -522,7 +524,9 @@ describe('code_block keyboard selection', () => {
     const pos = codePositions(editor)
     editor.action((ctx) => {
       const view = ctx.get(editorViewCtx)
-      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, pos.afterStart)))
+      view.dispatch(
+        view.state.tr.setSelection(TextSelection.create(view.state.doc, pos.afterStart))
+      )
       view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
       expect(view.state.selection).toBeInstanceOf(NodeSelection)
       expect((view.state.selection as NodeSelection).from).toBe(pos.code)

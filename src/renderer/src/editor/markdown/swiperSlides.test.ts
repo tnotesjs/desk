@@ -11,9 +11,7 @@ import {
 
 describe('swiperSlides', () => {
   it('parses markdown image lines and ignores blanks', () => {
-    expect(
-      parseSwiperSlides('![one](./a.png)\n\n![two](https://cdn.example/b.png)\n\n')
-    ).toEqual([
+    expect(parseSwiperSlides('![one](./a.png)\n\n![two](https://cdn.example/b.png)\n\n')).toEqual([
       { alt: 'one', src: './a.png' },
       { alt: 'two', src: 'https://cdn.example/b.png' }
     ])

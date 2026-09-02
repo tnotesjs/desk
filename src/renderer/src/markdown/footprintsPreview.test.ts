@@ -12,9 +12,7 @@ function resolveFootprintsPreview(
   const payload = parseFootprintsSource(source)
   return {
     ...payload,
-    images: payload.images.map((src) =>
-      resolveMarkdownImageUrl(src, knowledgeBaseId, noteUuid)
-    )
+    images: payload.images.map((src) => resolveMarkdownImageUrl(src, knowledgeBaseId, noteUuid))
   }
 }
 

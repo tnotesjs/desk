@@ -218,8 +218,7 @@
   :deep(.prosemirror-virtual-cursor),
 .milkdown-markdown-editor:has(.desk-raw-block.is-mindmap-island-active)
   :deep(.prosemirror-virtual-cursor),
-.milkdown-markdown-editor:has(.milkdown-code-block:focus-within)
-  :deep(.prosemirror-virtual-cursor),
+.milkdown-markdown-editor:has(.milkdown-code-block:focus-within) :deep(.prosemirror-virtual-cursor),
 .milkdown-markdown-editor:has(.milkdown-code-block.ProseMirror-selectednode)
   :deep(.prosemirror-virtual-cursor),
 .milkdown-markdown-editor:has(.desk-raw-block:focus-within) :deep(.ProseMirror-gapcursor),
@@ -256,7 +255,8 @@
   scroll-margin: 0;
 }
 
-.milkdown-markdown-editor :deep(.ProseMirror h1:not(.desk-generated-title).ProseMirror-selectednode),
+.milkdown-markdown-editor
+  :deep(.ProseMirror h1:not(.desk-generated-title).ProseMirror-selectednode),
 .milkdown-markdown-editor :deep(.ProseMirror h2.ProseMirror-selectednode),
 .milkdown-markdown-editor :deep(.ProseMirror h3.ProseMirror-selectednode),
 .milkdown-markdown-editor :deep(.ProseMirror h4.ProseMirror-selectednode),
@@ -267,7 +267,6 @@
   outline: 2px solid var(--accent-strong);
   outline-offset: 0;
 }
-
 
 .milkdown-markdown-editor :deep(.ProseMirror h1) {
   font-size: 32px;
@@ -349,7 +348,8 @@
   background: transparent;
 }
 
-.milkdown-markdown-editor :deep(.desk-raw-block--container.ProseMirror-selectednode > .custom-block),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--container.ProseMirror-selectednode > .custom-block),
 .milkdown-markdown-editor
   :deep(.desk-raw-block--container.desk-raw-block--range-selected > .custom-block) {
   border-color: var(--accent-strong);
@@ -445,7 +445,8 @@
   cursor: default;
 }
 
-.milkdown-markdown-editor :deep(.desk-raw-block--bilibili-video .desk-raw-block__component-preview) {
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--bilibili-video .desk-raw-block__component-preview) {
   min-height: 120px;
 }
 
@@ -522,7 +523,8 @@
 }
 
 /* Shell hover/focus should reveal Mermaid actions even when the pointer is on the editor. */
-.milkdown-markdown-editor :deep(.desk-raw-block--mermaid:hover .tn-mermaid__actions:not(.is-suppressed)),
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--mermaid:hover .tn-mermaid__actions:not(.is-suppressed)),
 .milkdown-markdown-editor
   :deep(.desk-raw-block--mermaid:focus-within .tn-mermaid__actions:not(.is-suppressed)) {
   opacity: 1;
@@ -537,16 +539,11 @@
 }
 
 /* Structured editor sits inside the shell — no second outer frame. */
-.milkdown-markdown-editor
-  :deep(.desk-raw-block--mermaid > .desk-raw-block__editor--structured),
-.milkdown-markdown-editor
-  :deep(.desk-raw-block--word-list > .desk-raw-block__editor--structured),
-.milkdown-markdown-editor
-  :deep(.desk-raw-block--mindmap > .desk-raw-block__editor--structured),
-.milkdown-markdown-editor
-  :deep(.desk-raw-block--notes-table > .desk-raw-block__editor--structured),
-.milkdown-markdown-editor
-  :deep(.desk-raw-block--footprints > .desk-raw-block__editor--structured) {
+.milkdown-markdown-editor :deep(.desk-raw-block--mermaid > .desk-raw-block__editor--structured),
+.milkdown-markdown-editor :deep(.desk-raw-block--word-list > .desk-raw-block__editor--structured),
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap > .desk-raw-block__editor--structured),
+.milkdown-markdown-editor :deep(.desk-raw-block--notes-table > .desk-raw-block__editor--structured),
+.milkdown-markdown-editor :deep(.desk-raw-block--footprints > .desk-raw-block__editor--structured) {
   margin-top: 0;
   border: 0;
   border-top: 1px solid var(--border);
@@ -660,8 +657,7 @@
 }
 
 .milkdown-markdown-editor :deep(.desk-raw-block__include-cm .cm-highlighted-line),
-.milkdown-markdown-editor
-  :deep(.desk-raw-block__include-cm .cm-highlighted-line.cm-activeLine) {
+.milkdown-markdown-editor :deep(.desk-raw-block__include-cm .cm-highlighted-line.cm-activeLine) {
   background-color: color-mix(in srgb, var(--accent) 18%, transparent) !important;
 }
 
@@ -758,16 +754,11 @@
 
 /* ProseMirror virtual-cursor sets caret-color: transparent on the whole doc —
    restore carets inside the mindmap island (canvas / outline / source). */
-.milkdown-markdown-editor
-  :deep(.desk-raw-block--mindmap .mm-edit-input),
-.milkdown-markdown-editor
-  :deep(.desk-raw-block--mindmap .rich-inline-editor),
-.milkdown-markdown-editor
-  :deep(.desk-raw-block--mindmap .md-textarea),
-.milkdown-markdown-editor
-  :deep(.desk-raw-block--mindmap .markdown-view textarea),
-.milkdown-markdown-editor
-  :deep(.desk-raw-block--mindmap [contenteditable='true']) {
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .mm-edit-input),
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .rich-inline-editor),
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .md-textarea),
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .markdown-view textarea),
+.milkdown-markdown-editor :deep(.desk-raw-block--mindmap [contenteditable='true']) {
   caret-color: var(--accent-strong, #3b82f6) !important;
 }
 
@@ -781,7 +772,8 @@
   z-index: 200;
 }
 
-.milkdown-markdown-editor :deep(.desk-raw-block--mindmap .mindmap-preview.is-fullscreen .mindmap-preview-actions) {
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--mindmap .mindmap-preview.is-fullscreen .mindmap-preview-actions) {
   pointer-events: auto !important;
   opacity: 1 !important;
 }
@@ -957,7 +949,10 @@
   font-size: 0.8rem;
   line-height: 1;
   user-select: none;
-  transition: color 0.2s ease, transform 0.2s ease, font-size 0.2s ease;
+  transition:
+    color 0.2s ease,
+    transform 0.2s ease,
+    font-size 0.2s ease;
 }
 
 .milkdown-markdown-editor :deep(.desk-raw-block--container .tn-tab-prev) {
@@ -998,10 +993,13 @@
   font-size: 0.875rem;
   line-height: 2rem;
   white-space: nowrap;
-  transition: color 0.2s ease, transform 0.2s ease;
+  transition:
+    color 0.2s ease,
+    transform 0.2s ease;
 }
 
-.milkdown-markdown-editor :deep(.desk-raw-block--container .desk-raw-block--swiper-editable .tn-tab) {
+.milkdown-markdown-editor
+  :deep(.desk-raw-block--container .desk-raw-block--swiper-editable .tn-tab) {
   cursor: grab;
 }
 
@@ -1290,7 +1288,9 @@
 }
 
 .milkdown-markdown-editor
-  :deep(.desk-raw-block--container .desk-raw-block--code-group-editable .desk-raw-block__include-body) {
+  :deep(
+    .desk-raw-block--container .desk-raw-block--code-group-editable .desk-raw-block__include-body
+  ) {
   gap: 0;
   padding: 0;
 }
@@ -1436,8 +1436,7 @@
  *
  * Action bar: top 8px, right 8px, ~96px wide (3×28 + gaps + padding).
  */
-.milkdown-markdown-editor
-  :deep(.desk-raw-block.desk-raw-block--mermaid > .desk-raw-block__edit) {
+.milkdown-markdown-editor :deep(.desk-raw-block.desk-raw-block--mermaid > .desk-raw-block__edit) {
   top: 10px;
   right: 112px;
   z-index: 11;
@@ -1547,7 +1546,9 @@
 }
 
 .milkdown-markdown-editor
-  :deep(.desk-raw-block .desk-raw-block__editor--structured .desk-raw-block__editor-title::placeholder) {
+  :deep(
+    .desk-raw-block .desk-raw-block__editor--structured .desk-raw-block__editor-title::placeholder
+  ) {
   color: var(--muted);
   opacity: 0.85;
 }
@@ -1596,7 +1597,9 @@
 }
 
 .milkdown-markdown-editor
-  :deep(.desk-raw-block .desk-raw-block__editor--structured .desk-raw-block__editor-cm .cm-placeholder) {
+  :deep(
+    .desk-raw-block .desk-raw-block__editor--structured .desk-raw-block__editor-cm .cm-placeholder
+  ) {
   color: var(--muted);
   opacity: 0.85;
   font-style: normal;
@@ -1744,8 +1747,7 @@
   color: var(--editor-text);
 }
 
-.milkdown-markdown-editor
-  :deep(.desk-raw-block .desk-raw-block__editor-cm .cm-selectionBackground),
+.milkdown-markdown-editor :deep(.desk-raw-block .desk-raw-block__editor-cm .cm-selectionBackground),
 .milkdown-markdown-editor
   :deep(.desk-raw-block .desk-raw-block__editor-cm .cm-editor.cm-focused .cm-selectionBackground) {
   background: transparent !important;
@@ -1876,7 +1878,8 @@
   border-radius: 4px;
 }
 
-.milkdown-markdown-editor :deep(.milkdown-code-block .tools .tools-button-group button[data-copied='true']) {
+.milkdown-markdown-editor
+  :deep(.milkdown-code-block .tools .tools-button-group button[data-copied='true']) {
   color: var(--accent-strong);
   border-color: var(--accent-strong);
 }
@@ -1960,8 +1963,7 @@
 }
 
 .milkdown-markdown-editor :deep(.milkdown-code-block .cm-highlighted-line),
-.milkdown-markdown-editor
-  :deep(.milkdown-code-block .cm-highlighted-line.cm-activeLine),
+.milkdown-markdown-editor :deep(.milkdown-code-block .cm-highlighted-line.cm-activeLine),
 .milkdown-markdown-editor
   :deep(.milkdown-code-block .cm-editor:focus-within .cm-highlighted-line.cm-activeLine) {
   background: color-mix(in srgb, var(--accent) 18%, transparent) !important;

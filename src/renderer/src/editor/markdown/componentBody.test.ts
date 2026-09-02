@@ -36,9 +36,9 @@ describe('bilibili video source', () => {
 
   it('rebuilds only the canonical tag and omits false flags', () => {
     expect(rebuildBilibiliVideoSource('BV1x')).toBe('<BilibiliVideo id="BV1x" />\n')
-    expect(
-      rebuildBilibiliVideoSource({ id: 'BV1x', autoplay: true, muted: true })
-    ).toBe('<BilibiliVideo id="BV1x" :autoplay="true" :muted="true" />\n')
+    expect(rebuildBilibiliVideoSource({ id: 'BV1x', autoplay: true, muted: true })).toBe(
+      '<BilibiliVideo id="BV1x" :autoplay="true" :muted="true" />\n'
+    )
   })
 
   it('detects bilibili sources', () => {
@@ -49,9 +49,7 @@ describe('bilibili video source', () => {
 
 describe('word list source', () => {
   it('parses canonical and legacy tags', () => {
-    expect(
-      parseWordListSource(`<WordList :words="['a', 'b']" />\n`)
-    ).toEqual({
+    expect(parseWordListSource(`<WordList :words="['a', 'b']" />\n`)).toEqual({
       name: 'WordList',
       words: ['a', 'b'],
       needSort: false,
