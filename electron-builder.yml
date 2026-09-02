@@ -14,6 +14,7 @@ files:
 asarUnpack:
   - 'resources/**'
 win:
+  icon: build/icon.ico
   executableName: TNotes Desk
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
@@ -21,6 +22,7 @@ nsis:
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
 mac:
+  icon: build/icon.icns
   # Ad-hoc sign when no Developer ID cert is present. Unsigned+quarantined
   # downloads show "is damaged" with no bypass; ad-hoc becomes "unidentified
   # developer" (right-click → Open). Not a substitute for Apple notarization.
@@ -36,6 +38,7 @@ mac:
 dmg:
   artifactName: ${name}-${version}.${ext}
 linux:
+  icon: build/icon.png
   target:
     - AppImage
     - deb
