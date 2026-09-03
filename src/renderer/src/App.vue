@@ -273,12 +273,17 @@ watch(
   [
     () => editor.layout,
     () => editor.activeGroupId,
+    () => editor.knowledgeBaseEditors,
     () => store.selectedKnowledgeBaseId,
     () => editor.knowledgeSidebarWidth,
     () => editor.navigatorSidebarWidth,
     () => editor.knowledgeSidebarCollapsed,
     () => editor.navigatorSidebarCollapsed,
-    () => editor.expandedTocNodes
+    () => editor.expandedTocNodes,
+    () => editor.noteFileSidebarWidth,
+    () => editor.noteFileSidebarCollapsed,
+    () => editor.expandedNoteFileDirectories,
+    () => editor.lastNoteByGroup
   ],
   () => {
     if (!store.hasWorkspace) return
@@ -570,7 +575,13 @@ onUnmounted(() => {
         <header>
           <div>
             <span>发现未保存的编辑</span>
-            <strong>{{ recoveryCandidate.title }}</strong>
+            <strong>
+              {{
+                recoveryCandidate.path
+                  ? `${recoveryCandidate.title} · ${recoveryCandidate.path}`
+                  : recoveryCandidate.title
+              }}
+            </strong>
           </div>
         </header>
         <p>

@@ -21,6 +21,8 @@ const settingsSchema = z.object({
   theme: z.enum(['system', 'light', 'dark']).default('system'),
   density: z.enum(['compact', 'comfortable']).default('comfortable'),
   defaultNoteView: z.enum(['visual', 'readonly', 'source']).default('visual'),
+  defaultNotePageWidth: z.enum(['standard', 'wide']).default('standard'),
+  noteTocDisplay: z.enum(['hidden', 'collapsed', 'expanded']).default('expanded'),
   autosave: z
     .object({
       enabled: z.boolean().default(true),

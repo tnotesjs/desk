@@ -8,6 +8,9 @@ export const KNOWLEDGE_SIDEBAR_COMPACT = 104
 export const NAVIGATOR_SIDEBAR_MIN = 200
 export const NAVIGATOR_SIDEBAR_DEFAULT = 292
 export const NAVIGATOR_SIDEBAR_MAX = 480
+export const NOTE_FILE_SIDEBAR_MIN = 180
+export const NOTE_FILE_SIDEBAR_DEFAULT = 240
+export const NOTE_FILE_SIDEBAR_MAX = 420
 
 export function clampSidebarWidth(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
@@ -33,8 +36,12 @@ import type {
   AppSettings,
   EditorLayoutNode,
   EditorTab,
+  KnowledgeBaseEditorSession,
   KnowledgeBaseDescriptor,
   NoteEditorTab,
+  NoteFileEditorTab,
+  NoteFileKind,
+  NotePageWidth,
   NoteViewMode,
   PreviewStateDto,
   WebEditorTab,
@@ -55,11 +62,25 @@ function cloneTab(tab: EditorTab): EditorTab {
   }
 }
 
-function sanitizeLayout(node: EditorLayoutNode, knowledgeBaseIds: Set<string>): EditorLayoutNode {
+function sanitizeLayout(
+  node: EditorLayoutNode,
+  knowledgeBaseIds: Set<string>,
+  defaultNotePageWidth: NotePageWidth,
+  scopedKnowledgeBaseId?: string,
+  validNoteUuids?: ReadonlySet<string>,
+  includeWebTabs = true
+): EditorLayoutNode {
   if (node.type === 'group') {
     const tabs = node.tabs
       .filter((tab) => {
-        if (tab.type === 'note') return knowledgeBaseIds.has(tab.knowledgeBaseId)
+        if (tab.type !== 'web') {
+          return (
+            knowledgeBaseIds.has(tab.knowledgeBaseId) &&
+            (!scopedKnowledgeBaseId || tab.knowledgeBaseId === scopedKnowledgeBaseId) &&
+            (!validNoteUuids || validNoteUuids.has(tab.noteUuid))
+          )
+        }
+        if (!includeWebTabs) return false
         try {
           const url = new URL(tab.url)
           return url.protocol === 'http:' || url.protocol === 'https:'
@@ -71,7 +92,16 @@ function sanitizeLayout(node: EditorLayoutNode, knowledgeBaseIds: Set<string>): 
         ...tab,
         pinned: Boolean(tab.pinned),
         openedAt: tab.openedAt ?? Date.now() + index,
-        ...(tab.type === 'note' ? { preview: Boolean(tab.preview), dirty: Boolean(tab.dirty) } : {})
+        ...(tab.type === 'note'
+          ? {
+              preview: Boolean(tab.preview),
+              dirty: Boolean(tab.dirty),
+              pageWidth:
+                tab.pageWidth === 'standard' || tab.pageWidth === 'wide'
+                  ? tab.pageWidth
+                  : defaultNotePageWidth
+            }
+          : {})
       }))
     return {
       ...node,
@@ -84,9 +114,65 @@ function sanitizeLayout(node: EditorLayoutNode, knowledgeBaseIds: Set<string>): 
   return collapseEmptyGroups({
     ...node,
     ratio: Math.max(0.15, Math.min(0.85, node.ratio)),
-    first: sanitizeLayout(node.first, knowledgeBaseIds),
-    second: sanitizeLayout(node.second, knowledgeBaseIds)
+    first: sanitizeLayout(
+      node.first,
+      knowledgeBaseIds,
+      defaultNotePageWidth,
+      scopedKnowledgeBaseId,
+      validNoteUuids,
+      includeWebTabs
+    ),
+    second: sanitizeLayout(
+      node.second,
+      knowledgeBaseIds,
+      defaultNotePageWidth,
+      scopedKnowledgeBaseId,
+      validNoteUuids,
+      includeWebTabs
+    )
   })
+}
+
+function normalizeEditorSession(
+  session: KnowledgeBaseEditorSession,
+  knowledgeBaseIds: Set<string>,
+  defaultNotePageWidth: NotePageWidth,
+  knowledgeBaseId: string,
+  validNoteUuids?: ReadonlySet<string>,
+  includeWebTabs = true
+): KnowledgeBaseEditorSession {
+  const layout = sanitizeLayout(
+    session.layout,
+    knowledgeBaseIds,
+    defaultNotePageWidth,
+    knowledgeBaseId,
+    validNoteUuids,
+    includeWebTabs
+  )
+  const groups = listGroups(layout)
+  const validGroupIds = new Set(groups.map((group) => group.id))
+  const lastNoteByGroup = Object.fromEntries(
+    Object.entries(session.lastNoteByGroup ?? {}).filter(
+      ([groupId, scope]) =>
+        validGroupIds.has(groupId) && (!validNoteUuids || validNoteUuids.has(scope.noteUuid))
+    )
+  )
+  return {
+    layout,
+    activeGroupId: groups.some((group) => group.id === session.activeGroupId)
+      ? session.activeGroupId
+      : groups[0].id,
+    lastNoteByGroup
+  }
+}
+
+function emptyEditorSession(): KnowledgeBaseEditorSession {
+  const group = createGroup()
+  return { layout: group, activeGroupId: group.id, lastNoteByGroup: {} }
+}
+
+function hasTabs(session: KnowledgeBaseEditorSession): boolean {
+  return listGroups(session.layout).some((group) => group.tabs.length > 0)
 }
 
 export const useEditorStore = defineStore('editor', () => {
@@ -100,8 +186,15 @@ export const useEditorStore = defineStore('editor', () => {
   const knowledgeSidebarCollapsed = ref(false)
   const navigatorSidebarCollapsed = ref(false)
   const expandedTocNodes = ref<Record<string, string[]>>({})
+  const noteFileSidebarWidth = ref(NOTE_FILE_SIDEBAR_DEFAULT)
+  const noteFileSidebarCollapsed = ref(false)
+  const expandedNoteFileDirectories = ref<Record<string, string[]>>({})
   const maxOpenTabCount = ref(10)
   const wrapTabs = ref(true)
+  const defaultNotePageWidth = ref<NotePageWidth>('standard')
+  const activeKnowledgeBaseId = ref<string | null>(null)
+  const knowledgeBaseEditors = ref<Record<string, KnowledgeBaseEditorSession>>({})
+  const lastNoteByGroup = ref<Record<string, { noteUuid: string; noteTitle: string }>>({})
   let unsubscribeWebState: (() => void) | null = null
   let unsubscribeWebOpen: (() => void) | null = null
   let unsubscribePreview: (() => void) | null = null
@@ -114,6 +207,12 @@ export const useEditorStore = defineStore('editor', () => {
     const group = activeGroup.value
     return group?.tabs.find((tab) => tab.id === group.activeTabId) ?? null
   })
+  const activeNoteScope = computed(() => {
+    const tab = activeTab.value
+    if (tab?.type === 'note') return { noteUuid: tab.noteUuid, noteTitle: tab.title }
+    if (tab?.type === 'note-file') return { noteUuid: tab.noteUuid, noteTitle: tab.noteTitle }
+    return lastNoteByGroup.value[activeGroupId.value] ?? null
+  })
   const tabCount = computed(() =>
     groups.value.reduce((total, group) => total + group.tabs.length, 0)
   )
@@ -121,6 +220,7 @@ export const useEditorStore = defineStore('editor', () => {
   function configure(settings: AppSettings): void {
     maxOpenTabCount.value = settings.tabs.maxOpenCount
     wrapTabs.value = settings.tabs.wrap
+    defaultNotePageWidth.value = settings.defaultNotePageWidth
     trimToLimit()
   }
 
@@ -133,7 +233,19 @@ export const useEditorStore = defineStore('editor', () => {
           located.tab.url = state.url
           located.tab.title = state.title || state.url
           layout.value = { ...layout.value }
+          return
         }
+        let storedChanged = false
+        for (const [knowledgeBaseId, session] of Object.entries(knowledgeBaseEditors.value)) {
+          if (knowledgeBaseId === activeKnowledgeBaseId.value) continue
+          const stored = findTab(session.layout, state.tabId)
+          if (stored?.tab.type !== 'web') continue
+          stored.tab.url = state.url
+          stored.tab.title = state.title || state.url
+          storedChanged = true
+          break
+        }
+        if (storedChanged) knowledgeBaseEditors.value = { ...knowledgeBaseEditors.value }
       })
     }
     if (!unsubscribeWebOpen) {
@@ -164,52 +276,200 @@ export const useEditorStore = defineStore('editor', () => {
     unsubscribePreview = null
   }
 
+  function snapshotCurrentEditor(): void {
+    if (!activeKnowledgeBaseId.value) return
+    knowledgeBaseEditors.value = {
+      ...knowledgeBaseEditors.value,
+      [activeKnowledgeBaseId.value]: {
+        layout: layout.value,
+        activeGroupId: activeGroupId.value,
+        lastNoteByGroup: lastNoteByGroup.value
+      }
+    }
+  }
+
+  function switchKnowledgeBase(
+    knowledgeBaseId: string,
+    validNoteUuids?: ReadonlySet<string>
+  ): void {
+    const switching = activeKnowledgeBaseId.value !== knowledgeBaseId
+    if (switching) snapshotCurrentEditor()
+    const source = switching
+      ? (knowledgeBaseEditors.value[knowledgeBaseId] ?? emptyEditorSession())
+      : {
+          layout: layout.value,
+          activeGroupId: activeGroupId.value,
+          lastNoteByGroup: lastNoteByGroup.value
+        }
+    const next = normalizeEditorSession(
+      source,
+      new Set([knowledgeBaseId]),
+      defaultNotePageWidth.value,
+      knowledgeBaseId,
+      validNoteUuids
+    )
+    activeKnowledgeBaseId.value = knowledgeBaseId
+    layout.value = next.layout
+    activeGroupId.value = next.activeGroupId
+    lastNoteByGroup.value = next.lastNoteByGroup ?? {}
+    knowledgeBaseEditors.value = { ...knowledgeBaseEditors.value, [knowledgeBaseId]: next }
+    trimToLimit()
+  }
+
+  function retainKnowledgeBases(validKnowledgeBaseIds: ReadonlySet<string>): void {
+    snapshotCurrentEditor()
+    const retained: Record<string, KnowledgeBaseEditorSession> = {}
+    for (const [knowledgeBaseId, session] of Object.entries(knowledgeBaseEditors.value)) {
+      if (validKnowledgeBaseIds.has(knowledgeBaseId)) {
+        retained[knowledgeBaseId] = session
+        continue
+      }
+      for (const group of listGroups(session.layout)) {
+        for (const tab of group.tabs) {
+          if (tab.type === 'web') void window.desk.web.close(tab.id)
+        }
+      }
+    }
+    knowledgeBaseEditors.value = retained
+    if (activeKnowledgeBaseId.value && !validKnowledgeBaseIds.has(activeKnowledgeBaseId.value)) {
+      const empty = emptyEditorSession()
+      activeKnowledgeBaseId.value = null
+      layout.value = empty.layout
+      activeGroupId.value = empty.activeGroupId
+      lastNoteByGroup.value = {}
+    }
+  }
+
   function restore(
     session: WorkspaceSession | null,
-    knowledgeBases: KnowledgeBaseDescriptor[]
+    knowledgeBases: KnowledgeBaseDescriptor[],
+    selectableKnowledgeBaseIds = new Set(knowledgeBases.map((item) => item.id))
   ): void {
     const knowledgeBaseIds = new Set(knowledgeBases.map((item) => item.id))
     if (!session) {
-      const group = createGroup()
-      layout.value = group
-      activeGroupId.value = group.id
+      const empty = emptyEditorSession()
+      layout.value = empty.layout
+      activeGroupId.value = empty.activeGroupId
+      activeKnowledgeBaseId.value = null
+      knowledgeBaseEditors.value = {}
       return
     }
-    const restored = sanitizeLayout(session.layout, knowledgeBaseIds)
-    const restoredGroups = listGroups(restored)
-    layout.value = restored
-    activeGroupId.value = restoredGroups.some((group) => group.id === session.activeGroupId)
-      ? session.activeGroupId
-      : restoredGroups[0].id
+    const restoredEditors: Record<string, KnowledgeBaseEditorSession> = {}
+    const persistedEditors = session.knowledgeBaseEditors ?? {}
+    if (Object.keys(persistedEditors).length > 0) {
+      for (const [knowledgeBaseId, editorSession] of Object.entries(persistedEditors)) {
+        if (!knowledgeBaseIds.has(knowledgeBaseId)) continue
+        restoredEditors[knowledgeBaseId] = normalizeEditorSession(
+          editorSession,
+          knowledgeBaseIds,
+          defaultNotePageWidth.value,
+          knowledgeBaseId
+        )
+      }
+    } else {
+      // Legacy sessions stored every knowledge base in one mixed layout. Split
+      // note tabs by their owning knowledge base and assign web tabs to the
+      // knowledge base that was selected when the session was saved.
+      for (const knowledgeBaseId of knowledgeBaseIds) {
+        const migrated = normalizeEditorSession(
+          { layout: session.layout, activeGroupId: session.activeGroupId },
+          knowledgeBaseIds,
+          defaultNotePageWidth.value,
+          knowledgeBaseId,
+          undefined,
+          knowledgeBaseId === session.selectedKnowledgeBaseId
+        )
+        if (hasTabs(migrated) || knowledgeBaseId === session.selectedKnowledgeBaseId) {
+          restoredEditors[knowledgeBaseId] = migrated
+        }
+      }
+    }
+    knowledgeBaseEditors.value = restoredEditors
+    const selectedKnowledgeBaseId =
+      session.selectedKnowledgeBaseId &&
+      selectableKnowledgeBaseIds.has(session.selectedKnowledgeBaseId)
+        ? session.selectedKnowledgeBaseId
+        : null
+    const restored = selectedKnowledgeBaseId
+      ? (restoredEditors[selectedKnowledgeBaseId] ?? emptyEditorSession())
+      : emptyEditorSession()
+    activeKnowledgeBaseId.value = selectedKnowledgeBaseId
+    layout.value = restored.layout
+    activeGroupId.value = restored.activeGroupId
+    lastNoteByGroup.value = restored.lastNoteByGroup ?? {}
     knowledgeSidebarWidth.value = session.knowledgeSidebarWidth
     navigatorSidebarWidth.value = session.navigatorSidebarWidth
     knowledgeSidebarCollapsed.value = session.knowledgeSidebarCollapsed
     navigatorSidebarCollapsed.value = session.navigatorSidebarCollapsed
     expandedTocNodes.value = session.expandedTocNodes
+    noteFileSidebarWidth.value = session.noteFileSidebarWidth ?? NOTE_FILE_SIDEBAR_DEFAULT
+    noteFileSidebarCollapsed.value = session.noteFileSidebarCollapsed ?? false
+    expandedNoteFileDirectories.value = session.expandedNoteFileDirectories ?? {}
     trimToLimit()
   }
 
   function reset(): void {
-    for (const group of groups.value) {
-      for (const tab of group.tabs) {
-        if (tab.type === 'web') void window.desk.web.close(tab.id)
+    const webTabIds = new Set<string>()
+    for (const editorLayout of [
+      layout.value,
+      ...Object.values(knowledgeBaseEditors.value).map((session) => session.layout)
+    ]) {
+      for (const group of listGroups(editorLayout)) {
+        for (const tab of group.tabs) {
+          if (tab.type === 'web') webTabIds.add(tab.id)
+        }
       }
     }
-    const group = createGroup()
-    layout.value = group
-    activeGroupId.value = group.id
+    for (const tabId of webTabIds) void window.desk.web.close(tabId)
+    const empty = emptyEditorSession()
+    layout.value = empty.layout
+    activeGroupId.value = empty.activeGroupId
+    activeKnowledgeBaseId.value = null
+    knowledgeBaseEditors.value = {}
+    lastNoteByGroup.value = {}
     webStates.value = {}
   }
 
   function activate(groupId: string, tabId: string): void {
+    const beforeGroup = findGroup(layout.value, groupId)
+    const before = beforeGroup?.tabs.find((tab) => tab.id === beforeGroup.activeTabId)
+    if (before?.type === 'note' || before?.type === 'note-file') {
+      lastNoteByGroup.value = {
+        ...lastNoteByGroup.value,
+        [groupId]: {
+          noteUuid: before.noteUuid,
+          noteTitle: before.type === 'note' ? before.title : before.noteTitle
+        }
+      }
+    }
     activeGroupId.value = groupId
     layout.value = activateTabInLayout(layout.value, groupId, tabId)
+    const tab = findTab(layout.value, tabId)?.tab
+    if (tab?.type === 'note' || tab?.type === 'note-file') {
+      const scope = {
+        noteUuid: tab.noteUuid,
+        noteTitle: tab.type === 'note' ? tab.title : tab.noteTitle
+      }
+      lastNoteByGroup.value = { ...lastNoteByGroup.value, [groupId]: scope }
+    }
   }
 
   function cycleActiveTab(direction: 'next' | 'previous'): void {
     const group = activeGroup.value
     if (!group) return
     layout.value = cycleTab(layout.value, group.id, direction)
+    const next = findGroup(layout.value, group.id)?.tabs.find(
+      (tab) => tab.id === findGroup(layout.value, group.id)?.activeTabId
+    )
+    if (next?.type === 'note' || next?.type === 'note-file') {
+      lastNoteByGroup.value = {
+        ...lastNoteByGroup.value,
+        [group.id]: {
+          noteUuid: next.noteUuid,
+          noteTitle: next.type === 'note' ? next.title : next.noteTitle
+        }
+      }
+    }
   }
 
   function closableTabs(
@@ -264,21 +524,93 @@ export const useEditorStore = defineStore('editor', () => {
   }
 
   function setNoteDirty(knowledgeBaseId: string, noteUuid: string, dirty: boolean): void {
+    const updateLayout = (editorLayout: EditorLayoutNode): boolean => {
+      let changed = false
+      for (const group of listGroups(editorLayout)) {
+        for (const tab of group.tabs) {
+          if (
+            tab.type === 'note' &&
+            tab.knowledgeBaseId === knowledgeBaseId &&
+            tab.noteUuid === noteUuid
+          ) {
+            tab.dirty = dirty
+            if (dirty) tab.preview = false
+            changed = true
+          }
+        }
+      }
+      return changed
+    }
+    if (updateLayout(layout.value)) layout.value = { ...layout.value }
+    let storedChanged = false
+    for (const [storedKnowledgeBaseId, session] of Object.entries(knowledgeBaseEditors.value)) {
+      if (storedKnowledgeBaseId === activeKnowledgeBaseId.value) continue
+      if (updateLayout(session.layout)) storedChanged = true
+    }
+    if (storedChanged) knowledgeBaseEditors.value = { ...knowledgeBaseEditors.value }
+  }
+
+  function renameNote(knowledgeBaseId: string, noteUuid: string, title: string): void {
+    const updateLayout = (editorLayout: EditorLayoutNode): boolean => {
+      let changed = false
+      for (const group of listGroups(editorLayout)) {
+        for (const tab of group.tabs) {
+          if (
+            tab.type !== 'web' &&
+            tab.knowledgeBaseId === knowledgeBaseId &&
+            tab.noteUuid === noteUuid
+          ) {
+            if (tab.type === 'note') tab.title = title
+            else tab.noteTitle = title
+            changed = true
+          }
+        }
+      }
+      return changed
+    }
+    if (updateLayout(layout.value)) layout.value = { ...layout.value }
+    let storedChanged = false
+    for (const [storedKnowledgeBaseId, session] of Object.entries(knowledgeBaseEditors.value)) {
+      if (storedKnowledgeBaseId === activeKnowledgeBaseId.value) continue
+      if (updateLayout(session.layout)) storedChanged = true
+    }
+    if (storedChanged) knowledgeBaseEditors.value = { ...knowledgeBaseEditors.value }
+  }
+
+  function removeNoteFromStoredEditors(knowledgeBaseId: string, noteUuid: string): void {
+    const session = knowledgeBaseEditors.value[knowledgeBaseId]
+    if (!session || knowledgeBaseId === activeKnowledgeBaseId.value) return
+    let next = session.layout
     let changed = false
-    for (const group of groups.value) {
+    for (const group of listGroups(session.layout)) {
       for (const tab of group.tabs) {
         if (
-          tab.type === 'note' &&
+          tab.type !== 'web' &&
           tab.knowledgeBaseId === knowledgeBaseId &&
           tab.noteUuid === noteUuid
         ) {
-          tab.dirty = dirty
-          if (dirty) tab.preview = false
+          next = removeTab(next, group.id, tab.id)
           changed = true
         }
       }
     }
-    if (changed) layout.value = { ...layout.value }
+    if (!changed) return
+    next = collapseEmptyGroups(next)
+    const remainingGroups = listGroups(next)
+    knowledgeBaseEditors.value = {
+      ...knowledgeBaseEditors.value,
+      [knowledgeBaseId]: {
+        layout: next,
+        activeGroupId: remainingGroups.some((group) => group.id === session.activeGroupId)
+          ? session.activeGroupId
+          : remainingGroups[0].id,
+        lastNoteByGroup: Object.fromEntries(
+          Object.entries(session.lastNoteByGroup ?? {}).filter(
+            ([, scope]) => scope.noteUuid !== noteUuid
+          )
+        )
+      }
+    }
   }
 
   function openNote(
@@ -289,6 +621,7 @@ export const useEditorStore = defineStore('editor', () => {
     split?: SplitPlacement,
     openBehavior: 'preview' | 'permanent' = 'preview'
   ): string {
+    if (activeKnowledgeBaseId.value !== knowledgeBase.id) switchKnowledgeBase(knowledgeBase.id)
     const targetGroup = activeGroup.value
     if (!split && targetGroup) {
       const existing = targetGroup.tabs.find(
@@ -313,6 +646,7 @@ export const useEditorStore = defineStore('editor', () => {
       title,
       icon: knowledgeBase.icon,
       viewMode,
+      pageWidth: defaultNotePageWidth.value,
       preview: openBehavior === 'preview',
       pinned: false,
       openedAt: Date.now(),
@@ -344,15 +678,82 @@ export const useEditorStore = defineStore('editor', () => {
           ),
           activeTabId: reused.id
         }))
+        lastNoteByGroup.value = {
+          ...lastNoteByGroup.value,
+          [groupId]: { noteUuid, noteTitle: title }
+        }
         return reused.id
       }
       ensureRoomForTab()
       layout.value = insertTab(layout.value, activeGroupId.value, tab)
     }
+    lastNoteByGroup.value = {
+      ...lastNoteByGroup.value,
+      [activeGroupId.value]: { noteUuid, noteTitle: title }
+    }
+    return tab.id
+  }
+
+  function openNoteFile(
+    knowledgeBase: KnowledgeBaseDescriptor,
+    noteUuid: string,
+    noteTitle: string,
+    filePath: string,
+    fileKind: NoteFileKind,
+    targetGroupId = activeGroupId.value
+  ): string {
+    if (activeKnowledgeBaseId.value !== knowledgeBase.id) switchKnowledgeBase(knowledgeBase.id)
+    for (const group of groups.value) {
+      const existing = group.tabs.find(
+        (tab) =>
+          tab.type === 'note-file' &&
+          tab.knowledgeBaseId === knowledgeBase.id &&
+          tab.noteUuid === noteUuid &&
+          tab.path === filePath
+      )
+      if (existing) {
+        activate(group.id, existing.id)
+        return existing.id
+      }
+    }
+    ensureRoomForTab()
+    const tab: NoteFileEditorTab = {
+      id: createId('note-file'),
+      type: 'note-file',
+      knowledgeBaseId: knowledgeBase.id,
+      knowledgeBaseName: knowledgeBase.displayName,
+      noteUuid,
+      noteTitle,
+      path: filePath,
+      title: filePath,
+      fileKind,
+      pinned: false,
+      openedAt: Date.now(),
+      dirty: false
+    }
+    layout.value = insertTab(layout.value, targetGroupId, tab)
+    activeGroupId.value = targetGroupId
+    lastNoteByGroup.value = {
+      ...lastNoteByGroup.value,
+      [targetGroupId]: { noteUuid, noteTitle }
+    }
     return tab.id
   }
 
   function openWeb(url = DEFAULT_WEB_URL, targetGroupId?: string): string {
+    const groupId = targetGroupId ?? activeGroupId.value
+    const current = findGroup(layout.value, groupId)?.tabs.find(
+      (tab) => tab.id === findGroup(layout.value, groupId)?.activeTabId
+    )
+    if (current?.type === 'note' || current?.type === 'note-file') {
+      lastNoteByGroup.value = {
+        ...lastNoteByGroup.value,
+        [groupId]: {
+          noteUuid: current.noteUuid,
+          noteTitle: current.type === 'note' ? current.title : current.noteTitle
+        }
+      }
+    }
     ensureRoomForTab()
     const tab: WebEditorTab = {
       id: createId('web'),
@@ -362,7 +763,6 @@ export const useEditorStore = defineStore('editor', () => {
       pinned: false,
       openedAt: Date.now()
     }
-    const groupId = targetGroupId ?? activeGroupId.value
     layout.value = insertTab(layout.value, groupId, tab)
     activeGroupId.value = groupId
     return tab.id
@@ -407,7 +807,7 @@ export const useEditorStore = defineStore('editor', () => {
   function closeSavedNotes(): void {
     const targets = groups.value.flatMap((group) =>
       group.tabs
-        .filter((tab) => tab.type === 'note' && !tab.dirty && !tab.pinned)
+        .filter((tab) => tab.type !== 'web' && !tab.dirty && !tab.pinned)
         .map((tab) => ({ groupId: group.id, tabId: tab.id }))
     )
     for (const target of targets) close(target.groupId, target.tabId)
@@ -430,10 +830,11 @@ export const useEditorStore = defineStore('editor', () => {
   }
 
   function closeNote(knowledgeBaseId: string, noteUuid: string): void {
+    removeNoteFromStoredEditors(knowledgeBaseId, noteUuid)
     for (const group of [...groups.value]) {
       for (const tab of [...group.tabs]) {
         if (
-          tab.type === 'note' &&
+          tab.type !== 'web' &&
           tab.knowledgeBaseId === knowledgeBaseId &&
           tab.noteUuid === noteUuid
         ) {
@@ -441,23 +842,53 @@ export const useEditorStore = defineStore('editor', () => {
         }
       }
     }
+    if (knowledgeBaseId === activeKnowledgeBaseId.value) {
+      lastNoteByGroup.value = Object.fromEntries(
+        Object.entries(lastNoteByGroup.value).filter(([, scope]) => scope.noteUuid !== noteUuid)
+      )
+    }
   }
 
-  function renameNote(knowledgeBaseId: string, noteUuid: string, title: string): void {
-    let changed = false
-    for (const group of groups.value) {
-      for (const tab of group.tabs) {
-        if (
-          tab.type === 'note' &&
-          tab.knowledgeBaseId === knowledgeBaseId &&
-          tab.noteUuid === noteUuid
-        ) {
-          tab.title = title
-          changed = true
+  function closeNoteFile(knowledgeBaseId: string, noteUuid: string, filePath: string): void {
+    const stored = knowledgeBaseEditors.value[knowledgeBaseId]
+    if (stored && knowledgeBaseId !== activeKnowledgeBaseId.value) {
+      let next = stored.layout
+      let changed = false
+      for (const group of listGroups(stored.layout)) {
+        for (const tab of group.tabs) {
+          if (tab.type === 'note-file' && tab.noteUuid === noteUuid && tab.path === filePath) {
+            next = removeTab(next, group.id, tab.id)
+            changed = true
+          }
+        }
+      }
+      if (changed) {
+        next = collapseEmptyGroups(next)
+        const remainingGroups = listGroups(next)
+        knowledgeBaseEditors.value = {
+          ...knowledgeBaseEditors.value,
+          [knowledgeBaseId]: {
+            ...stored,
+            layout: next,
+            activeGroupId: remainingGroups.some((group) => group.id === stored.activeGroupId)
+              ? stored.activeGroupId
+              : remainingGroups[0].id
+          }
         }
       }
     }
-    if (changed) layout.value = { ...layout.value }
+    for (const group of [...groups.value]) {
+      for (const tab of [...group.tabs]) {
+        if (
+          tab.type === 'note-file' &&
+          tab.knowledgeBaseId === knowledgeBaseId &&
+          tab.noteUuid === noteUuid &&
+          tab.path === filePath
+        ) {
+          close(group.id, tab.id)
+        }
+      }
+    }
   }
 
   function setNoteViewMode(tabId: string, viewMode: NoteViewMode): void {
@@ -465,6 +896,51 @@ export const useEditorStore = defineStore('editor', () => {
     if (located?.tab.type !== 'note') return
     located.tab.viewMode = viewMode
     layout.value = { ...layout.value }
+  }
+
+  function setNotePageWidth(tabId: string, pageWidth: NotePageWidth): void {
+    const located = findTab(layout.value, tabId)
+    if (located?.tab.type !== 'note') return
+    located.tab.pageWidth = pageWidth
+    layout.value = { ...layout.value }
+  }
+
+  function toggleNotePageWidth(tabId: string): void {
+    const located = findTab(layout.value, tabId)
+    if (located?.tab.type !== 'note') return
+    setNotePageWidth(tabId, located.tab.pageWidth === 'wide' ? 'standard' : 'wide')
+  }
+
+  function setNoteFileDirty(
+    knowledgeBaseId: string,
+    noteUuid: string,
+    filePath: string,
+    dirty: boolean
+  ): void {
+    const updateLayout = (editorLayout: EditorLayoutNode): boolean => {
+      let changed = false
+      for (const group of listGroups(editorLayout)) {
+        for (const tab of group.tabs) {
+          if (
+            tab.type === 'note-file' &&
+            tab.knowledgeBaseId === knowledgeBaseId &&
+            tab.noteUuid === noteUuid &&
+            tab.path === filePath
+          ) {
+            tab.dirty = dirty
+            changed = true
+          }
+        }
+      }
+      return changed
+    }
+    if (updateLayout(layout.value)) layout.value = { ...layout.value }
+    let storedChanged = false
+    for (const [storedKnowledgeBaseId, session] of Object.entries(knowledgeBaseEditors.value)) {
+      if (storedKnowledgeBaseId === activeKnowledgeBaseId.value) continue
+      if (updateLayout(session.layout)) storedChanged = true
+    }
+    if (storedChanged) knowledgeBaseEditors.value = { ...knowledgeBaseEditors.value }
   }
 
   function moveTab(tabId: string, targetGroupId: string, targetIndex?: number): void {
@@ -503,6 +979,20 @@ export const useEditorStore = defineStore('editor', () => {
 
   function toSession(selectedKnowledgeBaseId: string | null): WorkspaceSession {
     const serializedLayout = JSON.parse(JSON.stringify(layout.value)) as EditorLayoutNode
+    const editors = activeKnowledgeBaseId.value
+      ? {
+          ...knowledgeBaseEditors.value,
+          [activeKnowledgeBaseId.value]: {
+            layout: layout.value,
+            activeGroupId: activeGroupId.value,
+            lastNoteByGroup: lastNoteByGroup.value
+          }
+        }
+      : knowledgeBaseEditors.value
+    const serializedKnowledgeBaseEditors = JSON.parse(JSON.stringify(editors)) as Record<
+      string,
+      KnowledgeBaseEditorSession
+    >
     const serializedExpandedNodes = JSON.parse(JSON.stringify(expandedTocNodes.value)) as Record<
       string,
       string[]
@@ -512,11 +1002,17 @@ export const useEditorStore = defineStore('editor', () => {
       selectedKnowledgeBaseId,
       layout: serializedLayout,
       activeGroupId: activeGroupId.value,
+      knowledgeBaseEditors: serializedKnowledgeBaseEditors,
       knowledgeSidebarWidth: knowledgeSidebarWidth.value,
       navigatorSidebarWidth: navigatorSidebarWidth.value,
       knowledgeSidebarCollapsed: knowledgeSidebarCollapsed.value,
       navigatorSidebarCollapsed: navigatorSidebarCollapsed.value,
-      expandedTocNodes: serializedExpandedNodes
+      expandedTocNodes: serializedExpandedNodes,
+      noteFileSidebarWidth: noteFileSidebarWidth.value,
+      noteFileSidebarCollapsed: noteFileSidebarCollapsed.value,
+      expandedNoteFileDirectories: JSON.parse(
+        JSON.stringify(expandedNoteFileDirectories.value)
+      ) as Record<string, string[]>
     }
   }
 
@@ -525,6 +1021,7 @@ export const useEditorStore = defineStore('editor', () => {
     activeGroupId,
     activeGroup,
     activeTab,
+    activeNoteScope,
     tabCount,
     groups,
     webStates,
@@ -534,16 +1031,26 @@ export const useEditorStore = defineStore('editor', () => {
     knowledgeSidebarCollapsed,
     navigatorSidebarCollapsed,
     expandedTocNodes,
+    noteFileSidebarWidth,
+    noteFileSidebarCollapsed,
+    expandedNoteFileDirectories,
     maxOpenTabCount,
     wrapTabs,
+    defaultNotePageWidth,
+    activeKnowledgeBaseId,
+    knowledgeBaseEditors,
+    lastNoteByGroup,
     configure,
     initializeWebEvents,
     dispose,
     restore,
     reset,
+    switchKnowledgeBase,
+    retainKnowledgeBases,
     activate,
     cycleActiveTab,
     openNote,
+    openNoteFile,
     openWeb,
     startPreview,
     stopPreview,
@@ -552,9 +1059,13 @@ export const useEditorStore = defineStore('editor', () => {
     closeAllTabs,
     closeAllWebTabs,
     closeNote,
+    closeNoteFile,
     renameNote,
     setNoteViewMode,
+    setNotePageWidth,
+    toggleNotePageWidth,
     setNoteDirty,
+    setNoteFileDirty,
     keepOpen,
     setPinned,
     togglePinned,

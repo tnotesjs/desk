@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { Menu, type BrowserWindow, shell } from 'electron'
+import { Menu, type BrowserWindow, type MenuItemConstructorOptions, shell } from 'electron'
 
 import { loadSettings } from './settings'
 
@@ -34,8 +34,12 @@ export async function openInConfiguredIde(targetPath: string): Promise<void> {
   })
 }
 
-export function showIdeContextMenu(window: BrowserWindow, targetPath: string): void {
-  const menu = Menu.buildFromTemplate([
+export function showIdeContextMenu(
+  window: BrowserWindow,
+  targetPath: string,
+  links?: { repositoryUrl?: string; pageUrl?: string }
+): void {
+  const template: MenuItemConstructorOptions[] = [
     {
       label: `在 ${ideLabel()} 中打开`,
       click: () => void openInConfiguredIde(targetPath)
@@ -45,6 +49,22 @@ export function showIdeContextMenu(window: BrowserWindow, targetPath: string): v
       label: '在文件管理器中显示',
       click: () => shell.showItemInFolder(targetPath)
     }
-  ])
+  ]
+  if (links?.repositoryUrl || links?.pageUrl) {
+    template.push(
+      { type: 'separator' },
+      {
+        label: '打开 GitHub 仓库',
+        enabled: Boolean(links.repositoryUrl),
+        click: () => links.repositoryUrl && void shell.openExternal(links.repositoryUrl)
+      },
+      {
+        label: '打开 GitHub Page',
+        enabled: Boolean(links.pageUrl),
+        click: () => links.pageUrl && void shell.openExternal(links.pageUrl)
+      }
+    )
+  }
+  const menu = Menu.buildFromTemplate(template)
   menu.popup({ window })
 }

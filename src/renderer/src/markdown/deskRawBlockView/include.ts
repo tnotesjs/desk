@@ -1,8 +1,12 @@
+import { watch } from 'vue'
+
 import { includeLanguage, parseDeskIncludeLine } from '../../editor/markdown/deskInclude'
 import {
   mountCodeTabEditor,
   type CodeTabEditorHandle
 } from '../../editor/markdown/deskCodeTabEditor'
+import { useWorkspaceStore } from '../../stores/workspace'
+import { noteFileKey } from '../../stores/workspace/helpers'
 import type { DeskRawBlockMountContext } from './types'
 
 export function mountRawInclude(ctx: DeskRawBlockMountContext): void {
@@ -27,10 +31,13 @@ export function mountRawInclude(ctx: DeskRawBlockMountContext): void {
 
   let cancelled = false
   let tabEditor: CodeTabEditorHandle | null = null
+  let stopSessionWatch: (() => void) | null = null
   cleanupTasks.push(() => {
     cancelled = true
     tabEditor?.destroy()
     tabEditor = null
+    stopSessionWatch?.()
+    stopSessionWatch = null
   })
 
   void (async () => {
@@ -39,43 +46,54 @@ export function mountRawInclude(ctx: DeskRawBlockMountContext): void {
       return
     }
     try {
-      const result = await window.desk.attachments.readText({
-        knowledgeBaseId: deps.knowledgeBaseId(),
-        noteUuid: deps.noteUuid(),
-        path: include.path
-      })
+      const workspace = useWorkspaceStore()
+      const knowledgeBaseId = deps.knowledgeBaseId()
+      const noteUuid = deps.noteUuid()
+      const key = noteFileKey(knowledgeBaseId, noteUuid, include.path)
+      const session = await workspace.ensureNoteFile(knowledgeBaseId, noteUuid, include.path)
       if (cancelled) return
-      if (!result.ok) {
-        bodyHost.textContent = `引用失败：${result.error.message}`
-        return
-      }
 
       if (!editable) {
         const pre = document.createElement('pre')
         pre.className = 'desk-raw-block__include-pre'
-        pre.textContent = result.value
+        pre.textContent = session.content
         bodyHost.replaceChildren(pre)
+        stopSessionWatch = watch(
+          () => workspace.getNoteFileSession(knowledgeBaseId, noteUuid, include.path)?.content,
+          (content) => {
+            if (content !== undefined) pre.textContent = content
+          }
+        )
         return
       }
 
       tabEditor = mountCodeTabEditor(bodyHost, {
-        initialContent: result.value,
+        initialContent: session.content,
         language: includeLanguage(include),
         onCopy: (text) => deps.writeClipboard(text),
+        onChange: (content) => workspace.updateNoteFileContent(key, content),
         onDirtyChange: (dirty) => {
           dom.classList.toggle('is-include-dirty', dirty)
         },
         onSave: async (content) => {
-          const write = await window.desk.attachments.writeText({
-            knowledgeBaseId: deps.knowledgeBaseId(),
-            noteUuid: deps.noteUuid(),
-            path: include.path,
-            content
-          })
-          if (!write.ok) return { ok: false, message: write.error.message }
-          return { ok: true }
+          workspace.updateNoteFileContent(key, content)
+          try {
+            await workspace.saveNoteFile(key)
+            return { ok: true }
+          } catch (cause) {
+            return { ok: false, message: cause instanceof Error ? cause.message : String(cause) }
+          }
         }
       })
+      stopSessionWatch = watch(
+        () => workspace.getNoteFileSession(knowledgeBaseId, noteUuid, include.path),
+        (next) => {
+          if (!next || !tabEditor) return
+          tabEditor.setValue(next.content)
+          tabEditor.setSavedValue(next.document.content)
+        },
+        { deep: true }
+      )
     } catch (error) {
       if (cancelled) return
       bodyHost.textContent = `引用失败：${error instanceof Error ? error.message : String(error)}`

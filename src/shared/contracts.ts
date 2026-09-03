@@ -21,6 +21,9 @@ export const IPC_CHANNELS = {
   noteUpdateConfig: 'note:update-config',
   noteCopyDirectoryPath: 'note:copy-directory-path',
   noteRevealInFileManager: 'note:reveal-in-file-manager',
+  noteFilesList: 'note-files:list',
+  noteFileReadText: 'note-file:read-text',
+  noteFileSaveText: 'note-file:save-text',
   attachmentWriteLocal: 'attachment:write-local',
   attachmentUploadImage: 'attachment:upload-image',
   attachmentReadText: 'attachment:read-text',
@@ -64,6 +67,7 @@ export const IPC_CHANNELS = {
   previewList: 'preview:list',
   workspaceChanged: 'workspace:changed',
   noteExternalChanged: 'note:external-changed',
+  noteFileExternalChanged: 'note-file:external-changed',
   webStateChanged: 'web:state-changed',
   webOpenRequested: 'web:open-requested',
   previewChanged: 'preview:changed',
@@ -103,6 +107,8 @@ export interface KnowledgeBaseDescriptor {
   rootPath: string
   displayName: string
   icon: KnowledgeBaseIconDto | null
+  repositoryUrl?: string
+  pageUrl?: string
   health: 'ready' | 'invalid' | 'future-schema'
   diagnostics: WorkspaceDiagnosticDto[]
   noteCount: number
@@ -141,6 +147,8 @@ export interface WorkspaceOverview {
 }
 
 export type NoteViewMode = 'visual' | 'readonly' | 'source'
+export type NotePageWidth = 'standard' | 'wide'
+export type NoteTocDisplay = 'hidden' | 'collapsed' | 'expanded'
 export type TabShortcutCommand =
   | 'close-active-tab-or-window'
   | 'close-saved-note-tabs'
@@ -183,6 +191,8 @@ export interface AppSettings {
   theme: ThemeMode
   density: InterfaceDensity
   defaultNoteView: NoteViewMode
+  defaultNotePageWidth: NotePageWidth
+  noteTocDisplay: NoteTocDisplay
   autosave: {
     enabled: boolean
     delayMs: number
@@ -237,6 +247,8 @@ export interface RecoveryRecord {
   version: 1
   knowledgeBaseId: string
   noteUuid: string
+  /** Missing for README.md recoveries created by older Desk releases. */
+  path?: string
   title: string
   content: string
   revision: string
@@ -246,6 +258,7 @@ export interface RecoveryRecord {
 export interface RecoveryWriteRequest {
   knowledgeBaseId: string
   noteUuid: string
+  path?: string
   title: string
   content: string
   revision: string
@@ -254,6 +267,7 @@ export interface RecoveryWriteRequest {
 export interface RecoveryDeleteRequest {
   knowledgeBaseId: string
   noteUuid: string
+  path?: string
 }
 
 export interface NoteEditorTab {
@@ -265,6 +279,7 @@ export interface NoteEditorTab {
   title: string
   icon: KnowledgeBaseIconDto | null
   viewMode: NoteViewMode
+  pageWidth: NotePageWidth
   preview?: boolean
   pinned?: boolean
   openedAt?: number
@@ -280,7 +295,24 @@ export interface WebEditorTab {
   openedAt?: number
 }
 
-export type EditorTab = NoteEditorTab | WebEditorTab
+export type NoteFileKind = 'text' | 'image' | 'unsupported'
+
+export interface NoteFileEditorTab {
+  id: string
+  type: 'note-file'
+  knowledgeBaseId: string
+  knowledgeBaseName: string
+  noteUuid: string
+  noteTitle: string
+  path: string
+  title: string
+  fileKind: NoteFileKind
+  pinned?: boolean
+  openedAt?: number
+  dirty?: boolean
+}
+
+export type EditorTab = NoteEditorTab | NoteFileEditorTab | WebEditorTab
 
 export interface EditorGroupNode {
   type: 'group'
@@ -300,16 +332,26 @@ export interface EditorSplitNode {
 
 export type EditorLayoutNode = EditorGroupNode | EditorSplitNode
 
+export interface KnowledgeBaseEditorSession {
+  layout: EditorLayoutNode
+  activeGroupId: string
+  lastNoteByGroup?: Record<string, { noteUuid: string; noteTitle: string }>
+}
+
 export interface WorkspaceSession {
   version: 1
   selectedKnowledgeBaseId: string | null
   layout: EditorLayoutNode
   activeGroupId: string
+  knowledgeBaseEditors: Record<string, KnowledgeBaseEditorSession>
   knowledgeSidebarWidth: number
   navigatorSidebarWidth: number
   knowledgeSidebarCollapsed: boolean
   navigatorSidebarCollapsed: boolean
   expandedTocNodes: Record<string, string[]>
+  noteFileSidebarWidth: number
+  noteFileSidebarCollapsed: boolean
+  expandedNoteFileDirectories: Record<string, string[]>
 }
 
 export interface WebBounds {
@@ -383,6 +425,41 @@ export interface NoteDocumentDto {
   revision: string
   config: Record<string, unknown>
   readOnly: boolean
+}
+
+export interface NoteFileEntryDto {
+  name: string
+  path: string
+  kind: 'directory' | 'file'
+  fileKind: NoteFileKind | null
+  size: number | null
+}
+
+export interface NoteFilesListRequest {
+  knowledgeBaseId: string
+  noteUuid: string
+  directory?: string
+}
+
+export interface NoteTextFileDto {
+  knowledgeBaseId: string
+  noteUuid: string
+  path: string
+  content: string
+  revision: string
+  size: number
+  readOnly: boolean
+}
+
+export interface NoteFileReadTextRequest {
+  knowledgeBaseId: string
+  noteUuid: string
+  path: string
+}
+
+export interface NoteFileSaveTextRequest extends NoteFileReadTextRequest {
+  content: string
+  expectedRevision: string
 }
 
 /** Rows for `<NotesTable>` preview — Desk adapter over workspace snapshot. */
@@ -619,6 +696,13 @@ export interface ExternalNoteChangeEvent {
   noteUuid: string
 }
 
+export interface ExternalNoteFileChangeEvent {
+  knowledgeBaseId: string
+  noteUuid: string
+  path: string
+  kind: 'changed' | 'deleted'
+}
+
 export interface DeskApi {
   bootstrap(): Promise<DeskResult<BootstrapPayload>>
   app: {
@@ -664,6 +748,12 @@ export interface DeskApi {
     copyDirectoryPath(knowledgeBaseId: string, noteUuid: string): Promise<DeskResult<string>>
     revealInFileManager(knowledgeBaseId: string, noteUuid: string): Promise<DeskResult<void>>
     onExternalChanged(callback: (event: ExternalNoteChangeEvent) => void): () => void
+  }
+  noteFiles: {
+    list(request: NoteFilesListRequest): Promise<DeskResult<NoteFileEntryDto[]>>
+    readText(request: NoteFileReadTextRequest): Promise<DeskResult<NoteTextFileDto>>
+    saveText(request: NoteFileSaveTextRequest): Promise<DeskResult<NoteTextFileDto>>
+    onExternalChanged(callback: (event: ExternalNoteFileChangeEvent) => void): () => void
   }
   attachments: {
     writeLocal(

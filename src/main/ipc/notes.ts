@@ -11,6 +11,9 @@ import {
   attachmentWriteTextSchema,
   entryRefSchema,
   noteCreateSchema,
+  noteFileReadTextSchema,
+  noteFileSaveTextSchema,
+  noteFilesListSchema,
   noteRenameSchema,
   noteSaveSchema,
   noteUpdateConfigSchema,
@@ -27,6 +30,9 @@ import type {
   AttachmentWriteTextRequest,
   ImageUploadRequest,
   NoteCreateRequest,
+  NoteFileReadTextRequest,
+  NoteFileSaveTextRequest,
+  NoteFilesListRequest,
   NoteRenameRequest,
   NoteSaveRequest,
   NoteUpdateConfigRequest,
@@ -67,6 +73,15 @@ export function registerNotes(getWindow: GetWindow): void {
   )
   handle(IPC_CHANNELS.noteUpdateConfig, getWindow, noteUpdateConfigSchema, (input) =>
     workspaceManager.updateNoteConfig(input as NoteUpdateConfigRequest)
+  )
+  handle(IPC_CHANNELS.noteFilesList, getWindow, noteFilesListSchema, (input) =>
+    workspaceManager.listNoteFiles(input as NoteFilesListRequest)
+  )
+  handle(IPC_CHANNELS.noteFileReadText, getWindow, noteFileReadTextSchema, (input) =>
+    workspaceManager.readNoteTextFile(input as NoteFileReadTextRequest)
+  )
+  handle(IPC_CHANNELS.noteFileSaveText, getWindow, noteFileSaveTextSchema, (input) =>
+    workspaceManager.saveNoteTextFile(input as NoteFileSaveTextRequest)
   )
   handle(
     IPC_CHANNELS.noteCopyDirectoryPath,

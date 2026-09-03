@@ -51,7 +51,7 @@ export function createDocuments(ctx: DocumentsContext) {
 
   async function prepareRecoveries(records: RecoveryRecord[]): Promise<void> {
     const candidates: RecoveryRecord[] = []
-    for (const record of records) {
+    for (const record of records.filter((item) => !item.path)) {
       try {
         const disk = resultValue(
           await window.desk.notes.read(record.knowledgeBaseId, record.noteUuid)
@@ -246,7 +246,9 @@ export function createDocuments(ctx: DocumentsContext) {
     return result
   }
 
-  async function copyNoteDirectoryPath(tab: NoteEditorTab): Promise<void> {
+  async function copyNoteDirectoryPath(
+    tab: Pick<NoteEditorTab, 'knowledgeBaseId' | 'noteUuid'>
+  ): Promise<void> {
     const result = await window.desk.notes.copyDirectoryPath(tab.knowledgeBaseId, tab.noteUuid)
     if (!result.ok) {
       ctx.error.value = result.error.message
@@ -255,7 +257,9 @@ export function createDocuments(ctx: DocumentsContext) {
     ctx.status.value = `已复制路径：${result.value}`
   }
 
-  async function revealNoteInFileManager(tab: NoteEditorTab): Promise<void> {
+  async function revealNoteInFileManager(
+    tab: Pick<NoteEditorTab, 'knowledgeBaseId' | 'noteUuid'>
+  ): Promise<void> {
     const result = await window.desk.notes.revealInFileManager(tab.knowledgeBaseId, tab.noteUuid)
     if (!result.ok) ctx.error.value = result.error.message
   }

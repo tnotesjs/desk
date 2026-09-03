@@ -2,6 +2,7 @@
 import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
 
 import UiTooltip from '../components/UiTooltip.vue'
+import PageWidthIcon from '../components/PageWidthIcon.vue'
 import MarkdownSourceEditor from '../markdown/MarkdownSourceEditor.vue'
 import { useEditorStore } from '../stores/editor'
 import { useWorkspaceStore } from '../stores/workspace'
@@ -44,6 +45,7 @@ const milkdownMountKey = ref(0)
 const markdownEditor = computed(() =>
   props.tab.viewMode === 'source' ? markdownSourceEditor.value : milkdownMarkdownEditor.value
 )
+const pageWidthLabel = computed(() => (props.tab.pageWidth === 'wide' ? '超宽显示' : '标准页宽'))
 
 onMounted(() => {
   void workspace.ensureDocument(props.tab.knowledgeBaseId, props.tab.noteUuid)
@@ -174,6 +176,16 @@ function openLink(url: string): void {
             </svg>
           </button>
         </UiTooltip>
+        <UiTooltip :label="pageWidthLabel">
+          <button
+            type="button"
+            class="page-width-toggle"
+            :aria-label="pageWidthLabel"
+            @click="editor.toggleNotePageWidth(tab.id)"
+          >
+            <PageWidthIcon :mode="tab.pageWidth" />
+          </button>
+        </UiTooltip>
       </div>
       <div
         v-if="tab.viewMode !== 'readonly'"
@@ -256,6 +268,8 @@ function openLink(url: string): void {
       :knowledge-base-id="tab.knowledgeBaseId"
       :note-uuid="tab.noteUuid"
       :active="active"
+      :page-width="tab.pageWidth"
+      :toc-display="workspace.settings?.noteTocDisplay ?? 'expanded'"
       :upload-image="uploadVisualImage"
       @change="updateContent"
       @open-link="openLink"
@@ -280,6 +294,7 @@ function openLink(url: string): void {
       :knowledge-base-id="tab.knowledgeBaseId"
       :note-uuid="tab.noteUuid"
       :active="active"
+      :page-width="tab.pageWidth"
       @change="updateContent"
       @paste-image="pasteImage"
     />

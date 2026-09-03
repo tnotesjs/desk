@@ -175,18 +175,48 @@ function handleWatchedPath(state: WorkspaceScanState, changedPath: string): void
   const internalUntil = state.internalWriteUntil.get(normalizedPath) ?? 0
   if (internalUntil < Date.now()) {
     state.internalWriteUntil.delete(normalizedPath)
-    if (path.basename(normalizedPath) === 'README.md') {
-      for (const handle of state.handles.values()) {
-        const note = handle.snapshot.notes.find(
-          (item) => path.normalize(item.readmePath) === normalizedPath
-        )
-        if (note) {
+    for (const handle of state.handles.values()) {
+      for (const note of handle.snapshot.notes) {
+        if (path.normalize(note.readmePath) === normalizedPath) {
           state.events.emit('noteExternalChanged', {
             knowledgeBaseId: handle.id,
             noteUuid: note.uuid
           })
-          break
+          return scheduleRefresh(state)
         }
+        const relativePath = path.relative(path.normalize(note.directoryPath), normalizedPath)
+        if (
+          !relativePath ||
+          relativePath === '..' ||
+          relativePath.startsWith(`..${path.sep}`) ||
+          path.isAbsolute(relativePath)
+        ) {
+          continue
+        }
+        const segments = relativePath.split(path.sep)
+        if (segments.some((segment) => segment.startsWith('.') || segment === 'node_modules')) {
+          continue
+        }
+        void fs.stat(normalizedPath).then(
+          (stat) => {
+            if (!stat.isFile()) return
+            state.events.emit('noteFileExternalChanged', {
+              knowledgeBaseId: handle.id,
+              noteUuid: note.uuid,
+              path: segments.join('/'),
+              kind: 'changed'
+            })
+          },
+          () => {
+            state.events.emit('noteFileExternalChanged', {
+              knowledgeBaseId: handle.id,
+              noteUuid: note.uuid,
+              path: segments.join('/'),
+              kind: 'deleted'
+            })
+          }
+        )
+        break
       }
     }
   }

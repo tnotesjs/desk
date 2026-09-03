@@ -17,10 +17,15 @@ function workspaceDirectory(workspacePath: string): string {
   return path.join(app.getPath('userData'), 'recovery', digest(path.resolve(workspacePath)))
 }
 
-function recoveryPath(workspacePath: string, knowledgeBaseId: string, noteUuid: string): string {
+function recoveryPath(
+  workspacePath: string,
+  knowledgeBaseId: string,
+  noteUuid: string,
+  resourcePath?: string
+): string {
   return path.join(
     workspaceDirectory(workspacePath),
-    `${digest(`${knowledgeBaseId}:${noteUuid}`)}.json`
+    `${digest(resourcePath ? `${knowledgeBaseId}:${noteUuid}:${resourcePath}` : `${knowledgeBaseId}:${noteUuid}`)}.json`
   )
 }
 
@@ -65,7 +70,12 @@ export async function writeRecovery(
   if (!workspacePath) return
   const directory = workspaceDirectory(workspacePath)
   await fs.mkdir(directory, { recursive: true })
-  const target = recoveryPath(workspacePath, request.knowledgeBaseId, request.noteUuid)
+  const target = recoveryPath(
+    workspacePath,
+    request.knowledgeBaseId,
+    request.noteUuid,
+    request.path
+  )
   const temporary = `${target}.${process.pid}.tmp`
   const record: RecoveryRecord = {
     version: 1,
@@ -82,7 +92,7 @@ export async function deleteRecovery(
 ): Promise<void> {
   if (!workspacePath) return
   await fs
-    .unlink(recoveryPath(workspacePath, request.knowledgeBaseId, request.noteUuid))
+    .unlink(recoveryPath(workspacePath, request.knowledgeBaseId, request.noteUuid, request.path))
     .catch((error: NodeJS.ErrnoException) => {
       if (error.code !== 'ENOENT') throw error
     })

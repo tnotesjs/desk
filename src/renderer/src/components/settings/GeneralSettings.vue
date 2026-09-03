@@ -55,6 +55,21 @@ async function checkNow(): Promise<void> {
           <option value="source">源码</option>
         </select>
       </label>
+      <label class="field">
+        <span>笔记默认页宽</span>
+        <select v-model="draft.defaultNotePageWidth">
+          <option value="standard">标准页宽</option>
+          <option value="wide">超宽显示</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>笔记内目录</span>
+        <select v-model="draft.noteTocDisplay">
+          <option value="hidden">隐藏</option>
+          <option value="collapsed">折叠显示</option>
+          <option value="expanded">展开显示</option>
+        </select>
+      </label>
     </div>
     <div class="layout-picker">
       <button

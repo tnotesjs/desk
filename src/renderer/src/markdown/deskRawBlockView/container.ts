@@ -1,4 +1,5 @@
 import { parseFootprintsSource, type FootprintsPayload } from '@tnotesjs/ui'
+import { watch } from 'vue'
 
 import {
   isStructuredCalloutSource,
@@ -33,6 +34,8 @@ import {
   type CodeTabEditorHandle
 } from '../../editor/markdown/deskCodeTabEditor'
 import { mountFootprintsPreview } from '../../editor/markdown/componentPreview'
+import { useWorkspaceStore } from '../../stores/workspace'
+import { noteFileKey } from '../../stores/workspace/helpers'
 import { attachRawSourceEditor, type RawSourceEditorHandle } from '../attachRawSourceEditor'
 import { deferUntilVisible } from './deferUntilVisible'
 import type { DeskRawBlockMountContext } from './types'
@@ -86,10 +89,12 @@ export function mountRawContainer(ctx: DeskRawBlockMountContext): void {
     let codeGroupEntries: CodeGroupEntry[] = []
     let swiperSlides: SwiperSlideEntry[] = []
     const codeGroupTabEditors: Array<CodeTabEditorHandle | null> = []
+    const includeSessionStops: Array<() => void> = []
     let rawSourceEditor: RawSourceEditorHandle | null = null
     cleanupTasks.push(() => {
       cancelledIncludes = true
       codeGroupTabEditors.splice(0).forEach((handle) => handle?.destroy())
+      includeSessionStops.splice(0).forEach((stop) => stop())
     })
 
     const loadIncludeCache = async (body: string): Promise<Map<string, string>> => {
@@ -104,16 +109,14 @@ export function mountRawContainer(ctx: DeskRawBlockMountContext): void {
         paths.map(async (includePath) => {
           if (cancelledIncludes) return
           try {
-            const result = await window.desk.attachments.readText({
-              knowledgeBaseId: deps.knowledgeBaseId(),
-              noteUuid: deps.noteUuid(),
-              path: includePath
-            })
-            if (cancelledIncludes) return
-            cache.set(
-              includePath,
-              result.ok ? result.value : `// 引用失败：${result.error.message}`
+            const workspace = useWorkspaceStore()
+            const result = await workspace.ensureNoteFile(
+              deps.knowledgeBaseId(),
+              deps.noteUuid(),
+              includePath
             )
+            if (cancelledIncludes) return
+            cache.set(includePath, result.content)
           } catch (error) {
             if (cancelledIncludes) return
             cache.set(
@@ -171,6 +174,7 @@ export function mountRawContainer(ctx: DeskRawBlockMountContext): void {
       if (cancelledIncludes) return null
 
       codeGroupTabEditors.splice(0).forEach((handle) => handle?.destroy())
+      includeSessionStops.splice(0).forEach((stop) => stop())
       codeGroupEntries = entries
 
       const group = document.createElement('div')
@@ -417,6 +421,14 @@ export function mountRawContainer(ctx: DeskRawBlockMountContext): void {
           initialContent,
           language,
           onCopy: (text) => deps.writeClipboard(text),
+          onChange: (content) => {
+            if (entry.kind !== 'include') return
+            const workspace = useWorkspaceStore()
+            workspace.updateNoteFileContent(
+              noteFileKey(deps.knowledgeBaseId(), deps.noteUuid(), entry.include.path),
+              content
+            )
+          },
           onDirtyChange: (dirty) => {
             tabButtons[index]?.classList.toggle('is-tab-dirty', dirty)
             panel.classList.toggle('is-include-dirty', dirty)
@@ -455,14 +467,18 @@ export function mountRawContainer(ctx: DeskRawBlockMountContext): void {
             const current = codeGroupEntries[index]
             if (!current) return { ok: false, message: '代码块已失效' }
             if (current.kind === 'include') {
-              const write = await window.desk.attachments.writeText({
-                knowledgeBaseId: deps.knowledgeBaseId(),
-                noteUuid: deps.noteUuid(),
-                path: current.include.path,
-                content
-              })
-              if (!write.ok) return { ok: false, message: write.error.message }
-              return { ok: true }
+              const workspace = useWorkspaceStore()
+              const key = noteFileKey(deps.knowledgeBaseId(), deps.noteUuid(), current.include.path)
+              workspace.updateNoteFileContent(key, content)
+              try {
+                await workspace.saveNoteFile(key)
+                return { ok: true }
+              } catch (cause) {
+                return {
+                  ok: false,
+                  message: cause instanceof Error ? cause.message : String(cause)
+                }
+              }
             }
             const nextEntries = codeGroupEntries.map((item, itemIndex) =>
               itemIndex === index && item.kind === 'fence'
@@ -476,6 +492,22 @@ export function mountRawContainer(ctx: DeskRawBlockMountContext): void {
           }
         })
         codeGroupTabEditors[index] = tabEditor
+        if (entry.kind === 'include') {
+          const workspace = useWorkspaceStore()
+          const knowledgeBaseId = deps.knowledgeBaseId()
+          const noteUuid = deps.noteUuid()
+          includeSessionStops.push(
+            watch(
+              () => workspace.getNoteFileSession(knowledgeBaseId, noteUuid, entry.include.path),
+              (next) => {
+                if (!next) return
+                tabEditor.setValue(next.content)
+                tabEditor.setSavedValue(next.document.content)
+              },
+              { deep: true }
+            )
+          )
+        }
 
         if (useTabs) {
           const tab = document.createElement('button')
@@ -853,6 +885,7 @@ export function mountRawContainer(ctx: DeskRawBlockMountContext): void {
       }
       if (cancelledIncludes || !previewEl) return
       codeGroupTabEditors.splice(0).forEach((handle) => handle?.destroy())
+      includeSessionStops.splice(0).forEach((stop) => stop())
       const fresh = renderContainerFromSource(source, resolveImage, {
         resolveIncludeContent
       })

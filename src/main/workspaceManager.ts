@@ -33,9 +33,15 @@ import type {
   AttachmentReadTextRequest,
   AttachmentWriteTextRequest,
   ExternalNoteChangeEvent,
+  ExternalNoteFileChangeEvent,
   KnowledgeBaseDetail,
   NoteCreateRequest,
   NoteDocumentDto,
+  NoteFileEntryDto,
+  NoteFileReadTextRequest,
+  NoteFileSaveTextRequest,
+  NoteFilesListRequest,
+  NoteTextFileDto,
   NoteMutationDto,
   NoteRenameRequest,
   NoteSaveRequest,
@@ -85,6 +91,11 @@ export class WorkspaceManager {
   onNoteExternalChanged(listener: (event: ExternalNoteChangeEvent) => void): () => void {
     this.events.on('noteExternalChanged', listener)
     return () => this.events.off('noteExternalChanged', listener)
+  }
+
+  onNoteFileExternalChanged(listener: (event: ExternalNoteFileChangeEvent) => void): () => void {
+    this.events.on('noteFileExternalChanged', listener)
+    return () => this.events.off('noteFileExternalChanged', listener)
   }
 
   async initialize(): Promise<WorkspaceOverview> {
@@ -274,6 +285,22 @@ export class WorkspaceManager {
       this.getHandle(request.knowledgeBaseId),
       request,
       (changedFiles) => markInternalWrites(this.scanState, changedFiles)
+    )
+  }
+
+  async listNoteFiles(request: NoteFilesListRequest): Promise<NoteFileEntryDto[]> {
+    return noteIo.listNoteFiles(this.getHandle(request.knowledgeBaseId), request)
+  }
+
+  async readNoteTextFile(request: NoteFileReadTextRequest): Promise<NoteTextFileDto> {
+    return noteIo.readNoteTextFile(this.getHandle(request.knowledgeBaseId), request)
+  }
+
+  async saveNoteTextFile(request: NoteFileSaveTextRequest): Promise<NoteTextFileDto> {
+    return noteIo.saveNoteTextFile(
+      this.getHandle(request.knowledgeBaseId),
+      request,
+      this.mutationEffects()
     )
   }
 

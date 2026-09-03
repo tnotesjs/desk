@@ -58,6 +58,15 @@ describe('MarkdownSourceEditor', () => {
     wrapper.unmount()
   })
 
+  it('switches the source page between standard and wide layouts', async () => {
+    const wrapper = mountEditor('alpha', { pageWidth: 'wide' })
+
+    expect(wrapper.get('.markdown-source-editor').classes()).toContain('is-wide')
+    await wrapper.setProps({ pageWidth: 'standard' })
+    expect(wrapper.get('.markdown-source-editor').classes()).not.toContain('is-wide')
+    wrapper.unmount()
+  })
+
   it('keeps the formatting toolbar interface and emits exact Markdown edits', () => {
     const insertion = mountEditor()
     editorHandle(insertion).insertTextAt('!', 5)

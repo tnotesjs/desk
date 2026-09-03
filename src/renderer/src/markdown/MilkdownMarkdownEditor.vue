@@ -46,17 +46,22 @@ import { reconcileMarkdownSource } from '../editor/markdown/sourcePreservation'
 import { resolveMarkdownImageUrl } from './markdownAssetUrl'
 import { createDeskRawBlockView } from './createDeskRawBlockView'
 
-import type { NoteViewMode } from '../../../shared/contracts'
+import type { NotePageWidth, NoteTocDisplay, NoteViewMode } from '../../../shared/contracts'
 
-const props = defineProps<{
-  content: string
-  mode: NoteViewMode
-  readOnly: boolean
-  knowledgeBaseId: string
-  noteUuid: string
-  active: boolean
-  uploadImage: (file: File) => Promise<{ src: string; alt: string }>
-}>()
+const props = withDefaults(
+  defineProps<{
+    content: string
+    mode: NoteViewMode
+    pageWidth?: NotePageWidth
+    tocDisplay?: NoteTocDisplay
+    readOnly: boolean
+    knowledgeBaseId: string
+    noteUuid: string
+    active: boolean
+    uploadImage: (file: File) => Promise<{ src: string; alt: string }>
+  }>(),
+  { pageWidth: 'standard', tocDisplay: 'expanded' }
+)
 
 const emit = defineEmits<{
   change: [content: string]
@@ -483,6 +488,16 @@ function applyReadonlyState(): void {
   view.dom.blur()
 }
 
+function applyGeneratedTocDisplay(): void {
+  const collapsed = props.tocDisplay === 'collapsed'
+  for (const toc of host.value?.querySelectorAll<HTMLElement>('.desk-generated-toc') ?? []) {
+    toc.classList.toggle('is-collapsed', collapsed)
+    const toggle = toc.querySelector<HTMLButtonElement>('.desk-generated-toc__toggle')
+    toggle?.setAttribute('aria-expanded', String(!collapsed))
+    toggle?.setAttribute('aria-label', collapsed ? '展开目录' : '折叠目录')
+  }
+}
+
 defineExpose({
   insertTextAt,
   wrapSelection,
@@ -607,6 +622,7 @@ async function syncExternalContent(content: string): Promise<void> {
   try {
     crepe.editor.action(replaceAll(projectRawBlocksForMilkdown(content), true))
     baselineCanonical = crepe.getMarkdown()
+    applyGeneratedTocDisplay()
   } finally {
     synchronizing = false
   }
@@ -759,6 +775,7 @@ onMounted(async () => {
     baselineCanonical = editor.getMarkdown()
     ready = true
     applyReadonlyState()
+    applyGeneratedTocDisplay()
     if (host.value) {
       blockHandleClickCleanup = installBlockHandleClickController({
         root: host.value,
@@ -803,6 +820,11 @@ watch(
 )
 
 watch(
+  () => props.tocDisplay,
+  () => applyGeneratedTocDisplay()
+)
+
+watch(
   () => props.active,
   (active) => {
     if (active) focus()
@@ -834,7 +856,11 @@ onBeforeUnmount(() => {
   <div
     ref="host"
     class="milkdown-markdown-editor"
-    :class="{ 'is-readonly': isEffectivelyReadOnly() }"
+    :class="{
+      'is-readonly': isEffectivelyReadOnly(),
+      'is-wide': pageWidth === 'wide',
+      'is-toc-hidden': tocDisplay === 'hidden'
+    }"
     @click.capture="handleClick"
   />
   <Teleport to="body">

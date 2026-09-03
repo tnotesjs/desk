@@ -63,6 +63,8 @@ const groupDefaults: Record<string, Partial<AppSettings>> = {
     theme: 'system',
     density: 'comfortable',
     defaultNoteView: 'visual',
+    defaultNotePageWidth: 'standard',
+    noteTocDisplay: 'expanded',
     autosave: { enabled: true, delayMs: 1000 },
     workspaceLayout: 'kb-dir-content',
     prettier: true,

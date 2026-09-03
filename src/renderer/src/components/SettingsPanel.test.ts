@@ -15,6 +15,8 @@ const settings: AppSettings = {
   theme: 'system',
   density: 'comfortable',
   defaultNoteView: 'visual',
+  defaultNotePageWidth: 'standard',
+  noteTocDisplay: 'expanded',
   autosave: { enabled: true, delayMs: 800 },
   createNotePosition: 'top',
   workspaceLayout: 'kb-dir-content',
@@ -67,6 +69,24 @@ afterEach(() => {
 })
 
 describe('SettingsPanel Markdown quick-input catalog', () => {
+  it('defaults the note page width control to standard', () => {
+    const wrapper = mount(SettingsPanel)
+    const field = wrapper
+      .findAll('label.field')
+      .find((candidate) => candidate.text().includes('笔记默认页宽'))
+
+    expect(field?.find('select').element.value).toBe('standard')
+  })
+
+  it('defaults the in-note table of contents control to expanded', () => {
+    const wrapper = mount(SettingsPanel)
+    const field = wrapper
+      .findAll('label.field')
+      .find((candidate) => candidate.text().includes('笔记内目录'))
+
+    expect(field?.find('select').element.value).toBe('expanded')
+  })
+
   it('renders every shared slash, block, and inline shortcut entry', async () => {
     const wrapper = mount(SettingsPanel)
     await wrapper.get('button.nav-item:nth-child(7)').trigger('click')

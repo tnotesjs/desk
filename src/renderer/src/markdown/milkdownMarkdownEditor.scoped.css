@@ -30,7 +30,7 @@
   --crepe-color-on-secondary: var(--editor-text);
   --crepe-color-inverse: var(--editor-text);
   --crepe-color-on-inverse: var(--editor-bg);
-  --crepe-color-inline-code: var(--danger);
+  --crepe-color-inline-code: var(--accent-strong);
   --crepe-color-error: var(--danger);
   --crepe-color-hover: var(--hover);
   --crepe-color-selected: color-mix(in srgb, var(--accent) 45%, transparent);
@@ -194,6 +194,10 @@
   line-height: 1.72;
   outline: none;
   --prosemirror-virtual-cursor-color: var(--accent-strong);
+}
+
+.milkdown-markdown-editor.is-wide :deep(.ProseMirror) {
+  width: 100%;
 }
 
 /* Crepe's virtual cursor owns text-caret rendering. Prefer it over the browser
@@ -1662,6 +1666,10 @@
 .milkdown-markdown-editor :deep(.desk-generated-toc) {
   margin: 0.5em 0 1.25em;
   padding: 0;
+}
+
+.milkdown-markdown-editor.is-toc-hidden :deep(.desk-generated-toc) {
+  display: none;
 }
 
 .milkdown-markdown-editor :deep(.desk-generated-toc__toggle) {

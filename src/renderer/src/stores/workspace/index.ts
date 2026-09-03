@@ -9,6 +9,7 @@ import type {
   GitRepositoryStateDto,
   KnowledgeBaseDetail,
   NoteEditorTab,
+  NoteFileKind,
   RecoveryRecord,
   SearchResultDto,
   WorkspaceOverview
@@ -19,14 +20,28 @@ import { createDocuments } from './documents'
 import { createGit } from './git'
 import {
   documentKey,
+  noteFileKey,
   replaceDescriptor,
   resultValue,
   type DocumentSession,
-  type GitAttention
+  type GitAttention,
+  type NoteFileSession
 } from './helpers'
+import { createNoteFiles } from './noteFiles'
 import { createSearch } from './search'
 import { createSettings } from './settings'
 import { createToc } from './toc'
+
+function collectNoteUuids(nodes: DeskTocNode[]): Set<string> {
+  const noteUuids = new Set<string>()
+  const queue = [...nodes]
+  while (queue.length > 0) {
+    const node = queue.shift()!
+    if (node.type === 'note') noteUuids.add(node.uuid)
+    queue.unshift(...node.children)
+  }
+  return noteUuids
+}
 
 export const useWorkspaceStore = defineStore('workspace', () => {
   const editor = useEditorStore()
@@ -36,6 +51,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const selectedKnowledgeBaseId = ref<string | null>(null)
   const knowledgeBase = ref<KnowledgeBaseDetail | null>(null)
   const documents = ref<Record<string, DocumentSession>>({})
+  const noteFiles = ref<Record<string, NoteFileSession>>({})
+  const noteFileTreeRevision = ref(0)
   const pendingRecoveries = ref<RecoveryRecord[]>([])
   const searchResults = ref<SearchResultDto[]>([])
   const searchLoading = ref(false)
@@ -52,8 +69,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   } | null>(null)
   const autosaveTimers = new Map<string, ReturnType<typeof setTimeout>>()
   const recoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  const noteFileAutosaveTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  const noteFileRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
   let unsubscribeWorkspace: (() => void) | null = null
   let unsubscribeExternal: (() => void) | null = null
+  let unsubscribeFileExternal: (() => void) | null = null
   let unsubscribeGit: (() => void) | null = null
   let tocFocusSequence = 0
 
@@ -94,7 +114,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   function applyDetail(detail: KnowledgeBaseDetail): void {
-    if (selectedKnowledgeBaseId.value === detail.id) knowledgeBase.value = detail
+    if (selectedKnowledgeBaseId.value === detail.id) {
+      knowledgeBase.value = detail
+      editor.switchKnowledgeBase(detail.id, collectNoteUuids(detail.toc))
+    }
     overview.value = replaceDescriptor(overview.value, detail)
   }
 
@@ -104,9 +127,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     try {
       const detail = resultValue(await window.desk.knowledgeBases.read(knowledgeBaseId))
       selectedKnowledgeBaseId.value = knowledgeBaseId
-      knowledgeBase.value = detail
+      applyDetail(detail)
       searchResults.value = []
-      overview.value = replaceDescriptor(overview.value, detail)
       const gitState = gitStates.value[knowledgeBaseId]
       if (gitState?.behind) {
         gitAttention.value = {
@@ -151,8 +173,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     uploadImage,
     copyNoteDirectoryPath,
     revealNoteInFileManager,
-    saveCurrentDocument,
-    saveAllDocuments,
+    saveCurrentDocument: saveCurrentNoteDocument,
+    saveAllDocuments: saveAllNoteDocuments,
     reloadDocument,
     acceptRecovery,
     discardRecovery,
@@ -175,6 +197,47 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     applyDetail,
     selectKnowledgeBase
   })
+
+  const {
+    listNoteFiles,
+    ensureNoteFile,
+    updateNoteFileContent,
+    saveNoteFile,
+    saveAllNoteFiles,
+    reloadNoteFile,
+    keepNoteFileAgainstDisk,
+    prepareFileRecoveries,
+    acceptFileRecovery,
+    discardFileRecovery,
+    getNoteFileSession,
+    persistFileRecovery,
+    removeNoteFileSession
+  } = createNoteFiles({
+    editor,
+    noteFiles,
+    pendingRecoveries,
+    settings,
+    error,
+    status,
+    autosaveTimers: noteFileAutosaveTimers,
+    recoveryTimers: noteFileRecoveryTimers,
+    descriptors: computed(() => overview.value.allKnowledgeBases),
+    selectKnowledgeBase
+  })
+
+  async function saveCurrentDocument(): Promise<void> {
+    const tab = editor.activeTab
+    if (tab?.type === 'note-file' && tab.fileKind === 'text') {
+      await saveNoteFile(noteFileKey(tab.knowledgeBaseId, tab.noteUuid, tab.path))
+      return
+    }
+    await saveCurrentNoteDocument()
+  }
+
+  async function saveAllDocuments(): Promise<void> {
+    await saveAllNoteDocuments()
+    await saveAllNoteFiles()
+  }
 
   const { updateSettings, applySettings } = createSettings({ editor, settings })
 
@@ -238,16 +301,28 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       unsubscribeGit = window.desk.git.onStateChanged((state) => {
         gitStates.value = { ...gitStates.value, [state.knowledgeBaseId]: state }
       })
-      editor.restore(payload.session, payload.workspace.knowledgeBases)
+      editor.restore(
+        payload.session,
+        payload.workspace.allKnowledgeBases,
+        new Set(payload.workspace.knowledgeBases.map((item) => item.id))
+      )
       await prepareRecoveries(payload.recoveries)
+      await prepareFileRecoveries(payload.recoveries)
       unsubscribeWorkspace = window.desk.workspace.onChanged((next) => {
         overview.value = next
-        if (
-          selectedKnowledgeBaseId.value &&
-          !next.allKnowledgeBases.some((item) => item.id === selectedKnowledgeBaseId.value)
-        ) {
+        noteFileTreeRevision.value += 1
+        editor.retainKnowledgeBases(new Set(next.allKnowledgeBases.map((item) => item.id)))
+        const selectedId = selectedKnowledgeBaseId.value
+        if (selectedId && !next.allKnowledgeBases.some((item) => item.id === selectedId)) {
           selectedKnowledgeBaseId.value = null
           knowledgeBase.value = null
+          return
+        }
+        if (selectedId) {
+          void window.desk.knowledgeBases.read(selectedId).then((result) => {
+            if (!result.ok || selectedKnowledgeBaseId.value !== selectedId) return
+            applyDetail(result.value)
+          })
         }
       })
       unsubscribeExternal = window.desk.notes.onExternalChanged((event) => {
@@ -260,6 +335,32 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         }
         void reloadDocument(key)
       })
+      unsubscribeFileExternal = window.desk.noteFiles.onExternalChanged((event) => {
+        noteFileTreeRevision.value += 1
+        const key = noteFileKey(event.knowledgeBaseId, event.noteUuid, event.path)
+        const session = noteFiles.value[key]
+        if (event.kind === 'deleted') {
+          if (session?.dirty) {
+            noteFiles.value = {
+              ...noteFiles.value,
+              [key]: { ...session, externalConflict: true }
+            }
+          } else {
+            removeNoteFileSession(key)
+            editor.closeNoteFile(event.knowledgeBaseId, event.noteUuid, event.path)
+          }
+          return
+        }
+        if (!session) return
+        if (session.dirty) {
+          noteFiles.value = {
+            ...noteFiles.value,
+            [key]: { ...session, externalConflict: true }
+          }
+          return
+        }
+        void reloadNoteFile(key)
+      })
 
       const initial = payload.workspace.knowledgeBases.find(
         (item) => item.id === payload.session?.selectedKnowledgeBaseId
@@ -269,6 +370,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       const activeTab = editor.activeTab
       if (activeTab?.type === 'note') {
         await ensureDocument(activeTab.knowledgeBaseId, activeTab.noteUuid)
+      } else if (activeTab?.type === 'note-file' && activeTab.fileKind === 'text') {
+        await ensureNoteFile(activeTab.knowledgeBaseId, activeTab.noteUuid, activeTab.path)
       }
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : String(cause)
@@ -282,14 +385,23 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     unsubscribeWorkspace = null
     unsubscribeExternal?.()
     unsubscribeExternal = null
+    unsubscribeFileExternal?.()
+    unsubscribeFileExternal = null
     unsubscribeGit?.()
     unsubscribeGit = null
     for (const timer of autosaveTimers.values()) clearTimeout(timer)
     autosaveTimers.clear()
     for (const timer of recoveryTimers.values()) clearTimeout(timer)
     recoveryTimers.clear()
+    for (const timer of noteFileAutosaveTimers.values()) clearTimeout(timer)
+    noteFileAutosaveTimers.clear()
+    for (const timer of noteFileRecoveryTimers.values()) clearTimeout(timer)
+    noteFileRecoveryTimers.clear()
     for (const [key, session] of Object.entries(documents.value)) {
       if (session.dirty) void persistRecovery(key)
+    }
+    for (const [key, session] of Object.entries(noteFiles.value)) {
+      if (session.dirty) void persistFileRecovery(key)
     }
     editor.dispose()
   }
@@ -302,6 +414,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       overview.value = resultValue(await window.desk.workspace.choose())
       editor.reset()
       documents.value = {}
+      noteFiles.value = {}
       selectedKnowledgeBaseId.value = null
       knowledgeBase.value = null
       const first = overview.value.knowledgeBases[0]
@@ -315,8 +428,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
   async function syncToActiveTab(forceReveal = false): Promise<void> {
     const tab = editor.activeTab
-    if (tab?.type !== 'note') return
-    await ensureDocument(tab.knowledgeBaseId, tab.noteUuid)
+    if (!tab || tab.type === 'web') return
+    if (tab.type === 'note') await ensureDocument(tab.knowledgeBaseId, tab.noteUuid)
+    else if (tab.fileKind === 'text') {
+      await ensureNoteFile(tab.knowledgeBaseId, tab.noteUuid, tab.path)
+    }
     if (forceReveal || settings.value?.tabs.autoRevealInToc) {
       if (selectedKnowledgeBaseId.value !== tab.knowledgeBaseId) {
         await selectKnowledgeBase(tab.knowledgeBaseId)
@@ -328,6 +444,54 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         sequence: tocFocusSequence
       }
     }
+  }
+
+  async function openNoteFile(path: string, fileKind: NoteFileKind): Promise<void> {
+    const scope = editor.activeNoteScope
+    const descriptor = selectedKnowledgeBase.value
+    if (!scope || !descriptor) return
+    if (path.toLocaleLowerCase() === 'readme.md') {
+      editor.openNote(
+        descriptor,
+        scope.noteUuid,
+        scope.noteTitle,
+        settings.value?.defaultNoteView ?? 'visual',
+        undefined,
+        'permanent'
+      )
+      await ensureDocument(descriptor.id, scope.noteUuid)
+      return
+    }
+    editor.openNoteFile(descriptor, scope.noteUuid, scope.noteTitle, path, fileKind)
+    if (fileKind !== 'text') return
+    try {
+      await ensureNoteFile(descriptor.id, scope.noteUuid, path)
+    } catch (cause) {
+      editor.closeNoteFile(descriptor.id, scope.noteUuid, path)
+      error.value = cause instanceof Error ? cause.message : String(cause)
+    }
+  }
+
+  async function reloadCurrentNoteFile(): Promise<void> {
+    const tab = editor.activeTab
+    if (tab?.type !== 'note-file' || tab.fileKind !== 'text') return
+    await reloadNoteFile(noteFileKey(tab.knowledgeBaseId, tab.noteUuid, tab.path))
+  }
+
+  async function keepCurrentNoteFileAgainstDisk(): Promise<void> {
+    const tab = editor.activeTab
+    if (tab?.type !== 'note-file' || tab.fileKind !== 'text') return
+    await keepNoteFileAgainstDisk(noteFileKey(tab.knowledgeBaseId, tab.noteUuid, tab.path))
+  }
+
+  async function acceptAnyRecovery(record: RecoveryRecord): Promise<void> {
+    if (record.path) await acceptFileRecovery(record)
+    else await acceptRecovery(record)
+  }
+
+  function discardAnyRecovery(record: RecoveryRecord): void {
+    if (record.path) discardFileRecovery(record)
+    else discardRecovery(record)
   }
 
   async function revealTabInToc(tab: NoteEditorTab): Promise<void> {
@@ -402,6 +566,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     selectedKnowledgeBase,
     knowledgeBase,
     documents,
+    noteFiles,
+    noteFileTreeRevision,
     pendingRecoveries,
     searchResults,
     searchLoading,
@@ -434,6 +600,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     syncToActiveTab,
     revealTabInToc,
     selectNote,
+    openNoteFile,
     openNoteByUuid,
     updateDocumentContent,
     updateEditorContent,
@@ -448,8 +615,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     revealNoteInFileManager,
     reloadCurrentDocument,
     keepEditorAgainstDisk,
-    acceptRecovery,
-    discardRecovery,
+    acceptRecovery: acceptAnyRecovery,
+    discardRecovery: discardAnyRecovery,
     createNote,
     createTocGroup,
     renameTocNode,
@@ -458,6 +625,13 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     previewDeleteNode,
     deleteNode,
     ensureDocument,
-    getDocumentSession
+    getDocumentSession,
+    listNoteFiles,
+    ensureNoteFile,
+    updateNoteFileContent,
+    saveNoteFile,
+    reloadCurrentNoteFile,
+    keepCurrentNoteFileAgainstDisk,
+    getNoteFileSession
   }
 })

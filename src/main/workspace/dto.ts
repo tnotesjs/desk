@@ -25,6 +25,30 @@ export function iconFromSnapshot(snapshot: KnowledgeBaseSnapshot): KnowledgeBase
   }
 }
 
+function httpUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined
+  try {
+    const url = new URL(value)
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString() : undefined
+  } catch {
+    return undefined
+  }
+}
+
+export function externalLinksFromSnapshot(
+  snapshot: KnowledgeBaseSnapshot
+): Pick<KnowledgeBaseDescriptor, 'repositoryUrl' | 'pageUrl'> {
+  const author = snapshot.config?.author?.trim()
+  const repoName = snapshot.config?.repoName?.trim()
+  return {
+    repositoryUrl:
+      author && repoName
+        ? `https://github.com/${encodeURIComponent(author)}/${encodeURIComponent(repoName)}`
+        : undefined,
+    pageUrl: httpUrl(snapshot.config?.root_item?.link)
+  }
+}
+
 export function descriptor(handle: KnowledgeBaseHandle): KnowledgeBaseDescriptor {
   const snapshot = handle.snapshot
   return {
@@ -34,6 +58,7 @@ export function descriptor(handle: KnowledgeBaseHandle): KnowledgeBaseDescriptor
     rootPath: handle.rootPath,
     displayName: snapshot.config?.root_item?.title || handle.name.replace(/^TNotes\./, ''),
     icon: iconFromSnapshot(snapshot),
+    ...externalLinksFromSnapshot(snapshot),
     health: snapshot.health.status,
     diagnostics: snapshot.health.diagnostics,
     noteCount: snapshot.notes.length,

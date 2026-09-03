@@ -9,6 +9,7 @@ export type CodeTabSaveResult = { ok: true } | { ok: false; message: string }
 
 export interface CodeTabEditorHandle {
   getValue(): string
+  setValue(value: string): void
   setSavedValue(value: string): void
   setLanguage(language: string): void
   destroy(): void
@@ -34,6 +35,8 @@ export interface MountCodeTabEditorOptions {
   onCopy?: (text: string) => void | Promise<void>
   /** Toggle dirty class on an ancestor (e.g. tab button / card). */
   onDirtyChange?: (dirty: boolean) => void
+  /** Mirrors every user or programmatic document update to a shared resource store. */
+  onChange?: (content: string) => void
   /** VitePress-style clickable line highlights for this tab's CodeMirror. */
   lineHighlight?: {
     initial?: string
@@ -315,6 +318,7 @@ export function mountCodeTabEditor(
       dirty = value !== savedContent
       if (dirty) setStatus('')
       syncDirtyUi()
+      options.onChange?.(value)
     },
     () => {
       void save()
@@ -334,6 +338,7 @@ export function mountCodeTabEditor(
 
   return {
     getValue: () => editor?.getValue() ?? savedContent,
+    setValue: (value: string) => editor?.setValue(value),
     setSavedValue: (value: string) => {
       savedContent = value
       dirty = (editor?.getValue() ?? value) !== savedContent

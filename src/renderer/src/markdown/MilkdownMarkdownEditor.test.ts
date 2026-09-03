@@ -46,6 +46,15 @@ describe('MilkdownMarkdownEditor synchronization', () => {
     wrapper.unmount()
   })
 
+  it('switches the visual page between standard and wide layouts', async () => {
+    const wrapper = await mountEditor('alpha\n', { pageWidth: 'wide' })
+
+    expect(wrapper.get('.milkdown-markdown-editor').classes()).toContain('is-wide')
+    await wrapper.setProps({ pageWidth: 'standard' })
+    expect(wrapper.get('.milkdown-markdown-editor').classes()).not.toContain('is-wide')
+    wrapper.unmount()
+  })
+
   it('flushes a transaction synchronously when the view is immediately unmounted', async () => {
     const wrapper = await mountEditor()
     const editor = wrapper.vm as unknown as EditorHandle
@@ -244,6 +253,37 @@ describe('MilkdownMarkdownEditor synchronization', () => {
 
     expect(scrollIntoView).toHaveBeenCalledWith({ block: 'start' })
     expect(wrapper.emitted('openLink')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('applies hidden, collapsed, and expanded in-note TOC modes', async () => {
+    const source = [
+      '# 0001. 标题',
+      '',
+      '<!-- region:toc -->',
+      '- [1. 第一节](#1-第一节)',
+      '<!-- endregion:toc -->',
+      '',
+      '## 1. 第一节',
+      '',
+      '正文',
+      ''
+    ].join('\n')
+    const wrapper = await mountEditor(source, { tocDisplay: 'collapsed' })
+    const editor = wrapper.get('.milkdown-markdown-editor')
+    const toc = wrapper.get('.desk-generated-toc')
+    const toggle = toc.get('.desk-generated-toc__toggle')
+
+    expect(toc.classes()).toContain('is-collapsed')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+
+    await wrapper.setProps({ tocDisplay: 'hidden' })
+    expect(editor.classes()).toContain('is-toc-hidden')
+
+    await wrapper.setProps({ tocDisplay: 'expanded' })
+    expect(editor.classes()).not.toContain('is-toc-hidden')
+    expect(toc.classes()).not.toContain('is-collapsed')
+    expect(toggle.attributes('aria-expanded')).toBe('true')
     wrapper.unmount()
   })
 

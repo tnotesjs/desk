@@ -18,9 +18,15 @@ import type {
   DeskApi,
   DeskResult,
   ExternalNoteChangeEvent,
+  ExternalNoteFileChangeEvent,
   KnowledgeBaseDetail,
   NoteCreateRequest,
   NoteDocumentDto,
+  NoteFileEntryDto,
+  NoteFileReadTextRequest,
+  NoteFileSaveTextRequest,
+  NoteFilesListRequest,
+  NoteTextFileDto,
   NotesTableResolveRequest,
   NotesTableResolveResult,
   NoteMutationDto,
@@ -126,6 +132,22 @@ const api: DeskApi = {
       ): void => callback(payload)
       ipcRenderer.on(IPC_CHANNELS.noteExternalChanged, listener)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.noteExternalChanged, listener)
+    }
+  },
+  noteFiles: {
+    list: (request: NoteFilesListRequest) =>
+      invoke<NoteFileEntryDto[]>(IPC_CHANNELS.noteFilesList, request),
+    readText: (request: NoteFileReadTextRequest) =>
+      invoke<NoteTextFileDto>(IPC_CHANNELS.noteFileReadText, request),
+    saveText: (request: NoteFileSaveTextRequest) =>
+      invoke<NoteTextFileDto>(IPC_CHANNELS.noteFileSaveText, request),
+    onExternalChanged: (callback) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        payload: ExternalNoteFileChangeEvent
+      ): void => callback(payload)
+      ipcRenderer.on(IPC_CHANNELS.noteFileExternalChanged, listener)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.noteFileExternalChanged, listener)
     }
   },
   attachments: {

@@ -24,7 +24,12 @@ export function registerGit(getWindow: GetWindow): () => void {
   handle(IPC_CHANNELS.ideShowKnowledgeBaseMenu, getWindow, z.string().min(1), (knowledgeBaseId) => {
     const window = getWindow()
     if (!window) throw new Error('Desk 主窗口不可用')
-    showIdeContextMenu(window, workspaceManager.getLocation(knowledgeBaseId).rootPath)
+    const location = workspaceManager.getLocation(knowledgeBaseId)
+    const detail = workspaceManager.getDetail(knowledgeBaseId)
+    showIdeContextMenu(window, location.rootPath, {
+      repositoryUrl: detail.repositoryUrl,
+      pageUrl: detail.pageUrl
+    })
   })
   handle(
     IPC_CHANNELS.ideShowNoteMenu,

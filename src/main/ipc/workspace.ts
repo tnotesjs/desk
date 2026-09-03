@@ -101,9 +101,16 @@ export function registerWorkspace(getWindow: GetWindow): () => void {
       window.webContents.send(IPC_CHANNELS.noteExternalChanged, event)
     }
   })
+  const offFileExternalChanged = workspaceManager.onNoteFileExternalChanged((event) => {
+    const window = getWindow()
+    if (window && !window.isDestroyed()) {
+      window.webContents.send(IPC_CHANNELS.noteFileExternalChanged, event)
+    }
+  })
 
   return () => {
     offChanged()
     offExternalChanged()
+    offFileExternalChanged()
   }
 }

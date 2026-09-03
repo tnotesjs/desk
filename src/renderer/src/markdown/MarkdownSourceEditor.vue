@@ -25,16 +25,20 @@ import {
 } from '@codemirror/view'
 import { githubDark, githubLight } from '@uiw/codemirror-theme-github'
 
-import type { NoteViewMode } from '../../../shared/contracts'
+import type { NotePageWidth, NoteViewMode } from '../../../shared/contracts'
 
-const props = defineProps<{
-  content: string
-  mode: NoteViewMode
-  readOnly: boolean
-  knowledgeBaseId: string
-  noteUuid: string
-  active: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    content: string
+    mode: NoteViewMode
+    pageWidth?: NotePageWidth
+    readOnly: boolean
+    knowledgeBaseId: string
+    noteUuid: string
+    active: boolean
+  }>(),
+  { pageWidth: 'standard' }
+)
 
 const emit = defineEmits<{
   change: [content: string]
@@ -315,7 +319,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="host" class="markdown-source-editor" />
+  <div ref="host" class="markdown-source-editor" :class="{ 'is-wide': pageWidth === 'wide' }" />
 </template>
 
 <style scoped>
@@ -342,6 +346,10 @@ onBeforeUnmount(() => {
   padding: 20px max(24px, calc((100% - 940px) / 2));
   user-select: text;
   -webkit-user-select: text;
+}
+
+.markdown-source-editor.is-wide :deep(.cm-content) {
+  padding-inline: 24px;
 }
 
 .markdown-source-editor :deep(.cm-content) ::selection,

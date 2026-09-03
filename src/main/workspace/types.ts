@@ -1,5 +1,9 @@
 import type { KnowledgeBaseSnapshot, TNotesWorkspace } from '@tnotesjs/core/workspace'
-import type { ExternalNoteChangeEvent, WorkspaceOverview } from '../../shared/contracts'
+import type {
+  ExternalNoteChangeEvent,
+  ExternalNoteFileChangeEvent,
+  WorkspaceOverview
+} from '../../shared/contracts'
 
 export const KNOWLEDGE_BASE_NAME = /^TNotes\./
 
@@ -22,6 +26,7 @@ export interface KnowledgeBaseHandle {
 export interface WorkspaceManagerEvents {
   changed: [WorkspaceOverview]
   noteExternalChanged: [ExternalNoteChangeEvent]
+  noteFileExternalChanged: [ExternalNoteFileChangeEvent]
 }
 
 export interface GitRepositoryDescriptor {

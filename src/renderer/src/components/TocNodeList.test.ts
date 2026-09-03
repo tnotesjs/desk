@@ -132,6 +132,20 @@ describe('TocNodeList', () => {
     expect(wrapper.emitted('requestRename')).toBeUndefined()
   })
 
+  it('shows note path, Finder, pin and IDE actions on right click', async () => {
+    const wrapper = mountList()
+
+    await wrapper.find('.toc-row').trigger('contextmenu', { clientX: 40, clientY: 60 })
+
+    const menu = document.body.querySelector('.note-context-menu')
+    expect(menu?.textContent).toContain('复制路径')
+    expect(menu?.textContent).toContain('在 Finder 中显示')
+    expect(menu?.textContent).toContain('固定')
+    expect(menu?.textContent).toContain('使用 IDE 打开')
+    expect(wrapper.emitted('openIde')).toBeUndefined()
+    wrapper.unmount()
+  })
+
   it('does not request a rename when double-clicking a group', async () => {
     const group: Extract<DeskTocNode, { type: 'group' }> = {
       type: 'group',

@@ -21,6 +21,8 @@ const autosaveSettings: AppSettings = {
   theme: 'system',
   density: 'comfortable',
   defaultNoteView: 'visual',
+  defaultNotePageWidth: 'standard',
+  noteTocDisplay: 'expanded',
   autosave: { enabled: true, delayMs: 50 },
   createNotePosition: 'top',
   workspaceLayout: 'kb-dir-content',

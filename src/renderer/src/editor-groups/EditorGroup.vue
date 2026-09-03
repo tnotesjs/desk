@@ -4,6 +4,7 @@ import { computed, ref } from 'vue'
 import KnowledgeBaseIcon from '../components/KnowledgeBaseIcon.vue'
 import UiTooltip from '../components/UiTooltip.vue'
 import NoteTabPane from './NoteTabPane.vue'
+import NoteFileTabPane from './NoteFileTabPane.vue'
 import WebTabPane from './WebTabPane.vue'
 import { useEditorStore } from '../stores/editor'
 import { useWorkspaceStore } from '../stores/workspace'
@@ -96,12 +97,31 @@ function handleGroupDragEnter(event: DragEvent): void {
 }
 
 function isDirty(tab: EditorTab): boolean {
-  if (tab.type !== 'note') return false
-  return Boolean(workspace.getDocumentSession(tab.knowledgeBaseId, tab.noteUuid)?.dirty)
+  if (tab.type === 'note') {
+    return Boolean(workspace.getDocumentSession(tab.knowledgeBaseId, tab.noteUuid)?.dirty)
+  }
+  if (tab.type === 'note-file') {
+    return Boolean(workspace.getNoteFileSession(tab.knowledgeBaseId, tab.noteUuid, tab.path)?.dirty)
+  }
+  return false
+}
+
+function tabAriaLabel(tab: EditorTab): string {
+  if (tab.type === 'web') return tab.url
+  if (tab.type === 'note') return `${tab.knowledgeBaseName} · ${tab.title}`
+  return `${tab.noteTitle} · ${tab.path}`
 }
 
 function closeTab(tab: EditorTab): void {
   if (!editor.close(props.group.id, tab.id)) workspace.status = '固定标签需要先解除固定才能关闭'
+}
+
+function closeTabWithMiddleButton(event: MouseEvent, tab: EditorTab): void {
+  if (event.button !== 1) return
+  event.preventDefault()
+  event.stopPropagation()
+  if (tab.pinned) editor.setPinned(tab.id, false)
+  closeTab(tab)
 }
 
 function openWeb(): void {
@@ -176,8 +196,9 @@ async function runTabAction(
           class="tab pinned"
           :class="{ selected: tab.id === group.activeTabId }"
           draggable="true"
-          :aria-label="tab.type === 'note' ? `${tab.knowledgeBaseName} · ${tab.title}` : tab.url"
+          :aria-label="tabAriaLabel(tab)"
           @click="activate(tab)"
+          @auxclick="closeTabWithMiddleButton($event, tab)"
           @contextmenu.prevent="showTabMenu($event, tab)"
           @dragstart="beginDrag($event, tab)"
           @dragover.prevent
@@ -192,6 +213,7 @@ async function runTabAction(
           <span v-else-if="tab.type === 'note'" class="tab-icon knowledge-tab-icon">
             <KnowledgeBaseIcon :icon="tab.icon" :fallback="tab.knowledgeBaseName" />
           </span>
+          <span v-else-if="tab.type === 'note-file'" class="tab-icon file-tab-icon">&lt;/&gt;</span>
           <span v-else class="tab-icon">⌘</span>
           <span class="tab-title">{{ tab.title }}</span>
           <span v-if="isDirty(tab)" class="dirty-dot">●</span>
@@ -215,8 +237,9 @@ async function runTabAction(
             preview: tab.type === 'note' && tab.preview
           }"
           draggable="true"
-          :aria-label="tab.type === 'note' ? `${tab.knowledgeBaseName} · ${tab.title}` : tab.url"
+          :aria-label="tabAriaLabel(tab)"
           @click="activate(tab)"
+          @auxclick="closeTabWithMiddleButton($event, tab)"
           @dblclick.stop="editor.keepOpen(tab.id)"
           @contextmenu.prevent="showTabMenu($event, tab)"
           @dragstart="beginDrag($event, tab)"
@@ -232,6 +255,7 @@ async function runTabAction(
           <span v-else-if="tab.type === 'note'" class="tab-icon knowledge-tab-icon">
             <KnowledgeBaseIcon :icon="tab.icon" :fallback="tab.knowledgeBaseName" />
           </span>
+          <span v-else-if="tab.type === 'note-file'" class="tab-icon file-tab-icon">&lt;/&gt;</span>
           <span v-else class="tab-icon">⌘</span>
           <span class="tab-title">{{ tab.title }}</span>
           <span v-if="isDirty(tab)" class="dirty-dot">●</span>
@@ -274,6 +298,12 @@ async function runTabAction(
     >
       <NoteTabPane
         v-if="tab.type === 'note'"
+        :tab="tab"
+        :group-id="group.id"
+        :active="tab.id === group.activeTabId"
+      />
+      <NoteFileTabPane
+        v-else-if="tab.type === 'note-file'"
         :tab="tab"
         :group-id="group.id"
         :active="tab.id === group.activeTabId"
@@ -447,6 +477,13 @@ async function runTabAction(
 
 .knowledge-tab-icon {
   background: transparent;
+}
+
+.file-tab-icon {
+  width: 20px;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 8px;
 }
 
 .dirty-dot {

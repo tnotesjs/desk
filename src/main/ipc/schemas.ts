@@ -18,6 +18,7 @@ const noteTabSchema = z.object({
   title: z.string(),
   icon: iconSchema,
   viewMode: z.enum(['visual', 'readonly', 'source']),
+  pageWidth: z.enum(['standard', 'wide']).default('standard'),
   preview: z.boolean().optional(),
   pinned: z.boolean().optional(),
   openedAt: z.number().finite().optional(),
@@ -33,7 +34,26 @@ const webTabSchema = z.object({
   openedAt: z.number().finite().optional()
 })
 
-const editorTabSchema = z.discriminatedUnion('type', [noteTabSchema, webTabSchema])
+const noteFileTabSchema = z.object({
+  id: z.string().min(1),
+  type: z.literal('note-file'),
+  knowledgeBaseId: z.string().min(1),
+  knowledgeBaseName: z.string(),
+  noteUuid: z.string().min(1),
+  noteTitle: z.string(),
+  path: z.string().min(1).max(1024),
+  title: z.string(),
+  fileKind: z.enum(['text', 'image', 'unsupported']),
+  pinned: z.boolean().optional(),
+  openedAt: z.number().finite().optional(),
+  dirty: z.boolean().optional()
+})
+
+const editorTabSchema = z.discriminatedUnion('type', [
+  noteTabSchema,
+  noteFileTabSchema,
+  webTabSchema
+])
 
 const editorLayoutSchema: z.ZodType<WorkspaceSession['layout']> = z.lazy(() =>
   z.discriminatedUnion('type', [
@@ -54,16 +74,28 @@ const editorLayoutSchema: z.ZodType<WorkspaceSession['layout']> = z.lazy(() =>
   ])
 )
 
+const knowledgeBaseEditorSchema = z.object({
+  layout: editorLayoutSchema,
+  activeGroupId: z.string().min(1),
+  lastNoteByGroup: z
+    .record(z.string(), z.object({ noteUuid: z.string().min(1), noteTitle: z.string() }))
+    .optional()
+})
+
 export const workspaceSessionSchema = z.object({
   version: z.literal(1),
   selectedKnowledgeBaseId: z.string().nullable(),
   layout: editorLayoutSchema,
   activeGroupId: z.string().min(1),
+  knowledgeBaseEditors: z.record(z.string(), knowledgeBaseEditorSchema).default({}),
   knowledgeSidebarWidth: z.number().min(48).max(520),
   navigatorSidebarWidth: z.number().min(160).max(700),
   knowledgeSidebarCollapsed: z.boolean(),
   navigatorSidebarCollapsed: z.boolean(),
-  expandedTocNodes: z.record(z.string(), z.array(z.string()))
+  expandedTocNodes: z.record(z.string(), z.array(z.string())),
+  noteFileSidebarWidth: z.number().min(160).max(520).default(240),
+  noteFileSidebarCollapsed: z.boolean().default(false),
+  expandedNoteFileDirectories: z.record(z.string(), z.array(z.string())).default({})
 })
 
 export const webBoundsSchema = z.object({
@@ -140,6 +172,7 @@ export const noteUpdateConfigSchema = z.object({
 export const recoveryWriteSchema = z.object({
   knowledgeBaseId: z.string().min(1),
   noteUuid: z.string().min(1),
+  path: z.string().min(1).max(1024).optional(),
   title: z.string(),
   content: z.string(),
   revision: z.string().min(1)
@@ -147,7 +180,25 @@ export const recoveryWriteSchema = z.object({
 
 export const recoveryDeleteSchema = z.object({
   knowledgeBaseId: z.string().min(1),
-  noteUuid: z.string().min(1)
+  noteUuid: z.string().min(1),
+  path: z.string().min(1).max(1024).optional()
+})
+
+export const noteFilesListSchema = z.object({
+  knowledgeBaseId: z.string().min(1),
+  noteUuid: z.string().min(1),
+  directory: z.string().max(1024).optional()
+})
+
+export const noteFileReadTextSchema = z.object({
+  knowledgeBaseId: z.string().min(1),
+  noteUuid: z.string().min(1),
+  path: z.string().min(1).max(1024)
+})
+
+export const noteFileSaveTextSchema = noteFileReadTextSchema.extend({
+  content: z.string().max(2 * 1024 * 1024),
+  expectedRevision: z.string().min(1)
 })
 
 export const attachmentWriteLocalSchema = z.object({
