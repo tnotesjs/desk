@@ -24,6 +24,7 @@ import {
   rectangularSelection
 } from '@codemirror/view'
 import { githubDark, githubLight } from '@uiw/codemirror-theme-github'
+import { clearSourceLineStyles } from './clearSourceLineStyles'
 
 import type { NotePageWidth, NoteViewMode } from '../../../shared/contracts'
 
@@ -173,6 +174,7 @@ function baseExtensions(): Extension[] {
     markdown(),
     EditorState.allowMultipleSelections.of(true),
     keymap.of([
+      { key: 'Mod-\\', run: clearSourceLineStyles },
       {
         key: 'Mod-b',
         run: () => runEdit(() => wrapSelection('**', '**'))

@@ -20,6 +20,7 @@ import {
 } from './markdownInputRules'
 import { clearRawBlockSelectionState, createRawBlockSelectionPlugin } from './rawBlockInteractions'
 import { createReadonlyTransactionGuard } from './readonlyGuard'
+import { clearLineStylesPlugin } from './clearLineStyles'
 import {
   createCodeBlockCommand,
   toggleEmphasisCommand,
@@ -673,6 +674,7 @@ onMounted(async () => {
   editor.editor.use(createCodeBlockTitlePlugin())
   editor.editor.use(codeBlockHighlights.plugin)
   editor.editor.use(createMarkdownShortcutInputRules())
+  editor.editor.use(clearLineStylesPlugin)
   editor.editor.use(
     createBlockShortcutPlugin({
       onRawBlockInserted: openRawSourceEditorAt

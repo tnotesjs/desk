@@ -73,6 +73,79 @@ afterEach(async () => {
   document.body.replaceChildren()
 })
 
+describe('middle-dot code fence shortcut', () => {
+  it('creates an empty code block immediately on the third middle dot', async () => {
+    const { view, crepe } = await createEditor()
+    typeText(view, '··')
+    expect(view.state.doc.firstChild?.type.name).toBe('paragraph')
+    expect(view.state.doc.textContent).toBe('··')
+    typeText(view, '·')
+    expect(view.state.doc.firstChild?.type.name).toBe('code_block')
+    expect(view.state.doc.firstChild?.attrs.language).toBe('')
+    expect(view.state.doc.textContent).toBe('')
+    expect(view.state.selection.$from.parent.type.name).toBe('code_block')
+    expect(view.state.selection.$from.parentOffset).toBe(0)
+    expect(crepe.getMarkdown()).toBe('```\n```\n\n')
+  })
+
+  it('matches the existing backtick code block, serialization and input-rule undo behavior', async () => {
+    const dots = await createEditor()
+    const backticks = await createEditor()
+    typeText(dots.view, '···')
+    typeText(backticks.view, '``` ')
+    expect(dots.view.state.doc.toJSON()).toEqual(backticks.view.state.doc.toJSON())
+    expect(dots.crepe.getMarkdown()).toBe(backticks.crepe.getMarkdown())
+    expect(undoInputRule(dots.view.state, dots.view.dispatch)).toBe(
+      undoInputRule(backticks.view.state, backticks.view.dispatch)
+    )
+  })
+
+  it.each(['正文···', ' ···', '...', '•••', '。。。'])('leaves %s as normal text', async (text) => {
+    const { view } = await createEditor()
+    typeText(view, text)
+    expect(view.state.doc.firstChild?.type.name).toBe('paragraph')
+    expect(view.state.doc.textContent).toBe(text)
+  })
+
+  it('does not turn an existing paragraph into code when typing dots before its text', async () => {
+    const { view } = await createEditor(vi.fn(), 'Existing text')
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1)))
+    typeText(view, '···')
+    expect(view.state.doc.firstChild?.type.name).toBe('paragraph')
+    expect(view.state.doc.textContent).toBe('···Existing text')
+  })
+
+  it('keeps dots literal inside existing code and headings', async () => {
+    const code = await createEditor(vi.fn(), '```js\nvalue\n```')
+    code.view.dispatch(
+      code.view.state.tr.setSelection(TextSelection.create(code.view.state.doc, 1))
+    )
+    typeText(code.view, '···')
+    expect(code.view.state.doc.firstChild?.attrs.language).toBe('js')
+    expect(code.view.state.doc.textContent).toBe('···value')
+    const heading = await createEditor()
+    heading.view.dispatch(
+      heading.view.state.tr.setBlockType(1, 1, heading.view.state.schema.nodes.heading, {
+        level: 2
+      })
+    )
+    typeText(heading.view, '···')
+    expect(heading.view.state.doc.firstChild?.type.name).toBe('heading')
+    expect(heading.view.state.doc.textContent).toBe('···')
+  })
+
+  it('works when an input method commits the three dots together', async () => {
+    const { view } = await createEditor()
+    const { from, to } = view.state.selection
+    const handled = view.someProp('handleTextInput', (handler) =>
+      handler(view, from, to, '···', () => view.state.tr.insertText('···', from, to))
+    )
+    expect(handled).toBe(true)
+    expect(view.state.doc.firstChild?.type.name).toBe('code_block')
+    expect(view.state.doc.textContent).toBe('')
+  })
+})
+
 describe('0006 block shortcuts', () => {
   it.each([
     [':::tip', 'tip'],

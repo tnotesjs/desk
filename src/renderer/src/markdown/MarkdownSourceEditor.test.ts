@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 
 import { mount, type VueWrapper } from '@vue/test-utils'
+import { EditorView } from '@codemirror/view'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import MarkdownSourceEditor from './MarkdownSourceEditor.vue'
@@ -117,6 +118,29 @@ describe('MarkdownSourceEditor', () => {
     expect(editorText(wrapper)).toBe('alpha')
     expect(wrapper.emitted('change')).toBeUndefined()
     expect(wrapper.get('.cm-content').attributes('contenteditable')).toBe('false')
+    wrapper.unmount()
+  })
+
+  it('clears touched lines with the shortcut, supports undo, and respects read-only mode', async () => {
+    const source = '**first**\n*second* ~~more~~\n**last**'
+    const wrapper = mountEditor(source)
+    const view = EditorView.findFromDOM(wrapper.get('.cm-editor').element as HTMLElement)!
+    const keyOptions = /mac/i.test(navigator.platform + navigator.userAgent)
+      ? { metaKey: true }
+      : { ctrlKey: true }
+    const press = (key: string): void => {
+      view.contentDOM.dispatchEvent(
+        new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...keyOptions })
+      )
+    }
+    view.dispatch({ selection: { anchor: 4, head: source.indexOf('more') + 1 } })
+    press('\\')
+    expect(wrapper.emitted<string[]>('change')?.at(-1)?.[0]).toBe('first\nsecond more\n**last**')
+    press('z')
+    expect(view.state.doc.toString()).toBe(source)
+    await wrapper.setProps({ readOnly: true })
+    press('\\')
+    expect(view.state.doc.toString()).toBe(source)
     wrapper.unmount()
   })
 

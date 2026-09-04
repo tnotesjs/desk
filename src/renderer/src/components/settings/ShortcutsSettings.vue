@@ -36,6 +36,7 @@ const shortcutGroups = computed(() => [
       ['正文', `${altKey.value} ${primaryKey.value} 0`],
       ['粗体 / 斜体', `${primaryKey.value} B / ${primaryKey.value} I`],
       ['删除线', `${primaryKey.value} Shift X`],
+      ['清除当前行 / 选中行的加粗、斜体、删除线（仅笔记）', `${primaryKey.value} \\`],
       ['行内代码', `${primaryKey.value} E`],
       ['有序 / 无序列表', `${primaryKey.value} Shift 7 / 8`],
       ['任务列表', `${altKey.value} ${primaryKey.value} T`],

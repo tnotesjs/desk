@@ -146,6 +146,33 @@ function makeDiagramSpaceRule(pattern: RegExp, item: SlashMenuItem): InputRule {
   )
 }
 
+function makeMiddleDotCodeFenceRule(): InputRule {
+  const rule = new InputRule(/^···$/, (state, _match, start, end) => {
+    const $start = state.doc.resolve(start)
+    const codeBlock = state.schema.nodes.code_block
+    // Only a paragraph consisting entirely of the trigger may become code.
+    // This also handles IMEs committing all three dots in one input event.
+    if (
+      !codeBlock ||
+      !state.selection.empty ||
+      $start.parent.type.name !== 'paragraph' ||
+      $start.parentOffset !== 0 ||
+      end !== $start.end() ||
+      !$start.node(-1).canReplaceWith($start.index(-1), $start.indexAfter(-1), codeBlock)
+    ) {
+      return null
+    }
+    // Use the same node type/default attributes as the native backtick rule.
+    const tr = state.tr.delete(start, end).setBlockType(start, start, codeBlock)
+    // A batched IME input starts in an empty paragraph (start === end). Force
+    // selection sync even though its numeric position did not change, so the
+    // new CodeMirror NodeView receives focus instead of leaving a stale caret.
+    return tr.setSelection(TextSelection.create(tr.doc, start)).scrollIntoView()
+  })
+  rule.inCodeMark = false
+  return rule
+}
+
 function makeNonUndoable<T extends InputRule>(rule: T): T {
   ;(rule as unknown as { undoable: boolean }).undoable = false
   return rule
@@ -251,7 +278,8 @@ export function createMarkdownShortcutInputRules(): MilkdownPlugin {
     await ctx.wait(SchemaReady)
 
     const schema = ctx.get(schemaCtx)
-    const diagramRules = [
+    const blockRules = [
+      makeMiddleDotCodeFenceRule(),
       makeDiagramSpaceRule(/^```(?:mermaid|mmd) $/i, requireItem('mermaid')),
       makeDiagramSpaceRule(/^```(?:mindmap|mmp) $/i, requireItem('mindmap'))
     ]
@@ -263,10 +291,10 @@ export function createMarkdownShortcutInputRules(): MilkdownPlugin {
         (rule) => !replacedRules.has(rule) && !isDefaultInlineMathRule(rule)
       )
       const codeFenceIndex = retained.findIndex(isDefaultCodeFenceRule)
-      if (codeFenceIndex < 0) return [...diagramRules, ...retained, ...inlineRules]
+      if (codeFenceIndex < 0) return [...blockRules, ...retained, ...inlineRules]
       return [
         ...retained.slice(0, codeFenceIndex),
-        ...diagramRules,
+        ...blockRules,
         ...retained.slice(codeFenceIndex),
         ...inlineRules
       ]
@@ -274,7 +302,7 @@ export function createMarkdownShortcutInputRules(): MilkdownPlugin {
 
     return () => {
       ctx.update(inputRulesCtx, (current) =>
-        current.filter((rule) => !diagramRules.includes(rule) && !inlineRules.includes(rule))
+        current.filter((rule) => !blockRules.includes(rule) && !inlineRules.includes(rule))
       )
     }
   }
