@@ -1,3 +1,4 @@
+import './assets/fonts.css'
 import './assets/main.css'
 import '@tnotesjs/ui/styles/tokens.css'
 import 'katex/dist/katex.min.css'

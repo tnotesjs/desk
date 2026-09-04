@@ -15,9 +15,12 @@
 .milkdown-markdown-editor :deep(.milkdown) {
   min-height: 100%;
   color: var(--editor-text);
-  --crepe-base-font-size: 15px;
+  --crepe-base-font-size: 16px;
   --crepe-font-default: var(--font-sans);
+  --crepe-font-title: var(--font-sans);
   --crepe-font-code: var(--font-mono);
+  /* VitePress permits synthetic italics for CJK, but not synthetic bold. */
+  font-synthesis: style;
   --crepe-color-background: var(--editor-bg);
   --crepe-color-on-background: var(--editor-text);
   --crepe-color-surface: var(--panel);
@@ -38,6 +41,16 @@
   --prosemirror-virtual-cursor-color: var(--accent-strong);
   --crepe-shadow-1: 0 6px 18px rgba(0, 0, 0, 0.28);
   --crepe-shadow-2: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+/* VitePress bullets use the body foreground, not Crepe's outline (our border).
+   Target only bullets so task checkbox states keep their existing styling. */
+.milkdown-markdown-editor :deep(.milkdown .milkdown-list-item-block .label.bullet) {
+  color: var(--editor-text);
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-list-item-block .label.bullet svg) {
+  fill: currentColor;
 }
 
 .milkdown-markdown-editor :deep(.milkdown .milkdown-toolbar) {
@@ -226,9 +239,20 @@
   /* Preserve the writing-column inset and room for the single 32px block
      handle with its 16px floating offset. */
   padding: 28px 72px 48px 96px;
-  line-height: 1.72;
+  line-height: 1.5;
   outline: none;
   --prosemirror-virtual-cursor-color: var(--accent-strong);
+}
+
+/* Match VitePress's 16px/28px paragraphs. Keep Crepe's block padding and
+   editing hit areas; code editors and callout bodies retain their own metrics. */
+.milkdown-markdown-editor :deep(.ProseMirror p) {
+  line-height: 1.75;
+}
+
+.milkdown-markdown-editor :deep(.ProseMirror td p),
+.milkdown-markdown-editor :deep(.ProseMirror th p) {
+  line-height: 1.5;
 }
 
 .milkdown-markdown-editor.is-wide :deep(.ProseMirror) {
@@ -274,7 +298,7 @@
 }
 
 /* VitePress .vp-doc headings + core `margin: 1rem 0` (tn:dev / published).
-   Use px so Crepe’s 15px base does not inflate em sizes. Skip VP’s leftover
+   Use px to keep heading sizes independent of editor chrome. Skip VP’s leftover
    h2 padding-top: 24px — core already tightened spacing. */
 .milkdown-markdown-editor :deep(.ProseMirror h1:not(.desk-generated-title)),
 .milkdown-markdown-editor :deep(.ProseMirror h2),
@@ -890,8 +914,7 @@
   color: var(--editor-text);
 }
 
-/* Soft-tint callouts. Body typography matches Crepe ProseMirror paragraphs
-   (line-height 1.5 + 4px vertical padding), not the editor chrome 1.72. */
+/* Soft-tint callouts retain VitePress's compact 16px/24px body typography. */
 .milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-tip),
 .milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-info),
 .milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-note),
@@ -1239,6 +1262,7 @@
 
 .milkdown-markdown-editor :deep(.desk-raw-block--container .custom-block-body ul > li::before) {
   content: '';
+  color: inherit;
   background: radial-gradient(circle, currentColor 3px, transparent 3.25px);
   background-position: center;
   background-repeat: no-repeat;

@@ -5,6 +5,7 @@ import type { EditorState } from '@milkdown/kit/prose/state'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view'
 import { $prose } from '@milkdown/kit/utils'
+import { EditorView as CodeMirrorView } from '@codemirror/view'
 import { BlockRangeSelection, createVerticalBlockSelectionPlugin } from './verticalBlockSelection'
 
 export type RawBlockArrowDirection = 'up' | 'down'
@@ -309,6 +310,57 @@ function exitSelectableBlock(view: EditorView, position: number, bias: number): 
   view.focus()
 }
 
+/** Bridge an embedded code editor's final caret back into the note, not its DOM island. */
+function exitCodeEditorAtEnd(view: EditorView, event: KeyboardEvent): boolean {
+  if (!isWholeSelectKeyEvent(event)) return false
+  if (event.key !== 'ArrowDown' && event.key !== 'ArrowRight') return false
+  const target = event.target
+  if (!(target instanceof Element) || !target.closest('.cm-content')) return false
+  const cmDom = target.closest('.cm-editor')
+  if (!(cmDom instanceof HTMLElement) || !view.dom.contains(cmDom)) return false
+  const cm = CodeMirrorView.findFromDOM(cmDom)
+  if (!cm || cm.composing || cm.state.selection.ranges.length !== 1) return false
+  const { main } = cm.state.selection
+  if (!main.empty || main.head !== cm.state.doc.length) return false
+
+  const rawBlock = cmDom.closest('.desk-raw-block')
+  // Only inline code previews (fences/includes/code groups), never the raw-source
+  // editor for a container, diagram or component, nor standalone file editors.
+  if (rawBlock && !cmDom.closest('.desk-code-tab')) return false
+  const block = rawBlock ?? cmDom.closest('.milkdown-code-block')
+  if (!block) return false
+  let position: number | null = null
+  view.state.doc.descendants((node, pos) => {
+    if (!isSelectableBlockNode(node)) return
+    if (view.nodeDOM(pos) === block) position = pos
+    return false
+  })
+  if (position == null) return false
+  const node = view.state.doc.nodeAt(position)!
+  const boundary = position + node.nodeSize
+  const $boundary = view.state.doc.resolve(boundary)
+  if (!$boundary.nodeAfter) {
+    // At the end of a note/list item, Selection.near would fall back into the
+    // same code block. Supply a real editable line instead.
+    const paragraph = view.state.schema.nodes.paragraph?.create()
+    const index = $boundary.index()
+    if (!paragraph || !$boundary.parent.canReplaceWith(index, index, paragraph.type)) return false
+    const tr = view.state.tr.insert(boundary, paragraph)
+    view.dispatch(
+      tr
+        .setSelection(TextSelection.create(tr.doc, boundary + 1))
+        .setMeta(codeBlockWholeSelectKey, null)
+        .scrollIntoView()
+    )
+    view.focus()
+    return true
+  }
+  const nextBlock = neighborSelectableBlockPosition(view.state, boundary, 'down')
+  if (nextBlock != null) return selectSelectableBlock(view, nextBlock)
+  exitSelectableBlock(view, boundary, 1)
+  return true
+}
+
 /**
  * True when every sibling between `boundary` and the next selectable block is an
  * empty textblock (so code→code chaining across blanks is safe).
@@ -534,6 +586,11 @@ export function createRawBlockSelectionPlugin(): MilkdownPlugin[] {
             if (isMindmapIslandKeyboardOwner(target) || isActiveMindmapIslandSelection(view)) {
               return false
             }
+            if (target?.closest('.cm-editor') && codeBlockWholeSelectPosition(view.state) == null) {
+              const handled = exitCodeEditorAtEnd(view, event)
+              if (handled) claimEvent(event)
+              return handled
+            }
             // Whole-select must win even when Crepe's selectNode() left focus in CM.
             if (handleWholeSelectKeys(view, event)) {
               claimEvent(event)
@@ -585,6 +642,23 @@ export function createRawBlockSelectionPlugin(): MilkdownPlugin[] {
             const inProseMirror =
               eventTarget instanceof Node &&
               (eventTarget === view.dom || view.dom.contains(eventTarget))
+
+            // A raw code group's PM NodeSelection can remain set while its CM
+            // caret is active. Only explicit whole-code selection may override
+            // that inner editor; otherwise bridge the final caret and leave all
+            // other keys (including Shift selections/Delete) with CodeMirror.
+            if (
+              inProseMirror &&
+              (eventTarget as Element).closest?.('.cm-editor') &&
+              codeBlockWholeSelectPosition(view.state) == null
+            ) {
+              if (exitCodeEditorAtEnd(view, event)) {
+                claimEvent(event)
+                event.preventDefault()
+                event.stopImmediatePropagation()
+              }
+              return
+            }
 
             // Whole-select must win even when focus left .ProseMirror (Crepe block
             // handle, body after atom NodeSelection, etc.). Gating on

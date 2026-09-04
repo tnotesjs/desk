@@ -3,7 +3,10 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { Editor, defaultValueCtx, editorStateCtx, editorViewCtx, rootCtx } from '@milkdown/kit/core'
 import { NodeSelection, Selection, TextSelection } from '@milkdown/kit/prose/state'
+import type { EditorView } from '@milkdown/kit/prose/view'
 import { CellSelection } from '@milkdown/kit/prose/tables'
+import { EditorState as CodeMirrorState, EditorSelection } from '@codemirror/state'
+import { EditorView as CodeMirrorView } from '@codemirror/view'
 import { BlockRangeSelection, verticalBlockSelectionKey } from './verticalBlockSelection'
 import { commonmark } from '@milkdown/kit/preset/commonmark'
 import { gfm } from '@milkdown/kit/preset/gfm'
@@ -19,10 +22,12 @@ import {
 } from './rawBlockInteractions'
 
 const editors: Editor[] = []
+const codeEditors: CodeMirrorView[] = []
 
 const tableMarkdown = '| Header A | Header B |\n| --- | --- |\n| Cell A | Cell B |'
 
 afterEach(async () => {
+  codeEditors.splice(0).forEach((editor) => editor.destroy())
   await Promise.all(editors.splice(0).map((editor) => editor.destroy()))
   document.body.replaceChildren()
 })
@@ -83,6 +88,155 @@ function codePositions(editor: Editor): {
   })
   return result
 }
+
+describe('leaving embedded code at its final caret', () => {
+  async function setup(
+    kind: 'code' | 'group',
+    after = '下方段落'
+  ): Promise<{
+    view: EditorView
+    cm: CodeMirrorView
+    press: (key: string, modifiers?: KeyboardEventInit) => KeyboardEvent
+    code: string
+    host: HTMLElement
+  }> {
+    const code = 'const first = 1\nconst last = 2'
+    const fence = '```js\n' + code + '\n```'
+    const source = kind === 'group' ? '::: code-group\n\n' + fence + '\n\n:::' : fence
+    const editor = await createEditor('上方段落\n\n' + source + (after ? '\n\n' + after : ''))
+    const view = editor.action((ctx) => ctx.get(editorViewCtx))
+    view.setProps({
+      nodeViews: {
+        [kind === 'group' ? 'deskRawBlock' : 'code_block']: () => {
+          const dom = document.createElement('div')
+          dom.className = kind === 'group' ? 'desk-raw-block' : 'milkdown-code-block'
+          dom.contentEditable = 'false'
+          return { dom, ignoreMutation: () => true, stopEvent: () => true }
+        }
+      }
+    })
+    let position = -1
+    view.state.doc.descendants((node, pos) => {
+      if (node.type.name === (kind === 'group' ? 'deskRawBlock' : 'code_block')) position = pos
+    })
+    const block = view.nodeDOM(position) as HTMLElement
+    block.classList.add(kind === 'group' ? 'desk-raw-block' : 'milkdown-code-block')
+    const host = document.createElement('div')
+    host.className = 'desk-code-tab'
+    host.contentEditable = 'false'
+    block.append(host)
+    // Raw node views leave the outer selection on the atom during inner editing.
+    view.dispatch(
+      view.state.tr.setSelection(
+        kind === 'group'
+          ? NodeSelection.create(view.state.doc, position)
+          : TextSelection.create(view.state.doc, position + 1 + code.length)
+      )
+    )
+    const cm = new CodeMirrorView({
+      parent: host,
+      state: CodeMirrorState.create({
+        doc: code,
+        selection: { anchor: code.length },
+        extensions: [CodeMirrorState.allowMultipleSelections.of(true)]
+      })
+    })
+    codeEditors.push(cm)
+    const press = (key: string, modifiers: KeyboardEventInit = {}): KeyboardEvent => {
+      const event = new KeyboardEvent('keydown', {
+        key,
+        bubbles: true,
+        cancelable: true,
+        ...modifiers
+      })
+      cm.contentDOM.dispatchEvent(event)
+      return event
+    }
+    return { view, cm, press, code, host }
+  }
+
+  for (const kind of ['code', 'group'] as const) {
+    for (const after of ['下方段落', '## 下方标题', '- 下方列表']) {
+      it.each(['ArrowDown', 'ArrowRight'])(
+        `${kind} → ${after}: %s exits to text start`,
+        async (key) => {
+          const { view, cm, press } = await setup(kind, after)
+          const doc = view.state.doc
+          expect(press(key).defaultPrevented).toBe(true)
+          expect(view.state.selection).toBeInstanceOf(TextSelection)
+          expect(view.state.selection.empty).toBe(true)
+          expect(view.state.selection.$head.parentOffset).toBe(0)
+          expect(view.state.selection.$head.parent.textContent).toBe(after.replace(/^(## |- )/, ''))
+          expect(view.hasFocus()).toBe(true)
+          expect(cm.hasFocus).toBe(false)
+          expect(view.state.doc.eq(doc)).toBe(true)
+        }
+      )
+    }
+
+    it.each(['ArrowDown', 'ArrowRight'])(
+      `${kind}: %s creates one trailing paragraph at EOF`,
+      async (key) => {
+        const { view, press } = await setup(kind, '')
+        const count = view.state.doc.childCount
+        press(key)
+        expect(view.state.doc.childCount).toBe(count + 1)
+        expect(view.state.doc.lastChild?.type.name).toBe('paragraph')
+        expect(view.state.selection.$head.parentOffset).toBe(0)
+        expect(view.state.selection.$head.parent.content.size).toBe(0)
+      }
+    )
+
+    it(`${kind}: interior caret, selections, modifiers and composition stay inside CM`, async () => {
+      const { view, cm, press, code } = await setup(kind)
+      const original = view.state.selection
+      cm.dispatch({ selection: { anchor: code.length - 1 } })
+      press('ArrowRight')
+      expect(view.state.selection.eq(original)).toBe(true)
+      cm.dispatch({ selection: { anchor: 0, head: code.length } })
+      press('ArrowDown')
+      expect(view.state.selection.eq(original)).toBe(true)
+      cm.dispatch({
+        selection: EditorSelection.create(
+          [EditorSelection.cursor(0), EditorSelection.cursor(code.length)],
+          1
+        )
+      })
+      press('ArrowRight')
+      expect(view.state.selection.eq(original)).toBe(true)
+      cm.dispatch({ selection: { anchor: code.length } })
+      for (const modifiers of [
+        { shiftKey: true },
+        { altKey: true },
+        { metaKey: true },
+        { ctrlKey: true },
+        { isComposing: true }
+      ]) {
+        press('ArrowDown', modifiers)
+        expect(view.state.selection.eq(original)).toBe(true)
+      }
+    })
+  }
+
+  it('does not skip the empty paragraph after a code group', async () => {
+    const { view, press } = await setup('group', '<br />\n\n下方段落')
+    press('ArrowDown')
+    expect(view.state.selection.$head.parent.type.name).toBe('paragraph')
+    expect(view.state.selection.$head.parent.content.size).toBe(0)
+  })
+
+  it('does not intercept the raw-source editor or readonly notes', async () => {
+    const { view, press, host } = await setup('group')
+    const original = view.state.selection
+    host.className = 'desk-raw-block__editor-cm'
+    press('ArrowDown')
+    expect(view.state.selection.eq(original)).toBe(true)
+    host.className = 'desk-code-tab'
+    view.setProps({ editable: () => false })
+    press('ArrowRight')
+    expect(view.state.selection.eq(original)).toBe(true)
+  })
+})
 
 describe('raw block keyboard selection', () => {
   it.each(['ArrowLeft', 'ArrowRight'])(
