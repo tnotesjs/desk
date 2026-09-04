@@ -380,6 +380,20 @@
   background: color-mix(in srgb, var(--accent) 9%, var(--panel));
 }
 
+/* Native table/image node views need an explicit whole-block range surface;
+   the DOM text selection alone does not cover their controls or empty cells. */
+.milkdown-markdown-editor :deep(.desk-block--range-selected) {
+  outline: 1px solid var(--accent-strong);
+  outline-offset: -1px;
+  background-color: var(--selected);
+}
+
+.milkdown-markdown-editor :deep(.milkdown-table-block.desk-block--range-selected table.children),
+.milkdown-markdown-editor
+  :deep(.milkdown-table-block.desk-block--range-selected table.children :is(th, td)) {
+  background-color: var(--selected);
+}
+
 .milkdown-markdown-editor :deep(.desk-raw-block--container.ProseMirror-selectednode),
 .milkdown-markdown-editor :deep(.desk-raw-block--container.desk-raw-block--range-selected) {
   border: none;

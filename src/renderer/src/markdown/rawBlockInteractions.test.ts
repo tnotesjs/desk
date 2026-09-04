@@ -2,7 +2,9 @@
 
 import { afterEach, describe, expect, it } from 'vitest'
 import { Editor, defaultValueCtx, editorStateCtx, editorViewCtx, rootCtx } from '@milkdown/kit/core'
-import { NodeSelection, TextSelection } from '@milkdown/kit/prose/state'
+import { NodeSelection, Selection, TextSelection } from '@milkdown/kit/prose/state'
+import { CellSelection } from '@milkdown/kit/prose/tables'
+import { BlockRangeSelection, verticalBlockSelectionKey } from './verticalBlockSelection'
 import { commonmark } from '@milkdown/kit/preset/commonmark'
 import { gfm } from '@milkdown/kit/preset/gfm'
 
@@ -17,6 +19,8 @@ import {
 } from './rawBlockInteractions'
 
 const editors: Editor[] = []
+
+const tableMarkdown = '| Header A | Header B |\n| --- | --- |\n| Cell A | Cell B |'
 
 afterEach(async () => {
   await Promise.all(editors.splice(0).map((editor) => editor.destroy()))
@@ -311,8 +315,10 @@ describe('raw block keyboard selection', () => {
     })
     editor.action((ctx) => {
       const selection = ctx.get(editorStateCtx).selection
-      expect(selection).toBeInstanceOf(TextSelection)
-      expect(selection.head).toBe(pos.beforeEnd)
+      expect(selection).toBeInstanceOf(BlockRangeSelection)
+      expect(selection.anchor).toBe(pos.beforeEnd)
+      expect(selection.head).toBeGreaterThan(pos.raw)
+      expect(selection.empty).toBe(false)
       expect(
         ctx.get(editorViewCtx).dom.querySelectorAll('.desk-raw-block--range-selected')
       ).toHaveLength(1)
@@ -357,12 +363,14 @@ describe('raw block keyboard selection', () => {
       view.dom.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true, bubbles: true })
       )
-      expect(view.state.selection.empty).toBe(true)
+      expect(view.state.selection.empty).toBe(false)
       expect(view.dom.querySelectorAll('.desk-raw-block--range-selected')).toHaveLength(1)
+      const firstHead = view.state.selection.head
       view.dom.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true, bubbles: true })
       )
       expect(view.state.selection.empty).toBe(false)
+      expect(view.state.selection.head).toBeGreaterThan(firstHead)
       expect(Math.max(view.state.selection.from, view.state.selection.to)).toBeGreaterThanOrEqual(
         infoPos + infoSize
       )
@@ -447,8 +455,10 @@ describe('raw block keyboard selection', () => {
     })
     editor.action((ctx) => {
       const selection = ctx.get(editorStateCtx).selection
-      expect(selection).toBeInstanceOf(TextSelection)
-      expect(selection.head).toBe(pos.afterStart)
+      expect(selection).toBeInstanceOf(BlockRangeSelection)
+      expect(selection.anchor).toBe(pos.afterStart)
+      expect(selection.head).toBe(pos.raw)
+      expect(selection.empty).toBe(false)
       expect(
         ctx.get(editorViewCtx).dom.querySelectorAll('.desk-raw-block--range-selected')
       ).toHaveLength(1)
@@ -482,6 +492,180 @@ describe('raw block keyboard selection', () => {
       expect(deskRawBlocks).toBe(0)
       expect(emptyParagraphs).toBeGreaterThanOrEqual(1)
       expect(view.dom.querySelector('[data-type="desk-raw-block"]')).toBeNull()
+    })
+  })
+})
+
+describe('contiguous vertical block ranges', () => {
+  it.each([
+    ['table', tableMarkdown],
+    ['video', '<B id="range" />'],
+    ['image', '![image](./pixel.svg)'],
+    ['code', '```js\nconst selected = 1\n```'],
+    ['divider', '---']
+  ])(
+    'extends through a whole %s, enters the next paragraph, then reverses each step',
+    async (_name, markdown) => {
+      const editor = await createEditor(`before\n\n${markdown}\n\nafter\n`)
+      editor.action((ctx) => {
+        const view = ctx.get(editorViewCtx)
+        const { doc } = view.state
+        const anchor = doc.firstChild!.nodeSize - 1
+        const blockEnd = doc.firstChild!.nodeSize + doc.child(1).nodeSize
+        const press = (key: string): void => {
+          view.dom.dispatchEvent(
+            new KeyboardEvent('keydown', { key, shiftKey: true, bubbles: true, cancelable: true })
+          )
+        }
+        view.dispatch(view.state.tr.setSelection(TextSelection.create(doc, anchor)))
+        press('ArrowDown')
+        expect(view.state.selection.anchor).toBe(anchor)
+        expect(view.state.selection.head).toBe(blockEnd)
+        expect(view.state.selection.content().content.toString()).toContain(doc.child(1).type.name)
+        expect(view.dom.querySelectorAll('.desk-block--range-selected')).toHaveLength(1)
+        press('ArrowDown')
+        expect(view.state.selection.head).toBe(doc.content.size - 1)
+        press('ArrowUp')
+        expect(view.state.selection.head).toBe(blockEnd)
+        press('ArrowUp')
+        expect(view.state.selection.eq(TextSelection.create(doc, anchor))).toBe(true)
+        expect(view.dom.querySelectorAll('.desk-block--range-selected')).toHaveLength(0)
+      })
+    }
+  )
+
+  it('expands upward from below a table without moving the anchor, then collapses downward', async () => {
+    const editor = await createEditor(`before\n\n${tableMarkdown}\n\nafter\n`)
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx)
+      const { doc } = view.state
+      const anchor = doc.content.size - doc.lastChild!.nodeSize + 1
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(doc, anchor)))
+      view.dom.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true, bubbles: true })
+      )
+      expect(view.state.selection.anchor).toBe(anchor)
+      expect(view.state.selection.head).toBe(doc.firstChild!.nodeSize)
+      view.dom.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true, bubbles: true })
+      )
+      expect(view.state.selection.eq(TextSelection.create(doc, anchor))).toBe(true)
+    })
+  })
+
+  it('adds consecutive different blocks one at a time, including at the document edge', async () => {
+    const editor = await createEditor(
+      `before\n\n${tableMarkdown}\n\n<B id="range" />\n\n\`\`\`js\ncode\n\`\`\`\n`
+    )
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx)
+      const { doc } = view.state
+      const anchor = doc.firstChild!.nodeSize - 1
+      const heads = [anchor]
+      let edge = doc.firstChild!.nodeSize
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(doc, anchor)))
+      for (let index = 1; index < doc.childCount; index += 1) {
+        edge += doc.child(index).nodeSize
+        view.dom.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true, bubbles: true })
+        )
+        expect(view.state.selection.head).toBe(edge)
+        expect(view.dom.querySelectorAll('.desk-block--range-selected')).toHaveLength(index)
+        heads.push(edge)
+      }
+      view.dom.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true, bubbles: true })
+      )
+      expect(view.state.selection.head).toBe(doc.content.size)
+      for (const head of heads.slice(0, -1).reverse()) {
+        view.dom.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true, bubbles: true })
+        )
+        expect(view.state.selection.head).toBe(head)
+      }
+    })
+  })
+
+  it.each(['Delete', 'Backspace'])(
+    '%s removes the selected table and no following text',
+    async (key) => {
+      const editor = await createEditor(`before\n\n${tableMarkdown}\n\nafter\n`)
+      editor.action((ctx) => {
+        const view = ctx.get(editorViewCtx)
+        view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 7)))
+        view.dom.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true, bubbles: true })
+        )
+        const selection = view.state.selection
+        expect(Selection.fromJSON(view.state.doc, selection.toJSON()).eq(selection)).toBe(true)
+        expect(selection.getBookmark().resolve(view.state.doc).eq(selection)).toBe(true)
+        view.dom.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
+        expect(view.state.doc.toString()).not.toContain('table')
+        expect(view.state.doc.textContent).toBe('beforeafter')
+      })
+    }
+  )
+
+  it('preserves an existing multiline text anchor and does not expand from the wrong end', async () => {
+    const editor = await createEditor(`first\n\nsecond\n\n${tableMarkdown}\n\nafter\n`)
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx)
+      const before = TextSelection.create(view.state.doc, 3, 14)
+      view.dispatch(view.state.tr.setSelection(before))
+      view.dom.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true, bubbles: true })
+      )
+      expect(view.state.selection.anchor).toBe(3)
+      expect(view.state.selection.content().content.toString()).toContain('table')
+      view.dom.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true, bubbles: true })
+      )
+      expect(view.state.selection.eq(before)).toBe(true)
+    })
+  })
+
+  it('does not hijack cell text, mouse cell selections, modified keys or readonly editors', async () => {
+    const editor = await createEditor(`before\n\n${tableMarkdown}\n\nafter\n`)
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx)
+      let cell = 0
+      view.state.doc.descendants((node, pos) => {
+        if (node.textContent === 'Cell A' && node.type.name === 'paragraph') cell = pos + 2
+      })
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, cell)))
+      const event = new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true })
+      const plugin = verticalBlockSelectionKey.get(view.state)!
+      expect(plugin.props.handleKeyDown!.call(plugin, view, event)).toBe(false)
+      expect(view.state.selection.empty).toBe(true)
+      view.dispatch(
+        view.state.tr.setSelection(
+          CellSelection.create(view.state.doc, view.state.doc.firstChild!.nodeSize + 2)
+        )
+      )
+      expect(
+        plugin.props.handleKeyDown!.call(
+          plugin,
+          view,
+          new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true })
+        )
+      ).toBe(false)
+      expect(view.state.selection).toBeInstanceOf(CellSelection)
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 7)))
+      expect(
+        plugin.props.handleKeyDown!.call(
+          plugin,
+          view,
+          new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true, metaKey: true })
+        )
+      ).toBe(false)
+      view.setProps({ editable: () => false })
+      expect(
+        plugin.props.handleKeyDown!.call(
+          plugin,
+          view,
+          new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true })
+        )
+      ).toBe(false)
     })
   })
 })
