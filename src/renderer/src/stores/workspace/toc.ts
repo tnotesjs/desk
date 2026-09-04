@@ -1,6 +1,7 @@
 import type { Ref } from 'vue'
 
 import type { useEditorStore } from '../editor'
+import { flushPendingEdits } from '../../editor/markdown/pendingEdits'
 
 import type {
   AppSettings,
@@ -31,6 +32,9 @@ export interface TocContext {
   removeDocumentSession: (key: string) => void
   ensureDocument: (knowledgeBaseId: string, noteUuid: string) => Promise<DocumentSession>
   saveDocument: (key: string) => Promise<void>
+  pauseDocumentAutosave: (key: string) => () => void
+  waitForDocumentSave: (key: string) => Promise<void>
+  persistRecovery: (key: string) => Promise<void>
   deleteRecovery: (knowledgeBaseId: string, noteUuid: string) => void
 }
 
@@ -91,6 +95,58 @@ export function createToc(ctx: TocContext) {
     }
   }
 
+  async function renameNote(
+    knowledgeBaseId: string,
+    noteUuid: string,
+    title: string
+  ): Promise<void> {
+    const key = documentKey(knowledgeBaseId, noteUuid)
+    const resumeAutosave = ctx.pauseDocumentAutosave(key)
+    try {
+      const loaded =
+        ctx.documents.value[key] ?? (await ctx.ensureDocument(knowledgeBaseId, noteUuid))
+      const nextTitle = title.trim()
+      if (!nextTitle || nextTitle === loaded.document.title || loaded.document.readOnly) return
+      ctx.error.value = null
+      flushPendingEdits(knowledgeBaseId, noteUuid)
+      await ctx.waitForDocumentSave(key)
+      if (ctx.documents.value[key]?.dirty) await ctx.saveDocument(key)
+      const beforeRename = ctx.documents.value[key] ?? loaded
+      const mutation = resultValue(
+        await window.desk.notes.rename({
+          knowledgeBaseId,
+          noteUuid,
+          title: nextTitle,
+          expectedRevision: beforeRename.document.revision
+        })
+      )
+      // A rename also regenerates the Markdown title. Preserve any edits made
+      // while saving/renaming instead of replacing a newer draft with disk content.
+      const current = ctx.documents.value[key] ?? beforeRename
+      const content = current.dirty ? current.content : mutation.note.content
+      const dirty = content !== mutation.note.content
+      ctx.setDocumentSession(key, {
+        document: mutation.note,
+        content,
+        dirty,
+        preserveSourceOnSave: dirty && current.preserveSourceOnSave,
+        externalConflict: false,
+        saving: false
+      })
+      ctx.applyDetail(mutation.knowledgeBase)
+      ctx.editor.renameNote(knowledgeBaseId, noteUuid, mutation.note.title)
+      ctx.editor.setNoteDirty(knowledgeBaseId, noteUuid, dirty)
+      if (dirty) await ctx.persistRecovery(key)
+      else ctx.deleteRecovery(knowledgeBaseId, noteUuid)
+      ctx.status.value = '名称已更新'
+    } catch (cause) {
+      ctx.error.value = cause instanceof Error ? cause.message : String(cause)
+      throw cause
+    } finally {
+      resumeAutosave()
+    }
+  }
+
   async function renameTocNode(node: DeskTocNode, title: string): Promise<void> {
     if (!ctx.knowledgeBase.value || ctx.knowledgeBase.value.health !== 'ready') return
     try {
@@ -107,31 +163,7 @@ export function createToc(ctx: TocContext) {
         )
         ctx.applyDetail(detail)
       } else {
-        const key = documentKey(ctx.knowledgeBase.value.id, node.uuid)
-        const loaded =
-          ctx.documents.value[key] ??
-          (await ctx.ensureDocument(ctx.knowledgeBase.value.id, node.uuid))
-        if (loaded.dirty) await ctx.saveDocument(key)
-        const current = ctx.documents.value[key] ?? loaded
-        const mutation = resultValue(
-          await window.desk.notes.rename({
-            knowledgeBaseId: ctx.knowledgeBase.value.id,
-            noteUuid: node.uuid,
-            title,
-            expectedRevision: current.document.revision
-          })
-        )
-        ctx.applyDetail(mutation.knowledgeBase)
-        ctx.setDocumentSession(key, {
-          document: mutation.note,
-          content: mutation.note.content,
-          dirty: false,
-          preserveSourceOnSave: false,
-          externalConflict: false,
-          saving: false
-        })
-        ctx.editor.renameNote(ctx.knowledgeBase.value.id, node.uuid, mutation.note.title)
-        ctx.deleteRecovery(ctx.knowledgeBase.value.id, node.uuid)
+        await renameNote(ctx.knowledgeBase.value.id, node.uuid, title)
       }
       ctx.status.value = '名称已更新'
     } catch (cause) {
@@ -228,6 +260,7 @@ export function createToc(ctx: TocContext) {
   return {
     createNote,
     createTocGroup,
+    renameNote,
     renameTocNode,
     moveTocNode,
     toggleDone,

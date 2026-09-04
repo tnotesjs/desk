@@ -2,11 +2,22 @@
 import { computed } from 'vue'
 
 import { checkForUpdates, useUpdateState } from '../../stores/update'
+import { useWorkspaceStore } from '../../stores/workspace'
+import AppZoomControl from './AppZoomControl.vue'
 
 import type { AppSettings } from '../../../../shared/contracts'
 
 defineProps<{ draft: AppSettings }>()
 const emit = defineEmits<{ reset: [] }>()
+const store = useWorkspaceStore()
+
+async function setZoom(value: number): Promise<void> {
+  try {
+    await store.setAppZoom(value)
+  } catch (cause) {
+    store.error = cause instanceof Error ? cause.message : String(cause)
+  }
+}
 
 const updateState = useUpdateState()
 const updateSummary = computed(() => {
@@ -70,6 +81,10 @@ async function checkNow(): Promise<void> {
           <option value="expanded">展开显示</option>
         </select>
       </label>
+      <AppZoomControl
+        :model-value="store.settings?.appZoomPercent ?? 100"
+        @update:model-value="setZoom"
+      />
     </div>
     <div class="layout-picker">
       <button

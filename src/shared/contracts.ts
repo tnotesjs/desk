@@ -2,6 +2,8 @@ export const IPC_CHANNELS = {
   bootstrap: 'desk:bootstrap',
   windowClose: 'window:close',
   tabShortcut: 'tab:shortcut',
+  tabConfirmClose: 'tab:confirm-close',
+  contextMenuShow: 'context-menu:show',
   workspaceChoose: 'workspace:choose',
   workspaceSet: 'workspace:set',
   workspaceRefresh: 'workspace:refresh',
@@ -149,6 +151,27 @@ export interface WorkspaceOverview {
 export type NoteViewMode = 'visual' | 'readonly' | 'source'
 export type NotePageWidth = 'standard' | 'wide'
 export type NoteTocDisplay = 'hidden' | 'collapsed' | 'expanded'
+export type TabCloseChoice = 'save' | 'discard' | 'cancel'
+export type ContextMenuAction =
+  | 'close'
+  | 'close-saved'
+  | 'close-all'
+  | 'close-web'
+  | 'copy-path'
+  | 'reveal-file'
+  | 'reveal-toc'
+  | 'toggle-pin'
+  | 'open-ide'
+  | 'open-split'
+  | 'rename'
+  | 'toggle-done'
+  | 'add-before'
+  | 'add-after'
+  | 'request-delete'
+export type ContextMenuRequest =
+  | { kind: 'note'; pinned: boolean; completed: boolean }
+  | { kind: 'group' }
+  | { kind: 'tab'; tabType: 'note' | 'note-file' | 'web'; pinned: boolean }
 export type TabShortcutCommand =
   | 'close-active-tab-or-window'
   | 'close-saved-note-tabs'
@@ -159,6 +182,9 @@ export type TabShortcutCommand =
   | 'reveal-active-note-in-file-manager'
   | 'next-tab'
   | 'previous-tab'
+  | 'increase-app-zoom'
+  | 'decrease-app-zoom'
+  | 'reset-app-zoom'
 export type ThemeMode = 'system' | 'light' | 'dark'
 export type InterfaceDensity = 'compact' | 'comfortable'
 export type IdeKind = 'vscode' | 'cursor'
@@ -193,6 +219,7 @@ export interface AppSettings {
   defaultNoteView: NoteViewMode
   defaultNotePageWidth: NotePageWidth
   noteTocDisplay: NoteTocDisplay
+  appZoomPercent: number
   autosave: {
     enabled: boolean
     delayMs: number
@@ -707,6 +734,8 @@ export interface DeskApi {
   bootstrap(): Promise<DeskResult<BootstrapPayload>>
   app: {
     closeWindow(): Promise<DeskResult<void>>
+    confirmTabClose(titles: string[]): Promise<DeskResult<TabCloseChoice>>
+    showContextMenu(request: ContextMenuRequest): Promise<DeskResult<ContextMenuAction | null>>
     onTabShortcut(callback: (command: TabShortcutCommand) => void): () => void
   }
   updates: {

@@ -1,15 +1,21 @@
 // @vitest-environment happy-dom
 
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { DeskTocNode } from '../../../shared/contracts'
 import TocNodeList from './TocNodeList.vue'
+import { useWorkspaceStore } from '../stores/workspace'
+
+const showContextMenu = vi.fn()
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  showContextMenu.mockReset().mockResolvedValue({ ok: true, value: null })
+  Object.defineProperty(window, 'desk', { configurable: true, value: { app: { showContextMenu } } })
 })
+afterEach(() => Reflect.deleteProperty(window, 'desk'))
 
 const sourceNote: Extract<DeskTocNode, { type: 'note' }> = {
   type: 'note',
@@ -68,18 +74,15 @@ function dataTransferStub(): {
 }
 
 describe('TocNodeList', () => {
-  it('keeps only the more menu and add-child controls beside a row', () => {
+  it('keeps only the add-child control beside a row', () => {
     const wrapper = mountList()
     const firstRow = wrapper.findAll('.toc-row')[0]
 
     expect(firstRow.findAll(':scope > .row-action')).toHaveLength(1)
-    expect(firstRow.findAll(':scope > .row-menu')).toHaveLength(1)
-    expect(firstRow.find('.row-menu summary').attributes('aria-label')).toBe('更多操作')
+    expect(firstRow.find('.row-menu').exists()).toBe(false)
     expect(firstRow.find('.add-note-action').attributes('aria-label')).toBe('添加子笔记')
-    expect(firstRow.find('.row-menu-popover').text()).toContain('在右侧打开')
-    expect(firstRow.find('.row-menu-popover').text()).toContain('重命名')
-    expect(firstRow.find('.row-menu-popover').text()).toContain('使用 IDE 打开')
-    expect(firstRow.find('.row-menu-popover').text()).toContain('永久删除')
+    expect(firstRow.find('.row-menu-popover').exists()).toBe(false)
+    wrapper.unmount()
   })
 
   it('emits an inside move when a note is dropped in the middle of another row', async () => {
@@ -132,17 +135,144 @@ describe('TocNodeList', () => {
     expect(wrapper.emitted('requestRename')).toBeUndefined()
   })
 
-  it('shows note path, Finder, pin and IDE actions on right click', async () => {
+  it('opens a native note menu instead of an HTML overlay and does nothing on dismissal', async () => {
     const wrapper = mountList()
+    const workspace = useWorkspaceStore()
+    workspace.selectedKnowledgeBaseId = 'kb-a'
+    const copy = vi.spyOn(workspace, 'copyNoteDirectoryPath').mockResolvedValue(undefined)
 
     await wrapper.find('.toc-row').trigger('contextmenu', { clientX: 40, clientY: 60 })
+    await flushPromises()
 
-    const menu = document.body.querySelector('.note-context-menu')
-    expect(menu?.textContent).toContain('复制路径')
-    expect(menu?.textContent).toContain('在 Finder 中显示')
-    expect(menu?.textContent).toContain('固定')
-    expect(menu?.textContent).toContain('使用 IDE 打开')
+    expect(showContextMenu).toHaveBeenCalledExactlyOnceWith({
+      kind: 'note',
+      pinned: false,
+      completed: false
+    })
+    expect(document.body.querySelector('.note-context-menu')).toBeNull()
+    expect(copy).not.toHaveBeenCalled()
     expect(wrapper.emitted('openIde')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('dispatches the chosen action for the right-clicked note', async () => {
+    const wrapper = mountList()
+    const workspace = useWorkspaceStore()
+    workspace.selectedKnowledgeBaseId = 'kb-a'
+    const copy = vi.spyOn(workspace, 'copyNoteDirectoryPath').mockResolvedValue(undefined)
+    showContextMenu.mockResolvedValue({ ok: true, value: 'copy-path' })
+    await wrapper.findAll('.toc-row')[1].trigger('contextmenu')
+    await flushPromises()
+    expect(copy).toHaveBeenCalledExactlyOnceWith({
+      knowledgeBaseId: 'kb-a',
+      noteUuid: targetNote.uuid
+    })
+    wrapper.unmount()
+  })
+
+  it.each(['note', 'group'] as const)(
+    'removes the more button but retains add-child for %s rows',
+    (kind) => {
+      const node: DeskTocNode =
+        kind === 'note'
+          ? sourceNote
+          : {
+              type: 'group',
+              title: '分组',
+              nodeId: 'group-a',
+              tocLineIndex: 0,
+              folderPath: ['分组'],
+              children: []
+            }
+      const wrapper = mountList([node])
+      expect(wrapper.find('[aria-label="更多操作"], .row-menu, .row-menu-popover').exists()).toBe(
+        false
+      )
+      expect(wrapper.find('[aria-label="添加子笔记"]').exists()).toBe(true)
+      wrapper.unmount()
+    }
+  )
+
+  it.each(['note', 'group'] as const)(
+    'dispatches merged actions for the right-clicked %s',
+    async (kind) => {
+      const node: DeskTocNode =
+        kind === 'note'
+          ? { ...sourceNote, completed: true }
+          : {
+              type: 'group',
+              title: '分组',
+              nodeId: 'group-a',
+              tocLineIndex: 0,
+              folderPath: ['分组'],
+              children: []
+            }
+      const wrapper = mountList([node])
+      useWorkspaceStore().selectedKnowledgeBaseId = 'kb-a'
+      for (const action of [
+        'rename',
+        'add-before',
+        'add-after',
+        'request-delete',
+        ...(kind === 'note' ? ['open-split', 'toggle-done'] : [])
+      ]) {
+        showContextMenu.mockResolvedValue({ ok: true, value: action })
+        await wrapper.find('.toc-row').trigger('contextmenu')
+        await flushPromises()
+      }
+      expect(showContextMenu).toHaveBeenCalledWith(
+        kind === 'note' ? { kind: 'note', pinned: false, completed: true } : { kind: 'group' }
+      )
+      expect(wrapper.emitted('requestRename')).toEqual([[node]])
+      expect(wrapper.emitted('requestCreate')).toEqual([
+        [node, 'before'],
+        [node, 'after']
+      ])
+      // Only the confirmation request is emitted; no file deletion happens in the menu.
+      expect(wrapper.emitted('requestDelete')).toEqual([[node]])
+      expect(wrapper.emitted('selectSplit')).toEqual(kind === 'note' ? [[node]] : undefined)
+      expect(wrapper.emitted('toggleDone')).toEqual(kind === 'note' ? [[node]] : undefined)
+      wrapper.unmount()
+    }
+  )
+
+  it('opens the menu for a collapsed group without expanding it, and dismissal has no effects', async () => {
+    const group: DeskTocNode = {
+      type: 'group',
+      title: '分组',
+      nodeId: 'group-a',
+      tocLineIndex: 0,
+      folderPath: ['分组'],
+      children: [sourceNote]
+    }
+    const wrapper = mountList([group])
+    useWorkspaceStore().selectedKnowledgeBaseId = 'kb-a'
+    await wrapper.find('.node-label.group').trigger('click')
+    await wrapper.find('.toc-row').trigger('contextmenu')
+    await flushPromises()
+    expect(showContextMenu).toHaveBeenCalledExactlyOnceWith({ kind: 'group' })
+    expect(wrapper.find('[data-note-uuid="note-a"]').exists()).toBe(false)
+    expect(wrapper.emitted('requestDelete')).toBeUndefined()
+    expect(wrapper.emitted('requestRename')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('forwards right-click actions from nested note rows to the root list', async () => {
+    const group: DeskTocNode = {
+      type: 'group',
+      title: '分组',
+      nodeId: 'group-a',
+      tocLineIndex: 0,
+      folderPath: ['分组'],
+      children: [sourceNote]
+    }
+    const wrapper = mountList([group])
+    useWorkspaceStore().selectedKnowledgeBaseId = 'kb-a'
+    showContextMenu.mockResolvedValue({ ok: true, value: 'rename' })
+    await wrapper.find('[data-note-uuid="note-a"]').trigger('contextmenu')
+    await flushPromises()
+    expect(showContextMenu).toHaveBeenCalledOnce()
+    expect(wrapper.emitted('requestRename')).toEqual([[sourceNote]])
     wrapper.unmount()
   })
 

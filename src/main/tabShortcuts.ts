@@ -26,6 +26,21 @@ export class TabShortcutResolver {
     const key = input.key.toLowerCase()
     const primaryModifier = isPrimaryModifier(input, platform)
 
+    if (primaryModifier && !input.alt) {
+      const command =
+        key === '+' || key === '='
+          ? 'increase-app-zoom'
+          : key === '-'
+            ? 'decrease-app-zoom'
+            : key === '0' && !input.shift
+              ? 'reset-app-zoom'
+              : null
+      if (command) {
+        this.chordExpiresAt = 0
+        return { handled: true, command }
+      }
+    }
+
     if (this.chordExpiresAt > now) {
       this.chordExpiresAt = 0
       if (!input.alt && !input.shift && key === 'u') {

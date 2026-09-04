@@ -126,19 +126,22 @@ function neighborSelectableBlockPosition(
  *
  * ArrowDown/Up match the last/first visual line (not only absolute offset 0/end),
  * so a mid-line caret on a single-line paragraph still whole-selects the next code.
+ * ArrowRight/Left must instead be at the absolute textblock end/start; moving
+ * within a line belongs to the browser (including grapheme/IME handling).
  *
  * Empty paragraphs between the caret and a block are NOT skipped — ProseMirror
  * should move into the blank line first.
  */
 export function adjacentRawBlockSelectionPosition(
   state: EditorState,
-  direction: RawBlockArrowDirection
+  direction: RawBlockArrowDirection | 'left' | 'right'
 ): number | null {
   const { selection } = state
+  const forward = direction === 'down' || direction === 'right'
 
   if (selection instanceof GapCursor) {
     const $pos = selection.$head
-    if (direction === 'down') {
+    if (forward) {
       const next = $pos.nodeAfter
       return next && isSelectableBlockNode(next) ? $pos.pos : null
     }
@@ -152,15 +155,21 @@ export function adjacentRawBlockSelectionPosition(
   // Caret already inside a code fence: leaving is handled by Crepe CM / whole-select.
   if (isCodeBlock($head.parent)) return null
 
-  if (direction === 'down') {
-    if (!isOnLastLineOfTextblock($head)) return null
+  if (forward) {
+    if (
+      direction === 'right'
+        ? $head.parentOffset !== $head.parent.content.size
+        : !isOnLastLineOfTextblock($head)
+    )
+      return null
     for (let depth = $head.depth; depth > 1; depth -= 1) {
       if ($head.index(depth - 1) < $head.node(depth - 1).childCount - 1) return null
     }
     return neighborSelectableBlockPosition(state, $head.after(1), 'down')
   }
 
-  if (!isOnFirstLineOfTextblock($head)) return null
+  if (direction === 'left' ? $head.parentOffset !== 0 : !isOnFirstLineOfTextblock($head))
+    return null
   for (let depth = $head.depth; depth > 1; depth -= 1) {
     if ($head.index(depth - 1) > 0) return null
   }
@@ -787,6 +796,19 @@ function isBlockArrowEvent(event: KeyboardEvent): boolean {
   )
 }
 
+/** Shared by DOM capture and PM's fallback so horizontal boundaries cannot drift. */
+function selectAdjacentBlockForArrow(view: EditorView, event: KeyboardEvent): boolean {
+  if (!isBlockArrowEvent(event)) return false
+  const directions: Record<string, RawBlockArrowDirection | 'left' | 'right'> = {
+    ArrowUp: 'up',
+    ArrowDown: 'down',
+    ArrowLeft: 'left',
+    ArrowRight: 'right'
+  }
+  const position = adjacentRawBlockSelectionPosition(view.state, directions[event.key])
+  return position != null && selectSelectableBlock(view, position)
+}
+
 function handleRawBlockRangeDeletion(view: EditorView, event: KeyboardEvent): boolean {
   if (event.key !== 'Delete' && event.key !== 'Backspace') return false
   const range = rawBlockKeyboardRangeKey.getState(view.state)
@@ -861,13 +883,9 @@ export function createRawBlockSelectionPlugin(): MilkdownPlugin[] {
             }
             if (target?.closest('.cm-editor')) return false
 
-            if (isBlockArrowEvent(event)) {
-              const down = event.key === 'ArrowDown' || event.key === 'ArrowRight'
-              const position = adjacentRawBlockSelectionPosition(view.state, down ? 'down' : 'up')
-              if (position != null && selectSelectableBlock(view, position)) {
-                claimEvent(event)
-                return true
-              }
+            if (selectAdjacentBlockForArrow(view, event)) {
+              claimEvent(event)
+              return true
             }
 
             if (!isKeyboardRangeEvent(event)) return false
@@ -934,15 +952,11 @@ export function createRawBlockSelectionPlugin(): MilkdownPlugin[] {
             }
             if (inCodeMirror) return
 
-            if (isBlockArrowEvent(event)) {
-              const down = event.key === 'ArrowDown' || event.key === 'ArrowRight'
-              const position = adjacentRawBlockSelectionPosition(view.state, down ? 'down' : 'up')
-              if (position != null && selectSelectableBlock(view, position)) {
-                claimEvent(event)
-                event.preventDefault()
-                event.stopImmediatePropagation()
-                return
-              }
+            if (selectAdjacentBlockForArrow(view, event)) {
+              claimEvent(event)
+              event.preventDefault()
+              event.stopImmediatePropagation()
+              return
             }
 
             if (!isKeyboardRangeEvent(event)) return

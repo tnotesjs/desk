@@ -9,6 +9,19 @@ import type {
   RecoveryWriteRequest
 } from '../shared/contracts'
 
+const recoveryOperations = new Map<string, Promise<void>>()
+
+function enqueueRecovery(target: string, operation: () => Promise<void>): Promise<void> {
+  const pending = (recoveryOperations.get(target) ?? Promise.resolve())
+    .catch(() => undefined)
+    .then(operation)
+    .finally(() => {
+      if (recoveryOperations.get(target) === pending) recoveryOperations.delete(target)
+    })
+  recoveryOperations.set(target, pending)
+  return pending
+}
+
 function digest(value: string): string {
   return createHash('sha256').update(value).digest('hex')
 }
@@ -63,7 +76,21 @@ export async function loadRecoveries(workspacePath: string | null): Promise<Reco
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
 }
 
-export async function writeRecovery(
+export function writeRecovery(
+  workspacePath: string | null,
+  request: RecoveryWriteRequest
+): Promise<void> {
+  if (!workspacePath) return Promise.resolve()
+  const target = recoveryPath(
+    workspacePath,
+    request.knowledgeBaseId,
+    request.noteUuid,
+    request.path
+  )
+  return enqueueRecovery(target, () => performWriteRecovery(workspacePath, request))
+}
+
+async function performWriteRecovery(
   workspacePath: string | null,
   request: RecoveryWriteRequest
 ): Promise<void> {
@@ -86,14 +113,20 @@ export async function writeRecovery(
   await fs.rename(temporary, target)
 }
 
-export async function deleteRecovery(
+export function deleteRecovery(
   workspacePath: string | null,
   request: RecoveryDeleteRequest
 ): Promise<void> {
-  if (!workspacePath) return
-  await fs
-    .unlink(recoveryPath(workspacePath, request.knowledgeBaseId, request.noteUuid, request.path))
-    .catch((error: NodeJS.ErrnoException) => {
+  if (!workspacePath) return Promise.resolve()
+  const target = recoveryPath(
+    workspacePath,
+    request.knowledgeBaseId,
+    request.noteUuid,
+    request.path
+  )
+  return enqueueRecovery(target, () =>
+    fs.unlink(target).catch((error: NodeJS.ErrnoException) => {
       if (error.code !== 'ENOENT') throw error
     })
+  )
 }

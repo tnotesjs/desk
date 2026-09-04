@@ -1,4 +1,5 @@
 import type { EditorView } from '@milkdown/kit/prose/view'
+import { registerPendingEdit } from '../editor/markdown/pendingEdits'
 
 import {
   createContainerSourceEditor,
@@ -17,6 +18,8 @@ import {
 import { parseContainerSource, rebuildContainerSource } from '../editor/markdown/containerBody'
 
 export interface AttachRawSourceEditorDeps {
+  knowledgeBaseId?: () => string
+  noteUuid?: () => string
   isEffectivelyReadOnly: () => boolean
   rawSourceReadonlyListeners: Set<(readOnly: boolean) => void>
 }
@@ -143,6 +146,7 @@ export function attachRawSourceEditor(
     editorHost.hidden = true
     editButton.hidden = false
     editButton.disabled = false
+    pendingEdit.changed()
   }
 
   const applyReadonly = (readOnly: boolean): void => {
@@ -257,6 +261,7 @@ export function attachRawSourceEditor(
       })
     }
     fitEditorToSource(editorValue)
+    pendingEdit.changed()
     if (syncTimer != null) clearTimeout(syncTimer)
     syncTimer = setTimeout(() => {
       ctx.renderPreview(editorValue)
@@ -649,6 +654,7 @@ export function attachRawSourceEditor(
         (value) => {
           if (isEffectivelyReadOnly()) return
           editorValue = value
+          pendingEdit.changed()
           fitEditorToSource(value)
           if (syncTimer != null) clearTimeout(syncTimer)
           syncTimer = setTimeout(() => ctx.renderPreview(editorValue), 250)
@@ -665,10 +671,17 @@ export function attachRawSourceEditor(
     event.stopPropagation()
     startEditing()
   })
+  const pendingEdit = registerPendingEdit({
+    knowledgeBaseId: deps.knowledgeBaseId,
+    noteUuid: deps.noteUuid,
+    dirty: () => editing && editorValue !== liveSource(),
+    flush: commit
+  })
   rawSourceReadonlyListeners.add(applyReadonly)
   applyReadonly(isEffectivelyReadOnly())
 
   const destroy = (): void => {
+    pendingEdit.dispose()
     rawSourceReadonlyListeners.delete(applyReadonly)
     if (structured) {
       editorHost.removeEventListener('focusout', scheduleCommitOnBlur)

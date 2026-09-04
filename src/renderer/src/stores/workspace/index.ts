@@ -17,6 +17,7 @@ import type {
 import type { SplitPlacement } from '../../editor-groups/layoutModel'
 
 import { createDocuments } from './documents'
+import { createTabClosing, type ClosingResource } from './closeTabs'
 import { createGit } from './git'
 import {
   documentKey,
@@ -169,6 +170,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     updateDocumentContent,
     updateEditorContent,
     saveDocument,
+    pauseDocumentAutosave,
+    discardDocumentChanges,
+    waitForDocumentSave,
     writeLocalAttachment,
     uploadImage,
     copyNoteDirectoryPath,
@@ -203,6 +207,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     ensureNoteFile,
     updateNoteFileContent,
     saveNoteFile,
+    pauseNoteFileAutosave,
+    discardNoteFileChanges,
+    waitForNoteFileSave,
     saveAllNoteFiles,
     reloadNoteFile,
     keepNoteFileAgainstDisk,
@@ -234,12 +241,62 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     await saveCurrentNoteDocument()
   }
 
+  const { requestCloseTab, requestCloseTabs, isTabDirty, closingTabs } = createTabClosing({
+    editor,
+    error,
+    status,
+    resourcesFor: (tab) => {
+      if (tab.type === 'web') return []
+      const resources: ClosingResource[] = []
+      if (tab.type === 'note') {
+        const key = documentKey(tab.knowledgeBaseId, tab.noteUuid)
+        resources.push({
+          key,
+          title: tab.title,
+          dirty: () => Boolean(documents.value[key]?.dirty),
+          saving: () => Boolean(documents.value[key]?.saving),
+          pauseAutosave: () => pauseDocumentAutosave(key),
+          waitForSave: () => waitForDocumentSave(key),
+          save: () => saveDocument(key),
+          discard: () => discardDocumentChanges(key)
+        })
+      }
+      for (const [key, session] of Object.entries(noteFiles.value)) {
+        if (
+          session.document.knowledgeBaseId !== tab.knowledgeBaseId ||
+          session.document.noteUuid !== tab.noteUuid
+        )
+          continue
+        if (
+          tab.type === 'note-file' &&
+          key !== noteFileKey(tab.knowledgeBaseId, tab.noteUuid, tab.path)
+        )
+          continue
+        resources.push({
+          key,
+          title: `${tab.type === 'note' ? tab.title : tab.noteTitle} / ${session.document.path}`,
+          dirty: () => Boolean(noteFiles.value[key]?.dirty),
+          saving: () => Boolean(noteFiles.value[key]?.saving),
+          pauseAutosave: () => pauseNoteFileAutosave(key),
+          waitForSave: () => waitForNoteFileSave(key),
+          save: () => saveNoteFile(key),
+          discard: () => discardNoteFileChanges(key)
+        })
+      }
+      return resources
+    }
+  })
+
   async function saveAllDocuments(): Promise<void> {
     await saveAllNoteDocuments()
     await saveAllNoteFiles()
   }
 
-  const { updateSettings, applySettings } = createSettings({ editor, settings })
+  const { updateSettings, applySettings, setAppZoom, adjustAppZoom, zoomFeedbackSequence } =
+    createSettings({
+      editor,
+      settings
+    })
 
   const { searchNotes } = createSearch({
     searchResults,
@@ -264,6 +321,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const {
     createNote,
     createTocGroup,
+    renameNote,
     renameTocNode,
     moveTocNode,
     toggleDone,
@@ -281,6 +339,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     removeDocumentSession,
     ensureDocument,
     saveDocument,
+    pauseDocumentAutosave,
+    waitForDocumentSave,
+    persistRecovery,
     deleteRecovery
   })
 
@@ -291,9 +352,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     try {
       const payload = resultValue(await window.desk.bootstrap())
       overview.value = payload.workspace
-      settings.value = payload.settings
+      applySettings(payload.settings)
       runtimePlatform.value = payload.platform
-      editor.configure(payload.settings)
       const initialGitStates = resultValue(await window.desk.git.list())
       gitStates.value = Object.fromEntries(
         initialGitStates.map((state) => [state.knowledgeBaseId, state])
@@ -606,10 +666,17 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     updateEditorContent,
     saveDocument,
     saveCurrentDocument,
+    requestCloseTab,
+    requestCloseTabs,
+    isTabDirty,
+    closingTabs,
     saveAllDocuments,
     writeLocalAttachment,
     uploadImage,
     updateSettings,
+    setAppZoom,
+    adjustAppZoom,
+    zoomFeedbackSequence,
     applySettings,
     copyNoteDirectoryPath,
     revealNoteInFileManager,
@@ -619,6 +686,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     discardRecovery: discardAnyRecovery,
     createNote,
     createTocGroup,
+    renameNote,
     renameTocNode,
     moveTocNode,
     toggleDone,

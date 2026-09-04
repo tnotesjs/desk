@@ -577,7 +577,6 @@ const previewLabel = computed(() => {
             @request-rename="emit('requestRename', $event)"
             @request-delete="emit('requestDelete', $event)"
             @move="store.moveTocNode"
-            @open-ide="showNoteMenu($event.uuid)"
           />
           <div v-else class="toc-empty">{{ query ? '没有匹配项' : 'TOC.md 中没有条目' }}</div>
         </div>

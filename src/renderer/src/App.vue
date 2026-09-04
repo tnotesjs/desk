@@ -6,6 +6,7 @@ import KnowledgeSidebar from './components/KnowledgeSidebar.vue'
 import NavigatorSidebar from './components/NavigatorSidebar.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
 import ToastHost from './components/ToastHost.vue'
+import AppZoomFeedback from './components/AppZoomFeedback.vue'
 import { useEditorStore } from './stores/editor'
 import {
   clampSidebarWidth,
@@ -22,6 +23,7 @@ import {
   updateBanner
 } from './stores/update'
 import { useWorkspaceStore } from './stores/workspace'
+import { APP_ZOOM_DEFAULT } from '../../shared/appZoom'
 
 import type {
   DeletePreviewDto,
@@ -113,13 +115,42 @@ async function persistSession(): Promise<void> {
 }
 
 function onKeydown(event: KeyboardEvent): void {
+  if (store.closingTabs) {
+    event.preventDefault()
+    return
+  }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
     event.preventDefault()
     void store.saveCurrentDocument().catch(() => undefined)
   }
 }
 
+async function changeAppZoom(action: 'increase' | 'decrease' | 'reset'): Promise<void> {
+  try {
+    if (action === 'reset') await store.setAppZoom(APP_ZOOM_DEFAULT)
+    else await store.adjustAppZoom(action === 'increase' ? 1 : -1)
+  } catch (cause) {
+    store.error = cause instanceof Error ? cause.message : String(cause)
+  }
+}
+
 async function handleTabShortcut(command: TabShortcutCommand): Promise<void> {
+  if (store.closingTabs) return
+  if (
+    command === 'increase-app-zoom' ||
+    command === 'decrease-app-zoom' ||
+    command === 'reset-app-zoom'
+  ) {
+    await changeAppZoom(
+      command === 'reset-app-zoom'
+        ? 'reset'
+        : command === 'increase-app-zoom'
+          ? 'increase'
+          : 'decrease'
+    )
+    return
+  }
+
   if (command === 'next-tab' || command === 'previous-tab') {
     const previous = editor.activeTab
     if (previous?.type === 'web') {
@@ -130,11 +161,11 @@ async function handleTabShortcut(command: TabShortcutCommand): Promise<void> {
   }
 
   if (command === 'close-saved-note-tabs') {
-    editor.closeSavedNotes()
+    await store.requestCloseTabs('saved')
     return
   }
   if (command === 'close-all-tabs') {
-    editor.closeAllTabs()
+    await store.requestCloseTabs('all')
     return
   }
   if (command === 'keep-active-tab-open') {
@@ -157,7 +188,7 @@ async function handleTabShortcut(command: TabShortcutCommand): Promise<void> {
   const group = editor.activeGroup
   const tab = editor.activeTab
   if (group && tab) {
-    if (!editor.close(group.id, tab.id)) store.status = '固定标签需要先解除固定才能关闭'
+    await store.requestCloseTab(tab.id)
     return
   }
 
@@ -305,8 +336,10 @@ watch(
     Boolean(deletePreview.value) ||
     Boolean(recoveryCandidate.value) ||
     Boolean(store.gitAttention) ||
-    Boolean(store.pendingGitPublishId),
+    Boolean(store.pendingGitPublishId) ||
+    store.closingTabs,
   (modalOpen) => {
+    editor.webViewsSuspended = modalOpen
     if (modalOpen) {
       void window.desk.web.hideAll()
     } else {
@@ -672,9 +705,31 @@ onUnmounted(() => {
   </div>
 
   <ToastHost />
+  <div
+    v-if="store.closingTabs"
+    class="tab-close-blocker"
+    aria-label="正在处理标签页"
+    aria-busy="true"
+  />
+  <AppZoomFeedback
+    v-if="store.settings"
+    :percent="store.settings.appZoomPercent"
+    :sequence="store.zoomFeedbackSequence"
+    @decrease="changeAppZoom('decrease')"
+    @increase="changeAppZoom('increase')"
+    @reset="changeAppZoom('reset')"
+  />
 </template>
 
 <style scoped>
+.tab-close-blocker {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  cursor: progress;
+  -webkit-app-region: no-drag;
+}
+
 .desk-shell {
   width: 100%;
   height: 100%;
@@ -735,8 +790,13 @@ onUnmounted(() => {
 }
 
 .titlebar-actions button {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  font-size: 22px;
+  line-height: 1;
   -webkit-app-region: no-drag;
   border: 0;
   border-radius: 6px;

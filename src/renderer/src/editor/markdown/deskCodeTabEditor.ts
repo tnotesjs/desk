@@ -29,6 +29,8 @@ export interface MountCodeTabEditorOptions {
    * cluster (same chrome as standalone milkdown code blocks).
    */
   showTools?: boolean
+  /** Shared file resources follow workspace autosave settings instead of saving on blur. */
+  saveOnBlur?: boolean
   /** Called after the user picks a language from the picker. */
   onLanguageChange?: (language: string) => void | Promise<void>
   /** Optional clipboard writer; falls back to navigator.clipboard / execCommand. */
@@ -327,13 +329,13 @@ export function mountCodeTabEditor(
   )
   syncDirtyUi()
 
-  // Blur autosave: leaving the CM (or the shell) persists when dirty.
+  // Inline blocks commit on blur; shared files use the workspace's autosave policy.
   shell.addEventListener('focusout', (event) => {
     const next = event.relatedTarget as Node | null
     if (next && shell.contains(next)) return
     if (next && tools.contains(next)) return
     closePicker()
-    void save()
+    if (options.saveOnBlur !== false) void save()
   })
 
   return {

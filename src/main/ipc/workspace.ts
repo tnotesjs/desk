@@ -2,6 +2,8 @@ import { dialog, shell } from 'electron'
 import { z } from 'zod'
 
 import { previewManager } from '../preview'
+import { confirmTabClose } from '../closeConfirmation'
+import { showContextMenu } from '../contextMenus'
 import { loadRecoveries } from '../recovery'
 import { loadWorkspaceSession, saveWorkspaceSession } from '../session'
 import { loadSettings } from '../settings'
@@ -13,6 +15,29 @@ import { workspaceSessionSchema } from './schemas'
 import { handle, noInputSchema, type GetWindow } from './shared'
 
 export function registerWorkspace(getWindow: GetWindow): () => void {
+  handle(
+    IPC_CHANNELS.contextMenuShow,
+    getWindow,
+    z.discriminatedUnion('kind', [
+      z.object({ kind: z.literal('note'), pinned: z.boolean(), completed: z.boolean() }),
+      z.object({ kind: z.literal('group') }),
+      z.object({
+        kind: z.literal('tab'),
+        tabType: z.enum(['note', 'note-file', 'web']),
+        pinned: z.boolean()
+      })
+    ]),
+    (request) => {
+      const window = getWindow()
+      if (!window || window.isDestroyed()) throw new Error('Desk 主窗口不可用')
+      return showContextMenu(window, request)
+    }
+  )
+  handle(IPC_CHANNELS.tabConfirmClose, getWindow, z.array(z.string().min(1)).min(1), (titles) => {
+    const window = getWindow()
+    if (!window || window.isDestroyed()) throw new Error('Desk 主窗口不可用')
+    return confirmTabClose(window, titles)
+  })
   handle(IPC_CHANNELS.bootstrap, getWindow, noInputSchema, async () => {
     const workspace = workspaceManager.getOverview()
     return {

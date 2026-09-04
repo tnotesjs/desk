@@ -3,6 +3,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { join } from 'node:path'
 import { z } from 'zod'
 
+import { clampAppZoom, APP_ZOOM_DEFAULT } from '../shared/appZoom'
+
 import type { AppSettings, KnowledgeBaseSettings } from '../shared/contracts'
 
 const knowledgeBaseSettingsSchema = z.object({
@@ -23,6 +25,7 @@ const settingsSchema = z.object({
   defaultNoteView: z.enum(['visual', 'readonly', 'source']).default('visual'),
   defaultNotePageWidth: z.enum(['standard', 'wide']).default('standard'),
   noteTocDisplay: z.enum(['hidden', 'collapsed', 'expanded']).default('expanded'),
+  appZoomPercent: z.number().transform(clampAppZoom).default(APP_ZOOM_DEFAULT),
   autosave: z
     .object({
       enabled: z.boolean().default(true),
@@ -134,7 +137,17 @@ function normalizeKnowledgeBaseSettings(
 }
 
 function normalize(input: unknown): AppSettings {
-  const parsed = settingsSchema.parse(input)
+  // Preserve a zoom value saved while the earlier note-only implementation was in use.
+  const raw = input && typeof input === 'object' ? (input as Record<string, unknown>) : null
+  const parsed = settingsSchema.parse(
+    raw
+      ? {
+          ...raw,
+          appZoomPercent:
+            raw.appZoomPercent === undefined ? raw.noteZoomPercent : raw.appZoomPercent
+        }
+      : input
+  )
   return {
     ...parsed,
     hiddenKnowledgeBases: uniqueSorted(parsed.hiddenKnowledgeBases),

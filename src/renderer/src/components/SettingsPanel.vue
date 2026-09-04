@@ -12,6 +12,7 @@ import TocSettings from './settings/TocSettings.vue'
 import ToolsSettings from './settings/ToolsSettings.vue'
 
 import type { AppSettings } from '../../../shared/contracts'
+import { APP_ZOOM_DEFAULT } from '../../../shared/appZoom'
 
 const emit = defineEmits<{ close: [] }>()
 const store = useWorkspaceStore()
@@ -107,6 +108,11 @@ function resetGroup(id: string): void {
   if (!draft.value) return
   const defaults = groupDefaults[id]
   if (!defaults) return
+  if (id === 'general') {
+    void store.setAppZoom(APP_ZOOM_DEFAULT).catch((cause) => {
+      store.error = cause instanceof Error ? cause.message : String(cause)
+    })
+  }
   const next: AppSettings = { ...draft.value, ...defaults }
   if (id === 'tools') {
     const configId = store.selectedKnowledgeBase?.configId
@@ -138,7 +144,9 @@ async function applyDraft(): Promise<void> {
   if (!draft.value || applying) return
   applying = true
   try {
-    const clone = JSON.parse(JSON.stringify(draft.value)) as AppSettings
+    const clone = JSON.parse(JSON.stringify(draft.value)) as Partial<AppSettings>
+    // Zoom is applied immediately by its control/shortcuts, independently of this draft.
+    delete clone.appZoomPercent
     await store.updateSettings(clone)
   } catch (cause) {
     store.error = cause instanceof Error ? cause.message : String(cause)

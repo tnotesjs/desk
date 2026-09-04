@@ -419,6 +419,7 @@ export function mountRawContainer(ctx: DeskRawBlockMountContext): void {
 
         const tabEditor = mountCodeTabEditor(editorHost, {
           initialContent,
+          saveOnBlur: entry.kind !== 'include',
           language,
           onCopy: (text) => deps.writeClipboard(text),
           onChange: (content) => {

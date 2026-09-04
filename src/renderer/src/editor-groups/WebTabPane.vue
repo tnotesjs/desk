@@ -37,7 +37,7 @@ async function updateLayout(): Promise<void> {
   const rect = viewport.value.getBoundingClientRect()
   await window.desk.web.layout({
     tabId: props.tab.id,
-    visible: props.active && rect.width > 0 && rect.height > 0,
+    visible: props.active && !editor.webViewsSuspended && rect.width > 0 && rect.height > 0,
     bounds: { x: rect.left, y: rect.top, width: rect.width, height: rect.height }
   })
 }
@@ -87,17 +87,14 @@ function onWindowResize(): void {
   void updateLayout()
 }
 
-watch(
-  () => props.active,
-  async (active) => {
-    if (active && !ready.value) {
-      await createView()
-      return
-    }
-    await nextTick()
-    await updateLayout()
+watch([() => props.active, () => editor.webViewsSuspended], async ([active]) => {
+  if (active && !ready.value) {
+    await createView()
+    return
   }
-)
+  await nextTick()
+  await updateLayout()
+})
 
 onMounted(() => {
   resizeObserver = new ResizeObserver(() => void updateLayout())

@@ -13,6 +13,7 @@ import type {
 } from '../../../../shared/contracts'
 
 import { documentKey, resultValue, type DocumentSession } from './helpers'
+import { createPendingSaves } from './pendingSaves'
 
 export interface DocumentsContext {
   editor: ReturnType<typeof useEditorStore>
@@ -32,6 +33,54 @@ export interface DocumentsContext {
 }
 
 export function createDocuments(ctx: DocumentsContext) {
+  const pendingSaves = createPendingSaves()
+  const pausedAutosave = new Set<string>()
+
+  function pauseDocumentAutosave(key: string): () => void {
+    pausedAutosave.add(key)
+    const timer = ctx.autosaveTimers.get(key)
+    if (timer) clearTimeout(timer)
+    ctx.autosaveTimers.delete(key)
+    return () => {
+      pausedAutosave.delete(key)
+      if (ctx.documents.value[key]?.dirty && ctx.settings.value?.autosave.enabled) {
+        ctx.autosaveTimers.set(
+          key,
+          setTimeout(() => {
+            ctx.autosaveTimers.delete(key)
+            void saveDocument(key).catch(() => undefined)
+          }, ctx.settings.value.autosave.delayMs)
+        )
+      }
+    }
+  }
+
+  async function discardDocumentChanges(key: string): Promise<void> {
+    const session = ctx.documents.value[key]
+    if (!session) return
+    const document = resultValue(
+      await window.desk.notes.read(session.document.knowledgeBaseId, session.document.uuid)
+    )
+    const timer = ctx.recoveryTimers.get(key)
+    if (timer) clearTimeout(timer)
+    ctx.recoveryTimers.delete(key)
+    resultValue(
+      await window.desk.recovery.delete({
+        knowledgeBaseId: document.knowledgeBaseId,
+        noteUuid: document.uuid
+      })
+    )
+    ctx.setDocumentSession(key, {
+      document,
+      content: document.content,
+      dirty: false,
+      saving: false,
+      externalConflict: false,
+      preserveSourceOnSave: false
+    })
+    ctx.editor.setNoteDirty(document.knowledgeBaseId, document.uuid, false)
+  }
+
   function deleteRecovery(knowledgeBaseId: string, noteUuid: string): void {
     void window.desk.recovery.delete({ knowledgeBaseId, noteUuid })
   }
@@ -122,7 +171,7 @@ export function createDocuments(ctx: DocumentsContext) {
     } else {
       deleteRecovery(session.document.knowledgeBaseId, session.document.uuid)
     }
-    if (dirty && ctx.settings.value?.autosave.enabled) {
+    if (dirty && !pausedAutosave.has(key) && ctx.settings.value?.autosave.enabled) {
       const timer = setTimeout(() => {
         ctx.autosaveTimers.delete(key)
         void saveDocument(key).catch(() => undefined)
@@ -135,7 +184,11 @@ export function createDocuments(ctx: DocumentsContext) {
     if (ctx.activeDocumentKey.value) updateDocumentContent(ctx.activeDocumentKey.value, content)
   }
 
-  async function saveDocument(key: string): Promise<void> {
+  function saveDocument(key: string): Promise<void> {
+    return pendingSaves.run(key, () => performSaveDocument(key))
+  }
+
+  async function performSaveDocument(key: string): Promise<void> {
     const session = ctx.documents.value[key]
     if (!session || !session.dirty || session.document.readOnly || session.saving) return
     const contentToSave = session.content
@@ -187,7 +240,11 @@ export function createDocuments(ctx: DocumentsContext) {
         ctx.status.value = '已保存'
       } else {
         ctx.status.value = '已保存先前修改，仍有未保存内容'
-        if (ctx.settings.value?.autosave.enabled && !ctx.autosaveTimers.has(key)) {
+        if (
+          !pausedAutosave.has(key) &&
+          ctx.settings.value?.autosave.enabled &&
+          !ctx.autosaveTimers.has(key)
+        ) {
           ctx.autosaveTimers.set(
             key,
             setTimeout(() => {
@@ -372,6 +429,9 @@ export function createDocuments(ctx: DocumentsContext) {
     updateDocumentContent,
     updateEditorContent,
     saveDocument,
+    pauseDocumentAutosave,
+    discardDocumentChanges,
+    waitForDocumentSave: pendingSaves.wait,
     writeLocalAttachment,
     uploadImage,
     copyNoteDirectoryPath,

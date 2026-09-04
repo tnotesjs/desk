@@ -145,6 +145,33 @@ describe('Milkdown raw block projection', () => {
     expect(editor.action(getMarkdown())).toBe(baseline)
   })
 
+  it('adds the GitHub tooltip to generated title links without changing their source', async () => {
+    const href = 'https://github.com/tnotesjs/TNotes.demo/tree/main/notes/0001.%20demo'
+    const source = `# [0001. 标题](${href})  \r\n\r\n正文\r\n`
+    const editor = await createEditor(source)
+    const heading = document.querySelector('.desk-generated-title')
+    const anchor = heading?.querySelector('a')
+
+    expect(heading?.getAttribute('contenteditable')).toBe('false')
+    expect(anchor?.textContent).toBe('0001. 标题')
+    expect(anchor?.getAttribute('href')).toBe(href)
+    expect(anchor?.getAttribute('data-tooltip')).toBe('在 Github 中打开')
+    const baseline = editor.action(getMarkdown())
+    expect(reconcileMarkdownSource(source, baseline, baseline)).toBe(source)
+    expect(baseline).not.toContain('data-tooltip')
+  })
+
+  it('does not label non-GitHub title links as GitHub or turn unsafe links into anchors', async () => {
+    await createEditor(
+      '# [外部链接](https://example.com) [页内链接](#section) [非 GitHub](https://github.com.example.com) [不安全](javascript:alert)\n'
+    )
+    const heading = document.querySelector('.desk-generated-title')
+
+    expect(heading?.querySelectorAll('a')).toHaveLength(3)
+    expect(heading?.querySelector('[data-tooltip]')).toBeNull()
+    expect(heading?.textContent).toContain('不安全')
+  })
+
   it('leaves standalone HTML breaks for Milkdown empty paragraphs', async () => {
     const source = '## 2. 评价\n\n<br />\n\n正文\n'
     const projected = projectRawBlocksForMilkdown(source)

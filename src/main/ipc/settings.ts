@@ -13,6 +13,7 @@ import {
   writeSettingsRaw
 } from '../settings'
 import { updateManager } from '../updateManager'
+import { webContentsManager } from '../webContentsManager'
 import { IPC_CHANNELS } from '../../shared/contracts'
 import { githubImageSettingsSchema } from './schemas'
 import { handle, noInputSchema, type GetWindow } from './shared'
@@ -20,11 +21,16 @@ import { handle, noInputSchema, type GetWindow } from './shared'
 import type { AppSettings } from '../../shared/contracts'
 
 export function registerSettings(getWindow: GetWindow): void {
-  handle(IPC_CHANNELS.settingsUpdate, getWindow, z.record(z.string(), z.unknown()), (input) => {
-    const settings = saveSettings(input as Partial<AppSettings>)
+  function applyRuntimeSettings(settings: AppSettings): AppSettings {
     gitManager.applyAutoPushSchedules(true)
     updateManager.configure(settings.updates.autoCheck)
+    webContentsManager.setZoomFactor(settings.appZoomPercent / 100)
     return settings
+  }
+
+  handle(IPC_CHANNELS.settingsUpdate, getWindow, z.record(z.string(), z.unknown()), (input) => {
+    const settings = saveSettings(input as Partial<AppSettings>)
+    return applyRuntimeSettings(settings)
   })
   handle(IPC_CHANNELS.settingsExport, getWindow, noInputSchema, async () => {
     const window = getWindow()
@@ -47,22 +53,16 @@ export function registerSettings(getWindow: GetWindow): void {
     })
     if (canceled || !filePaths[0]) throw new Error('未选择配置文件')
     const settings = importSettings(readFileSync(filePaths[0], 'utf8'))
-    gitManager.applyAutoPushSchedules(true)
-    updateManager.configure(settings.updates.autoCheck)
-    return settings
+    return applyRuntimeSettings(settings)
   })
   handle(IPC_CHANNELS.settingsReset, getWindow, noInputSchema, () => {
     const settings = resetSettings()
-    gitManager.applyAutoPushSchedules(true)
-    updateManager.configure(settings.updates.autoCheck)
-    return settings
+    return applyRuntimeSettings(settings)
   })
   handle(IPC_CHANNELS.settingsReadRaw, getWindow, noInputSchema, () => readSettingsFile())
   handle(IPC_CHANNELS.settingsWriteRaw, getWindow, z.string(), (json) => {
     const settings = writeSettingsRaw(json)
-    gitManager.applyAutoPushSchedules(true)
-    updateManager.configure(settings.updates.autoCheck)
-    return settings
+    return applyRuntimeSettings(settings)
   })
   handle(IPC_CHANNELS.imageTokenStatus, getWindow, noInputSchema, () => imageTokenStatus())
   handle(

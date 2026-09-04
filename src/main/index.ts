@@ -112,7 +112,38 @@ function configureApplicationMenu(): void {
       ]
     },
     { role: 'editMenu' },
-    { role: 'viewMenu' },
+    {
+      label: 'View',
+      submenu: [
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        {
+          label: '实际大小（应用）',
+          accelerator: 'CmdOrCtrl+0',
+          click: () => {
+            if (mainWindow) sendTabShortcut(mainWindow, 'reset-app-zoom')
+          }
+        },
+        {
+          label: '放大应用',
+          accelerator: 'CmdOrCtrl+Plus',
+          click: () => {
+            if (mainWindow) sendTabShortcut(mainWindow, 'increase-app-zoom')
+          }
+        },
+        {
+          label: '缩小应用',
+          accelerator: 'CmdOrCtrl+-',
+          click: () => {
+            if (mainWindow) sendTabShortcut(mainWindow, 'decrease-app-zoom')
+          }
+        },
+        { type: 'separator' },
+        { role: 'togglefullscreen' }
+      ]
+    },
     { role: 'windowMenu' }
   )
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
@@ -139,7 +170,8 @@ function createWindow(): BrowserWindow {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
-      webviewTag: false
+      webviewTag: false,
+      zoomFactor: loadSettings().appZoomPercent / 100
     }
   })
 
@@ -151,6 +183,10 @@ function createWindow(): BrowserWindow {
     }
   })
   webContentsManager.attachWindow(window)
+  webContentsManager.setZoomFactor(loadSettings().appZoomPercent / 100)
+  window.webContents.on('did-finish-load', () => {
+    webContentsManager.setZoomFactor(loadSettings().appZoomPercent / 100)
+  })
   webContentsManager.onTabShortcut((command) => sendTabShortcut(window, command))
   window.on('closed', () => {
     if (mainWindow === window) mainWindow = null

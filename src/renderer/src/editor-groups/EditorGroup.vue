@@ -8,31 +8,21 @@ import NoteFileTabPane from './NoteFileTabPane.vue'
 import WebTabPane from './WebTabPane.vue'
 import { useEditorStore } from '../stores/editor'
 import { useWorkspaceStore } from '../stores/workspace'
+import { resultValue } from '../stores/workspace/helpers'
 
-import type { EditorGroupNode, EditorTab } from '../../../shared/contracts'
+import type { ContextMenuAction, EditorGroupNode, EditorTab } from '../../../shared/contracts'
 import type { SplitPlacement } from './layoutModel'
 
 const props = defineProps<{ group: EditorGroupNode }>()
 const editor = useEditorStore()
 const workspace = useWorkspaceStore()
 const dragOver = ref(false)
-const contextTab = ref<EditorTab | null>(null)
-const contextPosition = ref({ x: 0, y: 0 })
 
 const activeTab = computed(
   () => props.group.tabs.find((tab) => tab.id === props.group.activeTabId) ?? null
 )
 const pinnedTabs = computed(() => props.group.tabs.filter((tab) => tab.pinned))
 const regularTabs = computed(() => props.group.tabs.filter((tab) => !tab.pinned))
-const primaryKey = computed(() => (workspace.runtimePlatform === 'darwin' ? '⌘' : 'Ctrl'))
-const altKey = computed(() => (workspace.runtimePlatform === 'darwin' ? '⌥' : 'Alt'))
-const revealLabel = computed(() =>
-  workspace.runtimePlatform === 'darwin'
-    ? '在 Finder 中显示'
-    : workspace.runtimePlatform === 'win32'
-      ? '在文件资源管理器中显示'
-      : '打开所在文件夹'
-)
 
 async function activate(tab: EditorTab): Promise<void> {
   const previous = activeTab.value
@@ -97,13 +87,7 @@ function handleGroupDragEnter(event: DragEvent): void {
 }
 
 function isDirty(tab: EditorTab): boolean {
-  if (tab.type === 'note') {
-    return Boolean(workspace.getDocumentSession(tab.knowledgeBaseId, tab.noteUuid)?.dirty)
-  }
-  if (tab.type === 'note-file') {
-    return Boolean(workspace.getNoteFileSession(tab.knowledgeBaseId, tab.noteUuid, tab.path)?.dirty)
-  }
-  return false
+  return workspace.isTabDirty(tab)
 }
 
 function tabAriaLabel(tab: EditorTab): string {
@@ -113,15 +97,14 @@ function tabAriaLabel(tab: EditorTab): string {
 }
 
 function closeTab(tab: EditorTab): void {
-  if (!editor.close(props.group.id, tab.id)) workspace.status = '固定标签需要先解除固定才能关闭'
+  void workspace.requestCloseTab(tab.id)
 }
 
 function closeTabWithMiddleButton(event: MouseEvent, tab: EditorTab): void {
   if (event.button !== 1) return
   event.preventDefault()
   event.stopPropagation()
-  if (tab.pinned) editor.setPinned(tab.id, false)
-  closeTab(tab)
+  void workspace.requestCloseTab(tab.id, true)
 }
 
 function openWeb(): void {
@@ -132,38 +115,33 @@ function openWeb(): void {
   }
 }
 
-function showTabMenu(event: MouseEvent, tab: EditorTab): void {
-  contextTab.value = tab
-  contextPosition.value = {
-    x: Math.max(8, Math.min(event.clientX, window.innerWidth - 244)),
-    y: Math.max(8, Math.min(event.clientY, window.innerHeight - 390))
+async function showTabMenu(event: MouseEvent, tab: EditorTab): Promise<void> {
+  event.stopPropagation()
+  const knowledgeBaseId = editor.activeKnowledgeBaseId
+  try {
+    const action = resultValue(
+      await window.desk.app.showContextMenu({
+        kind: 'tab',
+        tabType: tab.type,
+        pinned: Boolean(tab.pinned)
+      })
+    )
+    const currentTab = editor.groups
+      .flatMap((group) => group.tabs)
+      .find((candidate) => candidate.id === tab.id)
+    if (action && currentTab && editor.activeKnowledgeBaseId === knowledgeBaseId) {
+      await runTabAction(action, currentTab)
+    }
+  } catch (cause) {
+    workspace.error = cause instanceof Error ? cause.message : String(cause)
   }
-  void window.desk.web.hideAll()
 }
 
-function closeTabMenu(): void {
-  contextTab.value = null
-  requestAnimationFrame(() => window.dispatchEvent(new Event('resize')))
-}
-
-async function runTabAction(
-  action:
-    | 'close'
-    | 'close-saved'
-    | 'close-all'
-    | 'close-web'
-    | 'copy-path'
-    | 'reveal-file'
-    | 'reveal-toc'
-    | 'toggle-pin'
-): Promise<void> {
-  const tab = contextTab.value
-  if (!tab) return
-  closeTabMenu()
-  if (action === 'close') closeTab(tab)
-  else if (action === 'close-saved') editor.closeSavedNotes()
-  else if (action === 'close-all') editor.closeAllTabs()
-  else if (action === 'close-web') editor.closeAllWebTabs()
+async function runTabAction(action: ContextMenuAction, tab: EditorTab): Promise<void> {
+  if (action === 'close') await workspace.requestCloseTab(tab.id)
+  else if (action === 'close-saved') await workspace.requestCloseTabs('saved')
+  else if (action === 'close-all') await workspace.requestCloseTabs('all')
+  else if (action === 'close-web') await workspace.requestCloseTabs('web')
   else if (action === 'toggle-pin') editor.togglePinned(tab.id)
   else if (tab.type === 'note' && action === 'copy-path') await workspace.copyNoteDirectoryPath(tab)
   else if (tab.type === 'note' && action === 'reveal-file')
@@ -323,48 +301,6 @@ async function runTabAction(
       <div class="drop-zone top" @dragover.prevent @drop="dropSplit($event, 'top')">上方</div>
       <div class="drop-zone bottom" @dragover.prevent @drop="dropSplit($event, 'bottom')">下方</div>
     </div>
-
-    <Teleport to="body">
-      <div v-if="contextTab" class="tab-context-layer" @mousedown.self="closeTabMenu">
-        <div
-          class="tab-context-menu"
-          :style="{ left: `${contextPosition.x}px`, top: `${contextPosition.y}px` }"
-          role="menu"
-          @contextmenu.prevent
-        >
-          <button type="button" role="menuitem" @click="runTabAction('close')">
-            <span>关闭</span><kbd>{{ primaryKey }} W</kbd>
-          </button>
-          <button type="button" role="menuitem" @click="runTabAction('close-saved')">
-            <span>关闭已保存笔记</span><kbd>{{ primaryKey }} K&nbsp; U</kbd>
-          </button>
-          <button type="button" role="menuitem" @click="runTabAction('close-all')">
-            <span>全部关闭</span><kbd>{{ primaryKey }} K&nbsp; W</kbd>
-          </button>
-          <button type="button" role="menuitem" @click="runTabAction('close-web')">
-            <span>关闭所有网页 tab</span>
-          </button>
-          <template v-if="contextTab.type === 'note'">
-            <hr />
-            <button type="button" role="menuitem" @click="runTabAction('copy-path')">
-              <span>复制路径</span><kbd>{{ altKey }} {{ primaryKey }} C</kbd>
-            </button>
-            <button type="button" role="menuitem" @click="runTabAction('reveal-file')">
-              <span>{{ revealLabel }}</span
-              ><kbd>{{ altKey }} {{ primaryKey }} R</kbd>
-            </button>
-            <button type="button" role="menuitem" @click="runTabAction('reveal-toc')">
-              <span>在目录列表中显示</span>
-            </button>
-          </template>
-          <hr />
-          <button type="button" role="menuitem" @click="runTabAction('toggle-pin')">
-            <span>{{ contextTab.pinned ? '解除固定' : '固定' }}</span
-            ><kbd>{{ primaryKey }} K&nbsp; ⇧ Enter</kbd>
-          </button>
-        </div>
-      </div>
-    </Teleport>
   </section>
 </template>
 
@@ -633,58 +569,5 @@ async function runTabAction(
 
 .drop-zone.bottom {
   bottom: 3%;
-}
-
-.tab-context-layer {
-  position: fixed;
-  z-index: 1000;
-  inset: 0;
-}
-
-.tab-context-menu {
-  position: fixed;
-  width: 228px;
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--border-strong);
-  border-radius: 9px;
-  background: var(--raised);
-  padding: 6px;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.36);
-}
-
-.tab-context-menu button {
-  min-height: 31px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--text);
-  padding: 0 9px;
-  text-align: left;
-  cursor: pointer;
-  font-size: 11px;
-}
-
-.tab-context-menu button:hover {
-  background: var(--hover);
-}
-
-.tab-context-menu kbd {
-  flex: none;
-  color: var(--muted);
-  font-family: var(--font-sans);
-  font-size: 9px;
-  font-weight: 500;
-}
-
-.tab-context-menu hr {
-  width: calc(100% - 10px);
-  border: 0;
-  border-top: 1px solid var(--border);
-  margin: 5px;
 }
 </style>

@@ -28,6 +28,8 @@ const shortcutGroups = computed(() => [
   {
     title: 'Markdown 编辑',
     items: [
+      ['放大 / 缩小应用（10%）', `${primaryKey.value} + / ${primaryKey.value} -`],
+      ['应用实际大小（100%）', `${primaryKey.value} 0`],
       ['保存', `${primaryKey.value} S`],
       ['撤销 / 重做', `${primaryKey.value} Z / ${primaryKey.value} Shift Z`],
       ['一级至六级标题', `${altKey.value} ${primaryKey.value} 1…6`],

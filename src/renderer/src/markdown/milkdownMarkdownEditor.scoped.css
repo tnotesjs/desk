@@ -61,6 +61,11 @@
   fill: var(--accent-strong);
 }
 
+/* Keep Crepe's add action wired for the block menu, but show only the drag grip. */
+.milkdown-markdown-editor :deep(.milkdown .milkdown-block-handle .operation-item:first-child) {
+  display: none;
+}
+
 .milkdown-markdown-editor :deep(.milkdown .milkdown-block-handle .operation-item svg) {
   color: var(--editor-text);
   fill: var(--editor-text);
@@ -188,8 +193,8 @@
   width: min(100%, 940px);
   min-height: 100%;
   margin: 0 auto;
-  /* Left gutter must fit Crepe's block handle (2×32px icons + gap + 16px
-     floating offset). Right matches for a balanced writing column. */
+  /* Preserve the writing-column inset and room for the single 32px block
+     handle with its 16px floating offset. */
   padding: 28px 72px 48px 96px;
   line-height: 1.72;
   outline: none;
@@ -1650,8 +1655,12 @@
 }
 
 .milkdown-markdown-editor :deep(.desk-generated-title a) {
-  color: inherit;
   text-decoration: none;
+}
+
+.milkdown-markdown-editor :deep(.desk-generated-title a[data-tooltip]::after) {
+  font-family: var(--font-sans);
+  letter-spacing: normal;
 }
 
 .milkdown-markdown-editor :deep(.desk-generated-title.ProseMirror-selectednode) {

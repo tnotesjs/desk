@@ -17,6 +17,7 @@ const settings: AppSettings = {
   defaultNoteView: 'visual',
   defaultNotePageWidth: 'standard',
   noteTocDisplay: 'expanded',
+  appZoomPercent: 100,
   autosave: { enabled: true, delayMs: 800 },
   createNotePosition: 'top',
   workspaceLayout: 'kb-dir-content',
@@ -112,5 +113,43 @@ describe('SettingsPanel Markdown quick-input catalog', () => {
       expect(text).toContain(item.syntax)
       expect(text).toContain(item.trigger)
     }
+  })
+})
+
+describe('SettingsPanel live app zoom', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    let saved = structuredClone(settings)
+    window.desk.settings.update = vi.fn(async (next) => {
+      saved = { ...saved, ...next }
+      return { ok: true, value: saved } as const
+    })
+  })
+
+  afterEach(() => {
+    vi.clearAllTimers()
+    vi.useRealTimers()
+  })
+
+  it('shows current zoom and never overwrites shortcuts with a stale settings draft', async () => {
+    const store = useWorkspaceStore()
+    await store.setAppZoom(120)
+    const wrapper = mount(SettingsPanel)
+    const input = wrapper.get<HTMLInputElement>('[aria-label="应用缩放百分比"]')
+    expect(input.element.value).toBe('120')
+    // The ordinary settings draft is still debounced when zoom is changed by a shortcut.
+    await wrapper.get('select').setValue('dark')
+    await store.adjustAppZoom(1)
+    await vi.advanceTimersByTimeAsync(500)
+    expect(store.settings).toMatchObject({ theme: 'dark', appZoomPercent: 130 })
+    expect(input.element.value).toBe('130')
+    await wrapper.get('[aria-label="放大应用"]').trigger('click')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(store.settings?.appZoomPercent).toBe(140)
+    await wrapper.get('.reset-group').trigger('click')
+    await vi.advanceTimersByTimeAsync(500)
+    expect(store.settings?.appZoomPercent).toBe(100)
+    expect(input.element.value).toBe('100')
+    wrapper.unmount()
   })
 })

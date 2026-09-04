@@ -63,7 +63,7 @@ writeFileSync(
   `${JSON.stringify({ path: workspace }, null, 2)}\n`
 )
 writeFileSync(
-  join(profile, 'settings.json'),
+  join(profile, '.tn-desk-config.json'),
   `${JSON.stringify(
     {
       version: 1,
@@ -106,8 +106,10 @@ try {
     ).length
   })
   assert.ok(emptyCount >= 3, `expected >= 3 empty paragraphs, got ${emptyCount}`)
-  // Only the trailing <B /> component should be a desk raw atom.
-  assert.equal(await pm.locator('[data-type="desk-raw-block"]').count(), 1)
+  // The generated title is also protected; standalone <br /> must not become atoms.
+  assert.equal(await pm.locator('[data-kind="raw-generated-title"]').count(), 1)
+  assert.equal(await pm.locator('[data-kind="raw-component"]').count(), 1)
+  assert.equal(await pm.locator('[data-type="desk-raw-block"]').count(), 2)
   await page.screenshot({ path: join(shots, '01-three-empty-lines.png') })
   console.log('✓ consecutive standalone <br /> render as empty paragraphs')
 
@@ -173,8 +175,7 @@ try {
   await page.waitForTimeout(200)
   await page.screenshot({ path: join(shots, '06-middle-line-deleted.png') })
 
-  const save = page.getByRole('button', { name: '保存', exact: true })
-  await save.click()
+  await page.keyboard.press('ControlOrMeta+s')
   await page.waitForTimeout(500)
   const saved = readFileSync(readme, 'utf8')
   assert.equal((saved.match(/<br \/>/g) ?? []).length, 2)

@@ -18,6 +18,7 @@ const settings: AppSettings = {
   defaultNoteView: 'visual',
   defaultNotePageWidth: 'standard',
   noteTocDisplay: 'expanded',
+  appZoomPercent: 100,
   autosave: { enabled: true, delayMs: 800 },
   createNotePosition: 'top',
   workspaceLayout: 'kb-dir-content',

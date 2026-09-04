@@ -10,6 +10,7 @@ import type {
 } from '../../../../shared/contracts'
 
 import { noteFileKey, resultValue, type NoteFileSession } from './helpers'
+import { createPendingSaves } from './pendingSaves'
 
 interface NoteFilesContext {
   editor: ReturnType<typeof useEditorStore>
@@ -25,6 +26,49 @@ interface NoteFilesContext {
 }
 
 export function createNoteFiles(ctx: NoteFilesContext) {
+  const pendingSaves = createPendingSaves()
+  const pausedAutosave = new Set<string>()
+
+  function pauseNoteFileAutosave(key: string): () => void {
+    pausedAutosave.add(key)
+    const timer = ctx.autosaveTimers.get(key)
+    if (timer) clearTimeout(timer)
+    ctx.autosaveTimers.delete(key)
+    return () => {
+      pausedAutosave.delete(key)
+      if (ctx.noteFiles.value[key]?.dirty && ctx.settings.value?.autosave.enabled) {
+        ctx.autosaveTimers.set(
+          key,
+          setTimeout(() => {
+            ctx.autosaveTimers.delete(key)
+            void saveNoteFile(key).catch(() => undefined)
+          }, ctx.settings.value.autosave.delayMs)
+        )
+      }
+    }
+  }
+
+  async function discardNoteFileChanges(key: string): Promise<void> {
+    const session = ctx.noteFiles.value[key]
+    if (!session) return
+    const { knowledgeBaseId, noteUuid, path } = session.document
+    const document = resultValue(
+      await window.desk.noteFiles.readText({ knowledgeBaseId, noteUuid, path })
+    )
+    const timer = ctx.recoveryTimers.get(key)
+    if (timer) clearTimeout(timer)
+    ctx.recoveryTimers.delete(key)
+    resultValue(await window.desk.recovery.delete({ knowledgeBaseId, noteUuid, path }))
+    setSession(key, {
+      document,
+      content: document.content,
+      dirty: false,
+      saving: false,
+      externalConflict: false
+    })
+    ctx.editor.setNoteFileDirty(knowledgeBaseId, noteUuid, path, false)
+  }
+
   function setSession(key: string, session: NoteFileSession): void {
     ctx.noteFiles.value = { ...ctx.noteFiles.value, [key]: session }
   }
@@ -121,7 +165,7 @@ export function createNoteFiles(ctx: NoteFilesContext) {
         void persistRecovery(key, noteTitle)
       }, 250)
     )
-    if (ctx.settings.value?.autosave.enabled) {
+    if (!pausedAutosave.has(key) && ctx.settings.value?.autosave.enabled) {
       ctx.autosaveTimers.set(
         key,
         setTimeout(() => {
@@ -132,7 +176,11 @@ export function createNoteFiles(ctx: NoteFilesContext) {
     }
   }
 
-  async function saveNoteFile(key: string): Promise<void> {
+  function saveNoteFile(key: string): Promise<void> {
+    return pendingSaves.run(key, () => performSaveNoteFile(key))
+  }
+
+  async function performSaveNoteFile(key: string): Promise<void> {
     const session = ctx.noteFiles.value[key]
     if (!session || !session.dirty || session.document.readOnly || session.saving) return
     const contentToSave = session.content
@@ -164,7 +212,7 @@ export function createNoteFiles(ctx: NoteFilesContext) {
       if (!dirty) {
         deleteRecovery(document.knowledgeBaseId, document.noteUuid, document.path)
         ctx.status.value = `已保存 ${document.path}`
-      } else if (ctx.settings.value?.autosave.enabled) {
+      } else if (!pausedAutosave.has(key) && ctx.settings.value?.autosave.enabled) {
         ctx.autosaveTimers.set(
           key,
           setTimeout(() => {
@@ -302,6 +350,9 @@ export function createNoteFiles(ctx: NoteFilesContext) {
     ensureNoteFile,
     updateNoteFileContent,
     saveNoteFile,
+    pauseNoteFileAutosave,
+    discardNoteFileChanges,
+    waitForNoteFileSave: pendingSaves.wait,
     saveAllNoteFiles,
     reloadNoteFile,
     keepNoteFileAgainstDisk,

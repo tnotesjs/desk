@@ -4,6 +4,7 @@ import { mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import MilkdownMarkdownEditor from './MilkdownMarkdownEditor.vue'
+import { flushPendingEdits, hasPendingEdits } from '../editor/markdown/pendingEdits'
 
 const CONTAINER_SOURCE = '::: details\n\nbody\n\n:::\n\nplain\n'
 
@@ -46,6 +47,25 @@ async function mountSwiper(): Promise<ReturnType<typeof mount>> {
 describe('container inline source editor', () => {
   afterEach(() => {
     document.body.replaceChildren()
+  })
+
+  it('flushes a block-local draft before the tab close guard reads document state', async () => {
+    const wrapper = await mountWithContainer()
+    try {
+      await wrapper.find('.desk-raw-block__edit').trigger('click')
+      await wrapper.find('.desk-raw-block__editor-title').setValue('Unsaved title')
+      expect(hasPendingEdits('kb-a', 'note-a')).toBe(true)
+      expect(wrapper.emitted('change')).toBeUndefined()
+      flushPendingEdits('kb-a', 'other-note')
+      expect(hasPendingEdits('kb-a', 'note-a')).toBe(true)
+      flushPendingEdits('kb-a', 'note-a')
+      await Promise.resolve()
+      expect(wrapper.emitted<string[]>('change')?.at(-1)?.[0]).toContain('Unsaved title')
+      expect(hasPendingEdits('kb-a', 'note-a')).toBe(false)
+    } finally {
+      wrapper.unmount()
+    }
+    expect(hasPendingEdits('kb-a', 'note-a')).toBe(false)
   })
 
   it('opens a structured title+body editor for tip/info/details callouts', async () => {

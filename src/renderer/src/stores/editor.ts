@@ -180,6 +180,7 @@ export const useEditorStore = defineStore('editor', () => {
   const layout = ref<EditorLayoutNode>(firstGroup)
   const activeGroupId = ref(firstGroup.id)
   const webStates = ref<Record<string, WebTabState>>({})
+  const webViewsSuspended = ref(false)
   const previewStates = ref<Record<string, PreviewStateDto>>({})
   const knowledgeSidebarWidth = ref(KNOWLEDGE_SIDEBAR_DEFAULT)
   const navigatorSidebarWidth = ref(NAVIGATOR_SIDEBAR_DEFAULT)
@@ -198,6 +199,11 @@ export const useEditorStore = defineStore('editor', () => {
   let unsubscribeWebState: (() => void) | null = null
   let unsubscribeWebOpen: (() => void) | null = null
   let unsubscribePreview: (() => void) | null = null
+  let hasUnsavedChanges = (tab: EditorTab): boolean => tab.type !== 'web' && Boolean(tab.dirty)
+
+  function setUnsavedChangesResolver(resolver: (tab: EditorTab) => boolean): void {
+    hasUnsavedChanges = resolver
+  }
 
   const groups = computed(() => listGroups(layout.value))
   const activeGroup = computed(
@@ -477,9 +483,7 @@ export const useEditorStore = defineStore('editor', () => {
   ): Array<{ groupId: string; tab: EditorTab }> {
     return groups.value
       .flatMap((group) => group.tabs.map((tab) => ({ groupId: group.id, tab })))
-      .filter(
-        ({ tab }) => !tab.pinned && !excludedIds.has(tab.id) && (tab.type === 'web' || !tab.dirty)
-      )
+      .filter(({ tab }) => !tab.pinned && !excludedIds.has(tab.id) && !hasUnsavedChanges(tab))
       .sort((left, right) => (left.tab.openedAt ?? 0) - (right.tab.openedAt ?? 0))
   }
 
@@ -664,7 +668,11 @@ export const useEditorStore = defineStore('editor', () => {
       activeGroupId.value = result.groupId
     } else {
       const previewTab = activeGroup.value?.tabs.find(
-        (candidate) => candidate.type === 'note' && candidate.preview && !candidate.pinned
+        (candidate) =>
+          candidate.type === 'note' &&
+          candidate.preview &&
+          !candidate.pinned &&
+          !hasUnsavedChanges(candidate)
       )
       if (openBehavior === 'preview' && previewTab && activeGroup.value) {
         // Reuse the preview tab id so Vue keeps the pane mounted across note swaps
@@ -1025,6 +1033,7 @@ export const useEditorStore = defineStore('editor', () => {
     tabCount,
     groups,
     webStates,
+    webViewsSuspended,
     previewStates,
     knowledgeSidebarWidth,
     navigatorSidebarWidth,
@@ -1041,6 +1050,7 @@ export const useEditorStore = defineStore('editor', () => {
     knowledgeBaseEditors,
     lastNoteByGroup,
     configure,
+    setUnsavedChangesResolver,
     initializeWebEvents,
     dispose,
     restore,

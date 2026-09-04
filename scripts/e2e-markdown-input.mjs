@@ -304,7 +304,7 @@ try {
   record('inline code and math also convert only on Space')
 
   await page.screenshot({ path: join(shots, '03-inline-results.png') })
-  await page.getByRole('button', { name: '保存', exact: true }).click()
+  await page.keyboard.press('ControlOrMeta+s')
   await page.waitForTimeout(250)
   const savedMarkdown = readFileSync(join(note, 'README.md'), 'utf8')
   assert.equal(savedMarkdown.includes('::: tip 💡 TIP\n\n:::'), true)

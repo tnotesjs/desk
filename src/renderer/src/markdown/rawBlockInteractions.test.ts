@@ -81,6 +81,96 @@ function codePositions(editor: Editor): {
 }
 
 describe('raw block keyboard selection', () => {
+  it.each(['ArrowLeft', 'ArrowRight'])(
+    '%s stays within a heading between a generated TOC and a raw block',
+    async (key) => {
+      const editor = await createEditor(
+        '# 标题\n\n<!-- region:toc -->\n- [1. 概述](#1-概述)\n<!-- endregion:toc -->\n\n## 1. 概述\n\n<B id="selection" />\n'
+      )
+      editor.action((ctx) => {
+        const view = ctx.get(editorViewCtx)
+        let headingStart = -1
+        let headingLength = 0
+        view.state.doc.descendants((node, position) => {
+          if (node.type.name === 'heading') {
+            headingStart = position + 1
+            headingLength = node.content.size
+          }
+        })
+        const offsets =
+          key === 'ArrowLeft'
+            ? Array.from({ length: headingLength }, (_, index) => index + 1)
+            : Array.from({ length: headingLength }, (_, index) => index)
+        for (const offset of offsets) {
+          const position = headingStart + offset
+          view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, position)))
+          view.dom.dispatchEvent(
+            new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+          )
+          // happy-dom does not execute browser caret movement. Desk must leave
+          // the text caret alone here instead of replacing it with NodeSelection.
+          expect(view.state.selection).toBeInstanceOf(TextSelection)
+          expect(view.state.selection.head).toBe(position)
+        }
+      })
+    }
+  )
+
+  it.each([
+    ['raw', '<B id="selection" />'],
+    ['code', '```js\nconst value = 1\n```']
+  ])('only crosses horizontal text boundaries next to a %s block', async (_kind, block) => {
+    const editor = await createEditor(`上方段落\n\n${block}\n\n下方段落\n`)
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx)
+      const first = view.state.doc.firstChild!
+      const blockPosition = first.nodeSize
+      const blockNode = view.state.doc.child(1)
+      const afterStart = blockPosition + blockNode.nodeSize + 1
+      for (const [key, caret, expected] of [
+        ['ArrowRight', first.content.size, null],
+        ['ArrowRight', first.content.size + 1, blockPosition],
+        ['ArrowLeft', afterStart + 1, null],
+        ['ArrowLeft', afterStart, blockPosition]
+      ] as const) {
+        view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, caret)))
+        const direction = key === 'ArrowLeft' ? 'left' : 'right'
+        expect(adjacentRawBlockSelectionPosition(view.state, direction)).toBe(expected)
+        // Exercise the fallback without a DOM event / capture listener.
+        const event = new KeyboardEvent('keydown', { key, cancelable: true })
+        view.someProp('handleKeyDown', (handle) => handle(view, event))
+        if (expected === null) {
+          expect(view.state.selection).toBeInstanceOf(TextSelection)
+          expect(view.state.selection.head).toBe(caret)
+        } else {
+          expect(view.state.selection).toBeInstanceOf(NodeSelection)
+          expect(view.state.selection.from).toBe(blockPosition)
+        }
+      }
+    })
+  })
+
+  it('keeps horizontal movement between list items inside the list', async () => {
+    const editor = await createEditor('<B />\n\n- 第一项\n- 第二项\n\n<B />\n')
+    editor.action((ctx) => {
+      const state = ctx.get(editorStateCtx)
+      const paragraphs: Array<{ start: number; end: number }> = []
+      state.doc.descendants((node, position) => {
+        if (node.type.name === 'paragraph') {
+          paragraphs.push({ start: position + 1, end: position + 1 + node.content.size })
+        }
+      })
+      const firstEnd = state.apply(
+        state.tr.setSelection(TextSelection.create(state.doc, paragraphs[0].end))
+      )
+      const secondStart = state.apply(
+        state.tr.setSelection(TextSelection.create(state.doc, paragraphs[1].start))
+      )
+      expect(adjacentRawBlockSelectionPosition(firstEnd, 'right')).toBeNull()
+      expect(adjacentRawBlockSelectionPosition(secondStart, 'left')).toBeNull()
+    })
+  })
+
   it('ArrowDown selects the whole atom; Delete removes it', async () => {
     const editor = await createEditor()
     const pos = positions(editor)

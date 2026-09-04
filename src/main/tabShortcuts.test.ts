@@ -20,6 +20,31 @@ function input(overrides: Partial<Electron.Input> = {}): Electron.Input {
 }
 
 describe('tab shortcuts', () => {
+  it('handles app zoom before Electron page zoom, including shifted plus and numpad keys', () => {
+    for (const platform of ['darwin', 'win32', 'linux'] as const) {
+      const modifier = platform === 'darwin' ? { meta: true } : { control: true }
+      for (const key of ['+', '=']) {
+        for (const shift of [false, true]) {
+          expect(resolveTabShortcut(input({ key, shift, ...modifier }), platform)).toBe(
+            'increase-app-zoom'
+          )
+        }
+      }
+      expect(resolveTabShortcut(input({ key: '-', ...modifier }), platform)).toBe(
+        'decrease-app-zoom'
+      )
+      expect(resolveTabShortcut(input({ key: '0', ...modifier }), platform)).toBe('reset-app-zoom')
+      expect(resolveTabShortcut(input({ key: '+', alt: true, ...modifier }), platform)).toBeNull()
+      expect(
+        resolveTabShortcut(input({ key: '+', isComposing: true, ...modifier }), platform)
+      ).toBeNull()
+      expect(
+        resolveTabShortcut(input({ key: '+', type: 'keyUp', ...modifier }), platform)
+      ).toBeNull()
+      expect(resolveTabShortcut(input({ key: '+' }), platform)).toBeNull()
+    }
+  })
+
   it('maps Command+W on macOS and Ctrl+W on Windows', () => {
     expect(resolveTabShortcut(input({ key: 'w', meta: true }), 'darwin')).toBe(
       'close-active-tab-or-window'

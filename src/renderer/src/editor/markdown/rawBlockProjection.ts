@@ -274,6 +274,9 @@ function renderGeneratedTitleNode(source: string): HTMLElement {
       const anchor = document.createElement('a')
       anchor.textContent = text
       anchor.href = href
+      if (anchor.hostname.toLowerCase() === 'github.com') {
+        anchor.setAttribute('data-tooltip', '在 Github 中打开')
+      }
       heading.append(anchor)
     } else {
       heading.append(document.createTextNode(text))

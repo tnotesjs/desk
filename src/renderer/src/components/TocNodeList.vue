@@ -3,7 +3,8 @@ import { computed, inject, nextTick, provide, ref, watch } from 'vue'
 
 import { useEditorStore } from '../stores/editor'
 import { useWorkspaceStore } from '../stores/workspace'
-import type { DeskTocNode } from '../../../shared/contracts'
+import { resultValue } from '../stores/workspace/helpers'
+import type { ContextMenuAction, EditorTab, DeskTocNode } from '../../../shared/contracts'
 import type { InjectionKey, Ref } from 'vue'
 
 defineOptions({ name: 'TocNodeList' })
@@ -24,7 +25,6 @@ const emit = defineEmits<{
   requestRename: [node: DeskTocNode]
   requestDelete: [node: DeskTocNode]
   move: [source: DeskTocNode, target: DeskTocNode, placement: 'before' | 'after' | 'inside']
-  openIde: [node: Extract<DeskTocNode, { type: 'note' }>]
 }>()
 
 const collapsedKey: InjectionKey<Ref<Set<string>>> = Symbol.for('tnotes-desk-toc-collapsed')
@@ -35,8 +35,6 @@ const listHost = ref<HTMLElement | null>(null)
 const focusedNoteUuid = ref<string | null>(null)
 const dropTarget = ref<{ nodeId: string; placement: 'before' | 'after' | 'inside' } | null>(null)
 const draggingNodeId = ref<string | null>(null)
-const contextNote = ref<Extract<DeskTocNode, { type: 'note' }> | null>(null)
-const contextPosition = ref({ x: 0, y: 0 })
 let expandTimer: ReturnType<typeof setTimeout> | null = null
 
 const store = useWorkspaceStore()
@@ -45,17 +43,8 @@ const tocShowIndex = computed(() => store.settings?.toc?.showNoteIndex !== false
 const tocShowStatus = computed(() => store.settings?.toc?.showNoteStatus !== false)
 const tocDoneEmoji = computed(() => store.settings?.toc?.doneEmoji ?? '✅')
 const tocUndoneEmoji = computed(() => store.settings?.toc?.undoneEmoji ?? '⏰')
-const revealLabel = computed(() =>
-  store.runtimePlatform === 'darwin'
-    ? '在 Finder 中显示'
-    : store.runtimePlatform === 'win32'
-      ? '在文件资源管理器中显示'
-      : '打开所在文件夹'
-)
-const contextNoteTab = computed(() => {
-  const knowledgeBaseId = store.selectedKnowledgeBaseId
-  const noteUuid = contextNote.value?.uuid
-  if (!knowledgeBaseId || !noteUuid) return null
+
+function findNoteTab(knowledgeBaseId: string, noteUuid: string): EditorTab | null {
   return (
     editor.groups
       .flatMap((group) => group.tabs)
@@ -66,7 +55,7 @@ const contextNoteTab = computed(() => {
           tab.noteUuid === noteUuid
       ) ?? null
   )
-})
+}
 
 function parentPathToNote(
   nodes: DeskTocNode[],
@@ -114,7 +103,7 @@ function toggle(nodeId: string): void {
 function dragStart(event: DragEvent, node: DeskTocNode): void {
   if (!event.dataTransfer) return
   const target = event.target as HTMLElement
-  if (target.closest('.row-menu, .row-action')) {
+  if (target.closest('.row-action')) {
     event.preventDefault()
     return
   }
@@ -194,35 +183,44 @@ function drop(event: DragEvent, target: DeskTocNode): void {
   }
 }
 
-function runMenuAction(event: MouseEvent, action: () => void): void {
-  action()
-  ;(event.currentTarget as HTMLElement).closest('details')?.removeAttribute('open')
-}
-
-function showNoteContextMenu(
-  event: MouseEvent,
-  node: Extract<DeskTocNode, { type: 'note' }>
-): void {
+async function showNodeContextMenu(event: MouseEvent, node: DeskTocNode): Promise<void> {
   event.stopPropagation()
-  contextNote.value = node
-  contextPosition.value = {
-    x: Math.max(8, Math.min(event.clientX, window.innerWidth - 232)),
-    y: Math.max(8, Math.min(event.clientY, window.innerHeight - 210))
+  const knowledgeBaseId = store.selectedKnowledgeBaseId
+  if (!knowledgeBaseId) return
+  try {
+    const action = resultValue(
+      await window.desk.app.showContextMenu(
+        node.type === 'note'
+          ? {
+              kind: 'note',
+              pinned: Boolean(findNoteTab(knowledgeBaseId, node.uuid)?.pinned),
+              completed: node.completed
+            }
+          : { kind: 'group' }
+      )
+    )
+    if (action && store.selectedKnowledgeBaseId === knowledgeBaseId) {
+      await runNodeContextAction(action, node, knowledgeBaseId)
+    }
+  } catch (cause) {
+    store.error = cause instanceof Error ? cause.message : String(cause)
   }
 }
 
-function closeNoteContextMenu(): void {
-  contextNote.value = null
-}
-
-async function runNoteContextAction(
-  action: 'copy-path' | 'reveal-file' | 'toggle-pin' | 'open-ide'
+async function runNodeContextAction(
+  action: ContextMenuAction,
+  node: DeskTocNode,
+  knowledgeBaseId: string
 ): Promise<void> {
-  const node = contextNote.value
-  const knowledgeBaseId = store.selectedKnowledgeBaseId
-  if (!node || !knowledgeBaseId) return
-  const existingTab = contextNoteTab.value
-  closeNoteContextMenu()
+  if (action === 'rename') return emit('requestRename', node)
+  if (action === 'add-before') return emit('requestCreate', node, 'before')
+  if (action === 'add-after') return emit('requestCreate', node, 'after')
+  // Keep deletion behind the existing preview/confirmation dialog.
+  if (action === 'request-delete') return emit('requestDelete', node)
+  if (node.type !== 'note') return
+  if (action === 'open-split') return emit('selectSplit', node)
+  if (action === 'toggle-done') return emit('toggleDone', node)
+  const existingTab = findNoteTab(knowledgeBaseId, node.uuid)
   const target = { knowledgeBaseId, noteUuid: node.uuid }
   if (action === 'copy-path') {
     await store.copyNoteDirectoryPath(target)
@@ -237,6 +235,7 @@ async function runNoteContextAction(
     if (!result.ok) store.error = result.error.message
     return
   }
+  if (action !== 'toggle-pin') return
   if (existingTab) {
     editor.setPinned(existingTab.id, !existingTab.pinned)
     return
@@ -291,7 +290,7 @@ defineExpose({ toggleAllCollapsed })
         @dragover.stop="dragOver($event, node)"
         @dragleave="dragLeave($event, node)"
         @drop.stop="drop($event, node)"
-        @contextmenu.prevent="node.type === 'note' && showNoteContextMenu($event, node)"
+        @contextmenu.prevent="showNodeContextMenu($event, node)"
       >
         <button
           v-if="node.children.length"
@@ -334,59 +333,6 @@ defineExpose({ toggleAllCollapsed })
           </button>
         </template>
 
-        <details class="row-menu" @click.stop>
-          <summary class="row-action menu-trigger" aria-label="更多操作" data-tooltip="更多操作">
-            ⋮
-          </summary>
-          <div class="row-menu-popover">
-            <button
-              v-if="node.type === 'note'"
-              type="button"
-              @click="runMenuAction($event, () => emit('selectSplit', node))"
-            >
-              <span>◫</span>在右侧打开
-            </button>
-            <button type="button" @click="runMenuAction($event, () => emit('requestRename', node))">
-              <span>✎</span>重命名
-            </button>
-            <button
-              v-if="node.type === 'note'"
-              type="button"
-              @click="runMenuAction($event, () => emit('toggleDone', node))"
-            >
-              <span>✓</span>{{ node.completed ? '标记为未完成' : '标记为完成' }}
-            </button>
-            <button
-              v-if="node.type === 'note'"
-              type="button"
-              @click="runMenuAction($event, () => emit('openIde', node))"
-            >
-              <span>⌘</span>使用 IDE 打开
-            </button>
-            <hr />
-            <button
-              type="button"
-              @click="runMenuAction($event, () => emit('requestCreate', node, 'before'))"
-            >
-              <span>↑</span>在上方添加
-            </button>
-            <button
-              type="button"
-              @click="runMenuAction($event, () => emit('requestCreate', node, 'after'))"
-            >
-              <span>↓</span>在下方添加
-            </button>
-            <hr />
-            <button
-              type="button"
-              class="danger"
-              @click="runMenuAction($event, () => emit('requestDelete', node))"
-            >
-              <span>×</span>永久删除
-            </button>
-          </div>
-        </details>
-
         <button
           type="button"
           class="row-action add-note-action"
@@ -412,35 +358,9 @@ defineExpose({ toggleAllCollapsed })
         @request-rename="emit('requestRename', $event)"
         @request-delete="emit('requestDelete', $event)"
         @move="(source, target, placement) => emit('move', source, target, placement)"
-        @open-ide="emit('openIde', $event)"
       />
     </li>
   </ul>
-
-  <Teleport to="body">
-    <div v-if="contextNote" class="note-context-layer" @mousedown.self="closeNoteContextMenu">
-      <div
-        class="note-context-menu"
-        :style="{ left: `${contextPosition.x}px`, top: `${contextPosition.y}px` }"
-        role="menu"
-        @contextmenu.prevent
-      >
-        <button type="button" role="menuitem" @click="runNoteContextAction('copy-path')">
-          复制路径
-        </button>
-        <button type="button" role="menuitem" @click="runNoteContextAction('reveal-file')">
-          {{ revealLabel }}
-        </button>
-        <button type="button" role="menuitem" @click="runNoteContextAction('toggle-pin')">
-          {{ contextNoteTab?.pinned ? '解除固定' : '固定' }}
-        </button>
-        <hr />
-        <button type="button" role="menuitem" @click="runNoteContextAction('open-ide')">
-          使用 IDE 打开
-        </button>
-      </div>
-    </div>
-  </Teleport>
 </template>
 
 <style scoped>
@@ -615,134 +535,13 @@ defineExpose({ toggleAllCollapsed })
   color: var(--muted);
 }
 
-.toc-row:hover > .row-action,
-.toc-row:hover > .row-menu > .row-action,
-.row-menu[open] > .row-action {
+.toc-row:hover > .row-action {
   display: block;
 }
 
-.row-action:hover,
-.menu-trigger:hover,
-.add-note-action:hover {
+.row-action:hover {
   background: var(--selected);
   color: var(--accent);
-}
-
-.row-menu {
-  position: relative;
-  flex: none;
-}
-
-.row-menu > summary {
-  display: none;
-  box-sizing: border-box;
-  padding: 1px 0 0;
-  text-align: center;
-  list-style: none;
-  font-size: 16px;
-  line-height: 18px;
-}
-
-.row-menu > summary::-webkit-details-marker {
-  display: none;
-}
-
-.row-menu-popover {
-  position: absolute;
-  z-index: 30;
-  top: 22px;
-  right: 0;
-  width: 154px;
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  background: var(--raised);
-  padding: 5px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
-}
-
-.row-menu-popover button {
-  min-height: 29px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--text);
-  text-align: left;
-  padding: 0 8px;
-  cursor: pointer;
-  font-size: 11px;
-}
-
-.row-menu-popover button > span {
-  width: 16px;
-  flex: none;
-  color: var(--muted);
-  text-align: center;
-  font-family: var(--font-mono);
-}
-
-.row-menu-popover button:hover {
-  background: var(--hover);
-}
-
-.row-menu-popover button.danger {
-  color: var(--danger);
-}
-
-.row-menu-popover button.danger:hover {
-  background: var(--danger-soft);
-}
-
-.row-menu-popover hr {
-  width: calc(100% - 8px);
-  border: 0;
-  border-top: 1px solid var(--border);
-  margin: 4px;
-}
-
-.note-context-layer {
-  position: fixed;
-  z-index: 1000;
-  inset: 0;
-}
-
-.note-context-menu {
-  position: fixed;
-  width: 220px;
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--border-strong);
-  border-radius: 9px;
-  background: var(--raised);
-  padding: 6px;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.36);
-}
-
-.note-context-menu button {
-  min-height: 31px;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--text);
-  padding: 0 9px;
-  text-align: left;
-  cursor: pointer;
-  font-size: 11px;
-}
-
-.note-context-menu button:hover {
-  background: var(--hover);
-}
-
-.note-context-menu hr {
-  width: calc(100% - 10px);
-  border: 0;
-  border-top: 1px solid var(--border);
-  margin: 5px;
 }
 
 :global(.toc-drag-ghost) {

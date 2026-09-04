@@ -45,6 +45,7 @@ onMounted(async () => {
       initialContent: initial.content,
       language: language.value,
       showTools: false,
+      saveOnBlur: false,
       onChange: (content) =>
         workspace.updateNoteFileContent(key.value, content, props.tab.noteTitle),
       onSave: async (content) => {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onMounted, ref, watch } from 'vue'
 
 import UiTooltip from '../components/UiTooltip.vue'
 import PageWidthIcon from '../components/PageWidthIcon.vue'
@@ -46,6 +46,51 @@ const markdownEditor = computed(() =>
   props.tab.viewMode === 'source' ? markdownSourceEditor.value : milkdownMarkdownEditor.value
 )
 const pageWidthLabel = computed(() => (props.tab.pageWidth === 'wide' ? '超宽显示' : '标准页宽'))
+const titleInput = ref<HTMLInputElement | null>(null)
+const editingTitle = ref(false)
+const titleDraft = ref('')
+const renaming = ref(false)
+
+watch(key, () => {
+  editingTitle.value = false
+})
+
+async function editTitle(): Promise<void> {
+  if (!session.value || session.value.document.readOnly || renaming.value) return
+  titleDraft.value = session.value.document.title
+  editingTitle.value = true
+  await nextTick()
+  titleInput.value?.focus()
+  titleInput.value?.select()
+}
+
+async function commitTitle(): Promise<void> {
+  if (!editingTitle.value) return
+  editingTitle.value = false
+  const title = titleDraft.value.trim()
+  if (!title || title === session.value?.document.title) return
+  const { knowledgeBaseId, noteUuid } = props.tab
+  renaming.value = true
+  try {
+    await workspace.renameNote(knowledgeBaseId, noteUuid, title)
+  } catch (cause) {
+    workspace.error = cause instanceof Error ? cause.message : String(cause)
+  } finally {
+    renaming.value = false
+  }
+}
+
+function onTitleKeydown(event: KeyboardEvent): void {
+  // Enter used to confirm a Chinese IME candidate must not submit the name.
+  if (event.isComposing) return
+  if (event.key === 'Enter') {
+    event.preventDefault()
+    titleInput.value?.blur()
+  } else if (event.key === 'Escape') {
+    event.preventDefault()
+    editingTitle.value = false
+  }
+}
 
 onMounted(() => {
   void workspace.ensureDocument(props.tab.knowledgeBaseId, props.tab.noteUuid)
@@ -134,48 +179,30 @@ function openLink(url: string): void {
 
     <div class="document-toolbar">
       <div class="document-path" :title="session.document.readmePath">
-        {{ session.document.index }} · {{ session.document.title }}
+        <span class="note-index">{{ session.document.index }}.</span>
+        <input
+          v-if="editingTitle"
+          ref="titleInput"
+          v-model="titleDraft"
+          class="note-title-input"
+          aria-label="笔记名称"
+          autocomplete="off"
+          @blur="commitTitle"
+          @keydown="onTitleKeydown"
+        />
+        <button
+          v-else
+          type="button"
+          class="note-title-button"
+          aria-label="重命名笔记"
+          :disabled="session.document.readOnly || renaming"
+          @click="editTitle"
+        >
+          {{ session.document.title }}
+        </button>
         <span v-if="session.document.readOnly" class="read-only">只读</span>
       </div>
-      <div class="view-switcher" aria-label="笔记视图">
-        <UiTooltip label="可视化编辑">
-          <button
-            type="button"
-            aria-label="可视化编辑"
-            :class="{ active: tab.viewMode === 'visual' }"
-            @click="setMode('visual')"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="m4 20 4.2-1 10.6-10.6a2.1 2.1 0 0 0-3-3L5.2 16 4 20Z" />
-              <path d="m14.5 6.7 2.8 2.8" />
-            </svg>
-          </button>
-        </UiTooltip>
-        <UiTooltip label="只读视图">
-          <button
-            type="button"
-            aria-label="只读视图"
-            :class="{ active: tab.viewMode === 'readonly' }"
-            @click="setMode('readonly')"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M4 5.5A3.5 3.5 0 0 1 7.5 4H11v16H7.5A3.5 3.5 0 0 0 4 21V5.5Z" />
-              <path d="M20 5.5A3.5 3.5 0 0 0 16.5 4H13v16h3.5A3.5 3.5 0 0 1 20 21V5.5Z" />
-            </svg>
-          </button>
-        </UiTooltip>
-        <UiTooltip label="源码视图">
-          <button
-            type="button"
-            aria-label="源码视图"
-            :class="{ active: tab.viewMode === 'source' }"
-            @click="setMode('source')"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="m8.5 7-5 5 5 5M15.5 7l5 5-5 5M13.5 4l-3 16" />
-            </svg>
-          </button>
-        </UiTooltip>
+      <div class="view-controls">
         <UiTooltip :label="pageWidthLabel">
           <button
             type="button"
@@ -186,73 +213,96 @@ function openLink(url: string): void {
             <PageWidthIcon :mode="tab.pageWidth" />
           </button>
         </UiTooltip>
+        <span class="view-divider" aria-hidden="true"></span>
+        <div class="view-switcher" aria-label="笔记视图">
+          <UiTooltip label="可视化编辑">
+            <button
+              type="button"
+              aria-label="可视化编辑"
+              :class="{ active: tab.viewMode === 'visual' }"
+              @click="setMode('visual')"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m4 20 4.2-1 10.6-10.6a2.1 2.1 0 0 0-3-3L5.2 16 4 20Z" />
+                <path d="m14.5 6.7 2.8 2.8" />
+              </svg>
+            </button>
+          </UiTooltip>
+          <UiTooltip label="只读视图">
+            <button
+              type="button"
+              aria-label="只读视图"
+              :class="{ active: tab.viewMode === 'readonly' }"
+              @click="setMode('readonly')"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 5.5A3.5 3.5 0 0 1 7.5 4H11v16H7.5A3.5 3.5 0 0 0 4 21V5.5Z" />
+                <path d="M20 5.5A3.5 3.5 0 0 0 16.5 4H13v16h3.5A3.5 3.5 0 0 1 20 21V5.5Z" />
+              </svg>
+            </button>
+          </UiTooltip>
+          <UiTooltip label="源码视图">
+            <button
+              type="button"
+              aria-label="源码视图"
+              :class="{ active: tab.viewMode === 'source' }"
+              @click="setMode('source')"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m8.5 7-5 5 5 5M15.5 7l5 5-5 5M13.5 4l-3 16" />
+              </svg>
+            </button>
+          </UiTooltip>
+        </div>
       </div>
-      <div
-        v-if="tab.viewMode !== 'readonly'"
-        class="format-actions"
-        aria-label="Markdown 格式工具栏"
-      >
-        <UiTooltip label="粗体" shortcut="⌘ B">
-          <button
-            type="button"
-            aria-label="粗体"
-            @click="markdownEditor?.wrapSelection('**', '**')"
-          >
-            B
-          </button>
-        </UiTooltip>
-        <UiTooltip label="斜体" shortcut="⌘ I">
-          <button type="button" aria-label="斜体" @click="markdownEditor?.wrapSelection('*', '*')">
-            <em>I</em>
-          </button>
-        </UiTooltip>
-        <UiTooltip label="二级标题" shortcut="⌥ ⌘ 2">
-          <button type="button" aria-label="二级标题" @click="markdownEditor?.setLinePrefix('## ')">
-            H2
-          </button>
-        </UiTooltip>
-        <UiTooltip label="引用" shortcut="⇧ ⌘ U">
-          <button type="button" aria-label="引用" @click="markdownEditor?.setLinePrefix('> ')">
-            ❞
-          </button>
-        </UiTooltip>
-        <UiTooltip label="无序列表" shortcut="⇧ ⌘ 8">
-          <button type="button" aria-label="无序列表" @click="markdownEditor?.setLinePrefix('- ')">
-            ≡
-          </button>
-        </UiTooltip>
-        <UiTooltip label="链接">
-          <button
-            type="button"
-            aria-label="链接"
-            @click="markdownEditor?.wrapSelection('[', '](https://)', '链接')"
-          >
-            ↗
-          </button>
-        </UiTooltip>
-        <UiTooltip label="代码块">
-          <button type="button" aria-label="代码块" @click="insertTemplate('\n```ts\n\n```\n')">
-            { }
-          </button>
-        </UiTooltip>
-        <UiTooltip label="表格">
-          <button
-            type="button"
-            aria-label="表格"
-            @click="insertTemplate('\n| 列 1 | 列 2 |\n| --- | --- |\n| 内容 | 内容 |\n')"
-          >
-            ▦
-          </button>
-        </UiTooltip>
-      </div>
-      <UiTooltip label="保存笔记" shortcut="⌘ S">
+    </div>
+    <div v-if="tab.viewMode === 'visual'" class="format-actions" aria-label="Markdown 格式工具栏">
+      <UiTooltip label="粗体" shortcut="⌘ B">
+        <button type="button" aria-label="粗体" @click="markdownEditor?.wrapSelection('**', '**')">
+          B
+        </button>
+      </UiTooltip>
+      <UiTooltip label="斜体" shortcut="⌘ I">
+        <button type="button" aria-label="斜体" @click="markdownEditor?.wrapSelection('*', '*')">
+          <em>I</em>
+        </button>
+      </UiTooltip>
+      <UiTooltip label="二级标题" shortcut="⌥ ⌘ 2">
+        <button type="button" aria-label="二级标题" @click="markdownEditor?.setLinePrefix('## ')">
+          H2
+        </button>
+      </UiTooltip>
+      <UiTooltip label="引用" shortcut="⇧ ⌘ U">
+        <button type="button" aria-label="引用" @click="markdownEditor?.setLinePrefix('> ')">
+          ❞
+        </button>
+      </UiTooltip>
+      <UiTooltip label="无序列表" shortcut="⇧ ⌘ 8">
+        <button type="button" aria-label="无序列表" @click="markdownEditor?.setLinePrefix('- ')">
+          ≡
+        </button>
+      </UiTooltip>
+      <UiTooltip label="链接">
         <button
           type="button"
-          class="save-button"
-          :disabled="!session.dirty || session.saving || session.document.readOnly"
-          @click="workspace.saveDocument(key)"
+          aria-label="链接"
+          @click="markdownEditor?.wrapSelection('[', '](https://)', '链接')"
         >
-          {{ session.saving ? '保存中…' : '保存' }}
+          ↗
+        </button>
+      </UiTooltip>
+      <UiTooltip label="代码块">
+        <button type="button" aria-label="代码块" @click="insertTemplate('\n```ts\n\n```\n')">
+          { }
+        </button>
+      </UiTooltip>
+      <UiTooltip label="表格">
+        <button
+          type="button"
+          aria-label="表格"
+          @click="insertTemplate('\n| 列 1 | 列 2 |\n| --- | --- |\n| 内容 | 内容 |\n')"
+        >
+          ▦
         </button>
       </UiTooltip>
     </div>
@@ -326,11 +376,56 @@ function openLink(url: string): void {
 .document-path {
   flex: 1;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--muted);
   font-size: 10px;
+}
+
+.note-index,
+.read-only {
+  flex: none;
+}
+
+.note-title-button,
+.note-title-input {
+  min-width: 0;
+  height: 26px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.note-title-button {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  cursor: text;
+}
+
+.note-title-button:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.note-title-button:disabled {
+  cursor: default;
+}
+
+.note-title-input {
+  flex: 1;
+  outline: none;
+  border-color: var(--accent);
+  background: var(--panel);
+  color: var(--text);
 }
 
 .read-only {
@@ -341,19 +436,25 @@ function openLink(url: string): void {
   padding: 2px 5px;
 }
 
+.view-controls,
 .view-switcher {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
+  flex: none;
   display: flex;
+  align-items: center;
   border-radius: 6px;
   padding: 2px;
   gap: 1px;
 }
 
-.view-switcher button,
+.view-divider {
+  width: 1px;
+  height: 16px;
+  margin: 0 7px;
+  background: var(--border);
+}
+
+.view-controls button,
 .format-actions button,
-.save-button,
 .conflict-banner button {
   border: 0;
   background: transparent;
@@ -363,6 +464,11 @@ function openLink(url: string): void {
 }
 
 .format-actions {
+  flex: none;
+  min-height: 34px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--editor-bg);
   display: flex;
   align-items: center;
   gap: 1px;
@@ -384,7 +490,7 @@ function openLink(url: string): void {
   color: var(--text);
 }
 
-.view-switcher button {
+.view-controls button {
   width: 27px;
   height: 25px;
   display: grid;
@@ -393,7 +499,7 @@ function openLink(url: string): void {
   padding: 0;
 }
 
-.view-switcher svg {
+.view-controls svg {
   width: 15px;
   height: 15px;
   fill: none;
@@ -406,22 +512,6 @@ function openLink(url: string): void {
 .view-switcher button.active {
   background: var(--selected);
   color: var(--accent-strong);
-}
-
-.save-button {
-  height: 25px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0 9px;
-  color: var(--text);
-}
-
-.save-button:hover:not(:disabled) {
-  border-color: var(--accent);
-}
-
-.save-button:disabled {
-  opacity: 0.4;
 }
 
 .conflict-banner {

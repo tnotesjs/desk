@@ -28,12 +28,12 @@ function normalizeWebUrl(value: string): string {
   return url.toString()
 }
 
-function safeBounds(bounds: WebBounds): Electron.Rectangle {
+export function scaledWebBounds(bounds: WebBounds, zoomFactor: number): Electron.Rectangle {
   return {
-    x: Math.max(0, Math.round(bounds.x)),
-    y: Math.max(0, Math.round(bounds.y)),
-    width: Math.max(1, Math.round(bounds.width)),
-    height: Math.max(1, Math.round(bounds.height))
+    x: Math.max(0, Math.round(bounds.x * zoomFactor)),
+    y: Math.max(0, Math.round(bounds.y * zoomFactor)),
+    width: Math.max(1, Math.round(bounds.width * zoomFactor)),
+    height: Math.max(1, Math.round(bounds.height * zoomFactor))
   }
 }
 
@@ -44,6 +44,17 @@ export class WebContentsManager {
   private openRequestedListener: ((event: WebOpenRequestedEvent) => void) | null = null
   private shortcutListener: ((command: TabShortcutCommand) => void) | null = null
   private sessionConfigured = false
+  private zoomFactor = 1
+
+  setZoomFactor(factor: number): void {
+    this.zoomFactor = factor
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      this.mainWindow.webContents.setZoomFactor(factor)
+    }
+    for (const handle of this.handles.values()) {
+      if (!handle.view.webContents.isDestroyed()) handle.view.webContents.setZoomFactor(factor)
+    }
+  }
 
   private configureSession(): void {
     if (this.sessionConfigured) return
@@ -99,7 +110,8 @@ export class WebContentsManager {
         partition: WEB_PARTITION,
         nodeIntegration: false,
         contextIsolation: true,
-        sandbox: true
+        sandbox: true,
+        zoomFactor: this.zoomFactor
       }
     })
     view.setBackgroundColor('#101319')
@@ -141,7 +153,7 @@ export class WebContentsManager {
       return
     }
     if (!bounds) throw new Error('显示网页标签时缺少布局区域')
-    handle.view.setBounds(safeBounds(bounds))
+    handle.view.setBounds(scaledWebBounds(bounds, this.zoomFactor))
     handle.view.setVisible(true)
   }
 
@@ -266,6 +278,7 @@ export class WebContentsManager {
     contents.on('did-start-loading', refresh)
     contents.on('did-stop-loading', refresh)
     contents.on('did-navigate', refresh)
+    contents.on('did-finish-load', () => contents.setZoomFactor(this.zoomFactor))
     contents.on('did-navigate-in-page', refresh)
     contents.on('did-fail-load', (_event, code, description, validatedUrl, isMainFrame) => {
       if (!isMainFrame || code === -3) return

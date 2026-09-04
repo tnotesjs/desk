@@ -39,6 +39,8 @@ import type {
   RecoveryWriteRequest,
   SearchResultDto,
   TabShortcutCommand,
+  TabCloseChoice,
+  ContextMenuAction,
   TocCreateGroupRequest,
   TocDeleteRequest,
   TocEntryRefDto,
@@ -59,6 +61,9 @@ const api: DeskApi = {
   bootstrap: () => invoke<BootstrapPayload>(IPC_CHANNELS.bootstrap),
   app: {
     closeWindow: () => invoke<void>(IPC_CHANNELS.windowClose),
+    confirmTabClose: (titles) => invoke<TabCloseChoice>(IPC_CHANNELS.tabConfirmClose, titles),
+    showContextMenu: (request) =>
+      invoke<ContextMenuAction | null>(IPC_CHANNELS.contextMenuShow, request),
     onTabShortcut: (callback) => {
       const listener = (_event: Electron.IpcRendererEvent, command: TabShortcutCommand): void =>
         callback(command)

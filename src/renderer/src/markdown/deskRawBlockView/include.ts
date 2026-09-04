@@ -69,6 +69,7 @@ export function mountRawInclude(ctx: DeskRawBlockMountContext): void {
 
       tabEditor = mountCodeTabEditor(bodyHost, {
         initialContent: session.content,
+        saveOnBlur: false,
         language: includeLanguage(include),
         onCopy: (text) => deps.writeClipboard(text),
         onChange: (content) => workspace.updateNoteFileContent(key, content),

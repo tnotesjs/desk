@@ -1,9 +1,15 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Crepe } from '@milkdown/crepe'
-import { editorViewCtx, commandsCtx, remarkStringifyOptionsCtx } from '@milkdown/kit/core'
+import {
+  editorViewCtx,
+  commandsCtx,
+  remarkStringifyOptionsCtx,
+  serializerCtx
+} from '@milkdown/kit/core'
 import { uploadConfig } from '@milkdown/kit/plugin/upload'
-import { Plugin, TextSelection } from '@milkdown/kit/prose/state'
+import { blockConfig } from '@milkdown/kit/plugin/block'
+import { Plugin } from '@milkdown/kit/prose/state'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { buildTNotesSlashGroup, installSlashMenuPresentation } from './slashMenu'
 import type { SlashMenuItem } from './slashMenu'
@@ -34,7 +40,14 @@ import GithubSlugger from 'github-slugger'
 
 import BlockActionMenu from './BlockActionMenu.vue'
 import type { BlockAction } from './BlockActionMenu.vue'
-import { installBlockHandleClickController, type BlockHandleClickTarget } from './blockActionMenu'
+import {
+  canShowBlockHandle,
+  createBlockDeleteTransaction,
+  installBlockHandleClickController,
+  resolveBlockActionTarget,
+  serializeBlockForClipboard,
+  type BlockHandleClickTarget
+} from './blockActionMenu'
 import { createCodeBlockTitlePlugin } from './codeBlockTitlePlugin'
 import { createCodeBlockHighlightBundle } from './codeBlockHighlightPlugin'
 
@@ -132,33 +145,17 @@ function closeBlockActionMenu(focusEditor = true): void {
 function currentBlockTarget(): { view: EditorView; position: number; dom: HTMLElement } | null {
   const menu = blockActionMenu.value
   const view = editorView()
-  if (!menu || !view || !menu.dom.isConnected) return null
-  let position = menu.position
-  if (view.nodeDOM(position) !== menu.dom) {
-    position = -1
-    view.state.doc.descendants((node, candidate) => {
-      if (position >= 0 || node.type.name !== 'deskRawBlock') return
-      if (view.nodeDOM(candidate) === menu.dom) position = candidate
-    })
-  }
-  if (position < 0 || view.state.doc.nodeAt(position)?.type.name !== 'deskRawBlock') return null
-  return { view, position, dom: menu.dom }
+  if (!menu || !view) return null
+  const target = resolveBlockActionTarget(view, menu)
+  return target ? { view, ...target } : null
 }
 
 function deleteCurrentBlock(): void {
   if (isEffectivelyReadOnly()) return closeBlockActionMenu(false)
   const target = currentBlockTarget()
   if (!target) return closeBlockActionMenu()
-  const node = target.view.state.doc.nodeAt(target.position)
-  if (!node) return
-  const transaction = target.view.state.tr.delete(target.position, target.position + node.nodeSize)
-  transaction.setSelection(
-    TextSelection.near(
-      transaction.doc.resolve(Math.min(target.position, transaction.doc.content.size)),
-      -1
-    )
-  )
-  target.view.dispatch(transaction.scrollIntoView())
+  const transaction = createBlockDeleteTransaction(target.view.state, target.position)
+  if (transaction) target.view.dispatch(transaction)
   closeBlockActionMenu()
 }
 
@@ -192,11 +189,20 @@ function readCodeBlockPlainText(block: Element): string {
   return block.querySelector('pre, code')?.textContent ?? ''
 }
 
-async function copyCurrentBlock(): Promise<boolean> {
+async function copyCurrentBlock(cut = false): Promise<boolean> {
+  const menu = blockActionMenu.value
   const target = currentBlockTarget()
   const node = target?.view.state.doc.nodeAt(target.position)
-  if (!target || !node) return false
-  await writeClipboard(String(node.attrs.source ?? ''))
+  if (!target || !node || !crepe) return false
+  const text = crepe.editor.action((ctx) =>
+    serializeBlockForClipboard(target.view.state, target.position, ctx.get(serializerCtx))
+  )
+  if (text === null) return false
+  await writeClipboard(text)
+  if (cut && blockActionMenu.value === menu) {
+    const current = resolveBlockActionTarget(target.view, target)
+    if (current?.node.eq(node)) deleteCurrentBlock()
+  }
   return true
 }
 
@@ -218,7 +224,7 @@ async function handleBlockAction(action: BlockAction): Promise<void> {
     return closeBlockActionMenu()
   }
   if (action === 'cut') {
-    if (await copyCurrentBlock()) deleteCurrentBlock()
+    await copyCurrentBlock(true)
     return
   }
   if (action === 'add-below') openAddBelowMenu()
@@ -739,6 +745,11 @@ onMounted(async () => {
     )
   )
   editor.editor.config((ctx) => {
+    ctx.update(blockConfig.key, (current) => ({
+      ...current,
+      filterNodes: (position, node) =>
+        canShowBlockHandle(node) && current.filterNodes(position, node)
+    }))
     // Prefer GitHub / TNotes style list markers (`-`) over remark's default `*`.
     ctx.update(remarkStringifyOptionsCtx, (current) => ({
       ...current,
