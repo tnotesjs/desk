@@ -173,6 +173,7 @@ export type ContextMenuRequest =
   | { kind: 'group' }
   | { kind: 'tab'; tabType: 'note' | 'note-file' | 'web'; pinned: boolean }
 export type TabShortcutCommand =
+  | { type: 'activate-tab-by-number'; number: number; sourceTabId?: string }
   | 'close-active-tab-or-window'
   | 'close-saved-note-tabs'
   | 'close-all-tabs'

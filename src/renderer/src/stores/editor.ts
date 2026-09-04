@@ -960,10 +960,17 @@ export const useEditorStore = defineStore('editor', () => {
     activeGroupId.value = targetGroupId
   }
 
-  function splitTab(tabId: string, targetGroupId: string, placement: SplitPlacement): void {
+  function splitTab(
+    tabId: string,
+    targetGroupId: string,
+    placement: SplitPlacement,
+    behavior: 'auto' | 'move' = 'auto'
+  ): void {
     const located = findTab(layout.value, tabId)
     if (!located) return
-    const duplicate = located.group.id === targetGroupId
+    const sameGroup = located.group.id === targetGroupId
+    const duplicate = sameGroup && behavior !== 'move'
+    if (sameGroup && !duplicate && located.group.tabs.length === 1) return
     if (duplicate) ensureRoomForTab(new Set([tabId]))
     const resolvedTargetGroupId = findGroup(layout.value, targetGroupId)
       ? targetGroupId

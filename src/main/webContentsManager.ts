@@ -294,7 +294,15 @@ export class WebContentsManager {
       const resolution = shortcutResolver.resolve(input)
       if (!resolution.handled) return
       event.preventDefault()
-      if (resolution.command) this.shortcutListener?.(resolution.command)
+      if (resolution.command) {
+        // Native web views do not bubble focus/mouse events through EditorGroup.
+        // Carry the originating tab so numbered navigation uses its actual group.
+        this.shortcutListener?.(
+          typeof resolution.command === 'object'
+            ? { ...resolution.command, sourceTabId: handle.tabId }
+            : resolution.command
+        )
+      }
     })
     contents.on('render-process-gone', (_event, details) => {
       handle.state = { ...handle.state, loading: false, error: `网页进程已退出：${details.reason}` }

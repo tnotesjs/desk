@@ -123,6 +123,16 @@ export function cycleTab(
   })
 }
 
+/** One-based visual order: the pinned row first, then the regular row. */
+export function tabAtNumber(group: EditorGroupNode, number: number): EditorTab | null {
+  if (!Number.isInteger(number) || number < 1 || number > 9) return null
+  const ordered = [
+    ...group.tabs.filter((tab) => tab.pinned),
+    ...group.tabs.filter((tab) => !tab.pinned)
+  ]
+  return ordered[number - 1] ?? null
+}
+
 export function splitGroupWithTab(
   node: EditorLayoutNode,
   groupId: string,

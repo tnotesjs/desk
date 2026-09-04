@@ -11,12 +11,16 @@ import { useWorkspaceStore } from '../stores/workspace'
 import { resultValue } from '../stores/workspace/helpers'
 
 import type { ContextMenuAction, EditorGroupNode, EditorTab } from '../../../shared/contracts'
-import type { SplitPlacement } from './layoutModel'
+import { findTab } from './layoutModel'
+import { resolveTabDropPlacement, TAB_DRAG_MIME, useTabDragStore } from './tabDrag'
 
 const props = defineProps<{ group: EditorGroupNode }>()
 const editor = useEditorStore()
 const workspace = useWorkspaceStore()
-const dragOver = ref(false)
+const drag = useTabDragStore()
+const groupElement = ref<HTMLElement | null>(null)
+const bodyElement = ref<HTMLElement | null>(null)
+const dropPreview = computed(() => (drag.target?.groupId === props.group.id ? drag.target : null))
 
 const activeTab = computed(
   () => props.group.tabs.find((tab) => tab.id === props.group.activeTabId) ?? null
@@ -34,56 +38,86 @@ async function activate(tab: EditorTab): Promise<void> {
 }
 
 function beginDrag(event: DragEvent, tab: EditorTab): void {
-  event.dataTransfer?.setData('text/x-tnotes-desk-tab', tab.id)
-  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+  if (!event.dataTransfer) return
+  event.dataTransfer.setData(TAB_DRAG_MIME, tab.id)
+  event.dataTransfer.effectAllowed = 'move'
+  drag.start(tab.id)
 }
 
 function isTabDrag(event: DragEvent): boolean {
   // `getData` is unavailable during dragenter/dragover, so gate on the transfer
   // type list. Interior editor drags (e.g. Milkdown block reordering) never carry
   // this MIME type, so they must not activate the split-drop overlay.
-  return Array.from(event.dataTransfer?.types ?? []).includes('text/x-tnotes-desk-tab')
+  return (
+    Boolean(drag.tabId && findTab(editor.layout, drag.tabId)) &&
+    Array.from(event.dataTransfer?.types ?? []).includes(TAB_DRAG_MIME)
+  )
 }
 
-function draggedTabId(event: DragEvent): string | null {
-  return event.dataTransfer?.getData('text/x-tnotes-desk-tab') || null
+function updateDropTarget(event: DragEvent): void {
+  drag.target = null
+  const body = bodyElement.value
+  if (!body || !isTabDrag(event)) return
+  const bounds = body.getBoundingClientRect()
+  const placement = resolveTabDropPlacement(bounds, event.clientX, event.clientY)
+  const source = findTab(editor.layout, drag.tabId!)!
+  // Dropping into your own center is a no-op; a lone tab cannot split itself.
+  if (
+    !placement ||
+    (source.group.id === props.group.id &&
+      (placement === 'center' || source.group.tabs.length === 1))
+  )
+    return
+  drag.target = { groupId: props.group.id, placement }
 }
 
-function dropInGroup(event: DragEvent, index?: number): void {
-  dragOver.value = false
+function handleDragOver(event: DragEvent): void {
   if (!isTabDrag(event)) return
-  event.preventDefault()
-  const tabId = draggedTabId(event)
-  if (tabId) editor.moveTab(tabId, props.group.id, index)
-}
-
-function dropInRow(event: DragEvent, pinned: boolean, index?: number): void {
+  // Keep tab drops away from CodeMirror/Milkdown's content drop handlers.
   event.preventDefault()
   event.stopPropagation()
-  dragOver.value = false
-  const tabId = draggedTabId(event)
-  if (!tabId) return
-  editor.moveTab(tabId, props.group.id, index)
-  editor.setPinned(tabId, pinned)
+  updateDropTarget(event)
+  const inTabs = event.target instanceof Element && Boolean(event.target.closest('.tabs-bar'))
+  if (event.dataTransfer)
+    event.dataTransfer.dropEffect = dropPreview.value || inTabs ? 'move' : 'none'
 }
 
-function dropSplit(event: DragEvent, placement: SplitPlacement): void {
+function handleDragLeave(event: DragEvent): void {
+  if (event.relatedTarget instanceof Node && groupElement.value?.contains(event.relatedTarget))
+    return
+  if (drag.target?.groupId === props.group.id) drag.target = null
+}
+
+function handleDrop(event: DragEvent): void {
   if (!isTabDrag(event)) return
   event.preventDefault()
   event.stopPropagation()
-  dragOver.value = false
-  const tabId = draggedTabId(event)
-  if (tabId) editor.splitTab(tabId, props.group.id, placement)
-}
-
-function handleGroupDragOver(event: DragEvent): void {
-  if (!isTabDrag(event)) return
-  event.preventDefault()
-}
-
-function handleGroupDragEnter(event: DragEvent): void {
-  if (!isTabDrag(event)) return
-  dragOver.value = true
+  const tabId = event.dataTransfer?.getData(TAB_DRAG_MIME)
+  if (!tabId || tabId !== drag.tabId) {
+    drag.finish()
+    return
+  }
+  updateDropTarget(event)
+  const placement = dropPreview.value?.placement
+  const target = event.target instanceof Element ? event.target : null
+  const row = target?.closest('.tabs-row')
+  const targetTabId = target?.closest<HTMLElement>('.tab')?.dataset.tabId
+  const source = findTab(editor.layout, tabId)!
+  drag.finish()
+  if (row) {
+    if (targetTabId === tabId) return
+    let index = targetTabId
+      ? props.group.tabs.findIndex((tab) => tab.id === targetTabId)
+      : props.group.tabs.length
+    const sourceIndex = source.group.tabs.findIndex((tab) => tab.id === tabId)
+    if (source.group.id === props.group.id && sourceIndex < index) index -= 1
+    editor.moveTab(tabId, props.group.id, index)
+    editor.setPinned(tabId, row.classList.contains('pinned-row'))
+  } else if (placement === 'center') {
+    editor.moveTab(tabId, props.group.id)
+  } else if (placement) {
+    editor.splitTab(tabId, props.group.id, placement, 'move')
+  }
 }
 
 function isDirty(tab: EditorTab): boolean {
@@ -152,24 +186,22 @@ async function runTabAction(action: ContextMenuAction, tab: EditorTab): Promise<
 
 <template>
   <section
+    ref="groupElement"
     class="editor-group"
-    :class="{ active: editor.activeGroupId === group.id, 'drag-over': dragOver }"
+    :class="{ active: editor.activeGroupId === group.id }"
     @mousedown="editor.activeGroupId = group.id"
-    @dragenter.prevent="handleGroupDragEnter"
-    @dragleave.self="dragOver = false"
-    @dragover="handleGroupDragOver"
-    @drop="dropInGroup"
+    @focusin="editor.activeGroupId = group.id"
+    @dragenter.capture="handleDragOver"
+    @dragleave.capture="handleDragLeave"
+    @dragover.capture="handleDragOver"
+    @drop.capture="handleDrop"
   >
     <div class="tabs-bar" :class="{ 'has-pinned': pinnedTabs.length, wrap: editor.wrapTabs }">
-      <div
-        v-if="pinnedTabs.length"
-        class="tabs-row pinned-row"
-        @dragover.prevent
-        @drop="dropInRow($event, true)"
-      >
+      <div v-if="pinnedTabs.length" class="tabs-row pinned-row">
         <button
           v-for="tab in pinnedTabs"
           :key="tab.id"
+          :data-tab-id="tab.id"
           type="button"
           class="tab pinned"
           :class="{ selected: tab.id === group.activeTabId }"
@@ -179,8 +211,6 @@ async function runTabAction(action: ContextMenuAction, tab: EditorTab): Promise<
           @auxclick="closeTabWithMiddleButton($event, tab)"
           @contextmenu.prevent="showTabMenu($event, tab)"
           @dragstart="beginDrag($event, tab)"
-          @dragover.prevent
-          @drop="dropInRow($event, true, group.tabs.indexOf(tab))"
         >
           <img
             v-if="tab.type === 'web' && editor.webStates[tab.id]?.faviconUrl"
@@ -199,15 +229,11 @@ async function runTabAction(action: ContextMenuAction, tab: EditorTab): Promise<
         </button>
       </div>
 
-      <div
-        class="tabs-row regular-row"
-        :class="{ wrap: editor.wrapTabs }"
-        @dragover.prevent
-        @drop="dropInRow($event, false)"
-      >
+      <div class="tabs-row regular-row" :class="{ wrap: editor.wrapTabs }">
         <button
           v-for="tab in regularTabs"
           :key="tab.id"
+          :data-tab-id="tab.id"
           type="button"
           class="tab"
           :class="{
@@ -221,8 +247,6 @@ async function runTabAction(action: ContextMenuAction, tab: EditorTab): Promise<
           @dblclick.stop="editor.keepOpen(tab.id)"
           @contextmenu.prevent="showTabMenu($event, tab)"
           @dragstart="beginDrag($event, tab)"
-          @dragover.prevent
-          @drop="dropInRow($event, false, group.tabs.indexOf(tab))"
         >
           <img
             v-if="tab.type === 'web' && editor.webStates[tab.id]?.faviconUrl"
@@ -268,38 +292,40 @@ async function runTabAction(action: ContextMenuAction, tab: EditorTab): Promise<
       </div>
     </div>
 
-    <div
-      v-for="tab in group.tabs"
-      v-show="tab.id === group.activeTabId"
-      :key="tab.id"
-      class="tab-content"
-    >
-      <NoteTabPane
-        v-if="tab.type === 'note'"
-        :tab="tab"
-        :group-id="group.id"
-        :active="tab.id === group.activeTabId"
-      />
-      <NoteFileTabPane
-        v-else-if="tab.type === 'note-file'"
-        :tab="tab"
-        :group-id="group.id"
-        :active="tab.id === group.activeTabId"
-      />
-      <WebTabPane v-else :tab="tab" :active="tab.id === group.activeTabId" />
-    </div>
-    <div v-if="!activeTab" class="editor-empty">
-      <div class="empty-mark">T</div>
-      <strong>打开一篇笔记或网页</strong>
-      <span>可把标签拖到边缘进行左右或上下拆分。</span>
-      <button type="button" @click="openWeb">打开网页标签</button>
-    </div>
+    <div ref="bodyElement" class="editor-group-body">
+      <div
+        v-for="tab in group.tabs"
+        v-show="tab.id === group.activeTabId"
+        :key="tab.id"
+        class="tab-content"
+      >
+        <NoteTabPane
+          v-if="tab.type === 'note'"
+          :tab="tab"
+          :group-id="group.id"
+          :active="tab.id === group.activeTabId"
+        />
+        <NoteFileTabPane
+          v-else-if="tab.type === 'note-file'"
+          :tab="tab"
+          :group-id="group.id"
+          :active="tab.id === group.activeTabId"
+        />
+        <WebTabPane v-else :tab="tab" :active="tab.id === group.activeTabId" />
+      </div>
+      <div v-if="!activeTab" class="editor-empty">
+        <div class="empty-mark">T</div>
+        <strong>打开一篇笔记或网页</strong>
+        <span>可把标签拖到边缘进行左右或上下拆分。</span>
+        <button type="button" @click="openWeb">打开网页标签</button>
+      </div>
 
-    <div v-if="dragOver" class="split-drop-zones">
-      <div class="drop-zone left" @dragover.prevent @drop="dropSplit($event, 'left')">左侧</div>
-      <div class="drop-zone right" @dragover.prevent @drop="dropSplit($event, 'right')">右侧</div>
-      <div class="drop-zone top" @dragover.prevent @drop="dropSplit($event, 'top')">上方</div>
-      <div class="drop-zone bottom" @dragover.prevent @drop="dropSplit($event, 'bottom')">下方</div>
+      <!-- Capture tab drops above editor/iframe contents without intercepting
+         ordinary text, file, or Milkdown block drags. -->
+      <div v-if="drag.tabId" class="tab-drag-surface" aria-hidden="true" />
+      <div v-if="dropPreview" class="tab-drop-overlay" aria-hidden="true">
+        <div class="tab-drop-preview" :class="dropPreview.placement" />
+      </div>
     </div>
   </section>
 </template>
@@ -485,6 +511,14 @@ async function runTabAction(action: ContextMenuAction, tab: EditorTab): Promise<
   font-size: 11px;
 }
 
+.editor-group-body {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
 .tab-content {
   flex: 1;
   min-width: 0;
@@ -521,53 +555,37 @@ async function runTabAction(action: ContextMenuAction, tab: EditorTab): Promise<
   font-weight: 750;
 }
 
-.split-drop-zones {
+.tab-drag-surface,
+.tab-drop-overlay {
   position: absolute;
-  inset: 35px 0 0;
+  inset: 0;
   z-index: 20;
+}
+
+.tab-drop-overlay {
   pointer-events: none;
-  background: color-mix(in srgb, var(--editor-bg) 58%, transparent);
 }
 
-.drop-zone {
+.tab-drop-preview {
   position: absolute;
-  display: grid;
-  place-items: center;
-  border: 1px dashed color-mix(in srgb, var(--accent) 65%, transparent);
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--accent) 13%, transparent);
-  color: var(--accent-strong);
-  pointer-events: auto;
-  font-size: 9px;
+  inset: 0;
+  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
 }
 
-.drop-zone.left,
-.drop-zone.right {
-  top: 25%;
-  bottom: 25%;
-  width: 22%;
+.tab-drop-preview.left {
+  right: 50%;
 }
 
-.drop-zone.left {
-  left: 3%;
+.tab-drop-preview.right {
+  left: 50%;
 }
 
-.drop-zone.right {
-  right: 3%;
+.tab-drop-preview.top {
+  bottom: 50%;
 }
 
-.drop-zone.top,
-.drop-zone.bottom {
-  left: 28%;
-  right: 28%;
-  height: 19%;
-}
-
-.drop-zone.top {
-  top: 3%;
-}
-
-.drop-zone.bottom {
-  bottom: 3%;
+.tab-drop-preview.bottom {
+  top: 50%;
 }
 </style>

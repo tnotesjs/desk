@@ -2,11 +2,13 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { useEditorStore } from '../stores/editor'
+import { useTabDragStore } from './tabDrag'
 
 import type { DeskResult, WebEditorTab, WebTabState } from '../../../shared/contracts'
 
 const props = defineProps<{ tab: WebEditorTab; active: boolean }>()
 const editor = useEditorStore()
+const drag = useTabDragStore()
 const address = ref(props.tab.url)
 const viewport = ref<HTMLElement | null>(null)
 const ready = ref(false)
@@ -37,7 +39,8 @@ async function updateLayout(): Promise<void> {
   const rect = viewport.value.getBoundingClientRect()
   await window.desk.web.layout({
     tabId: props.tab.id,
-    visible: props.active && !editor.webViewsSuspended && rect.width > 0 && rect.height > 0,
+    visible:
+      props.active && !editor.webViewsSuspended && !drag.tabId && rect.width > 0 && rect.height > 0,
     bounds: { x: rect.left, y: rect.top, width: rect.width, height: rect.height }
   })
 }
@@ -87,7 +90,7 @@ function onWindowResize(): void {
   void updateLayout()
 }
 
-watch([() => props.active, () => editor.webViewsSuspended], async ([active]) => {
+watch([() => props.active, () => editor.webViewsSuspended, () => drag.tabId], async ([active]) => {
   if (active && !ready.value) {
     await createView()
     return

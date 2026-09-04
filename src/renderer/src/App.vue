@@ -8,6 +8,7 @@ import SettingsPanel from './components/SettingsPanel.vue'
 import ToastHost from './components/ToastHost.vue'
 import AppZoomFeedback from './components/AppZoomFeedback.vue'
 import { useEditorStore } from './stores/editor'
+import { findTab, tabAtNumber } from './editor-groups/layoutModel'
 import {
   clampSidebarWidth,
   KNOWLEDGE_SIDEBAR_MAX,
@@ -136,6 +137,22 @@ async function changeAppZoom(action: 'increase' | 'decrease' | 'reset'): Promise
 
 async function handleTabShortcut(command: TabShortcutCommand): Promise<void> {
   if (store.closingTabs) return
+  if (typeof command === 'object' && command.type === 'activate-tab-by-number') {
+    const group = command.sourceTabId
+      ? findTab(editor.layout, command.sourceTabId)?.group
+      : editor.activeGroup
+    const target = group && tabAtNumber(group, command.number)
+    if (!group || !target) return
+    const previous = group.tabs.find((tab) => tab.id === group.activeTabId)
+    if (previous?.type === 'web' && previous.id !== target.id) {
+      await window.desk.web.layout({ tabId: previous.id, visible: false })
+    }
+    // The layout may have changed while the native web view was being hidden.
+    if (findTab(editor.layout, target.id)?.group.id === group.id) {
+      editor.activate(group.id, target.id)
+    }
+    return
+  }
   if (
     command === 'increase-app-zoom' ||
     command === 'decrease-app-zoom' ||

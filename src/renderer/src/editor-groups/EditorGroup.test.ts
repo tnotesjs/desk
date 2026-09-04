@@ -30,6 +30,18 @@ beforeEach(() => {
 afterEach(() => Reflect.deleteProperty(window, 'desk'))
 
 describe('native tab context menu', () => {
+  it('tracks the focused group when focus moves by keyboard instead of mouse', async () => {
+    const editor = useEditorStore()
+    editor.openNote(knowledgeBase, 'a', 'A', 'visual', undefined, 'permanent')
+    const left = editor.activeGroup!
+    editor.openNote(knowledgeBase, 'b', 'B', 'visual', 'right', 'permanent')
+    expect(editor.activeGroupId).not.toBe(left.id)
+    const wrapper = shallowMount(EditorGroup, { props: { group: left } })
+    await wrapper.find('.tab').trigger('focusin')
+    expect(editor.activeGroupId).toBe(left.id)
+    wrapper.unmount()
+  })
+
   it('closes the right-clicked tab through the unsaved-change guard, not the active tab', async () => {
     const editor = useEditorStore()
     const workspace = useWorkspaceStore()

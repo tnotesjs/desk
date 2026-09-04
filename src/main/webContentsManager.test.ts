@@ -70,3 +70,33 @@ describe('native embedded web view app zoom', () => {
     })
   })
 })
+
+it('includes the native web tab origin when forwarding numbered tab shortcuts', async () => {
+  mocks.contents.on.mockClear()
+  const manager = new WebContentsManager()
+  manager.attachWindow({
+    on: vi.fn(),
+    isDestroyed: () => false,
+    contentView: { addChildView: vi.fn() }
+  } as unknown as Electron.BrowserWindow)
+  const listener = vi.fn()
+  manager.onTabShortcut(listener)
+  await manager.create('right-web-tab', 'https://example.com')
+  const onInput = mocks.contents.on.mock.calls.find(([name]) => name === 'before-input-event')?.[1]
+  const event = { preventDefault: vi.fn() }
+  onInput(event, {
+    type: 'keyDown',
+    key: '3',
+    meta: process.platform === 'darwin',
+    control: process.platform !== 'darwin',
+    alt: false,
+    shift: false,
+    isComposing: false
+  })
+  expect(event.preventDefault).toHaveBeenCalledOnce()
+  expect(listener).toHaveBeenCalledExactlyOnceWith({
+    type: 'activate-tab-by-number',
+    number: 3,
+    sourceTabId: 'right-web-tab'
+  })
+})

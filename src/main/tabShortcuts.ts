@@ -26,6 +26,11 @@ export class TabShortcutResolver {
     const key = input.key.toLowerCase()
     const primaryModifier = isPrimaryModifier(input, platform)
 
+    if (primaryModifier && !input.alt && !input.shift && /^[1-9]$/.test(key)) {
+      this.chordExpiresAt = 0
+      return { handled: true, command: { type: 'activate-tab-by-number', number: Number(key) } }
+    }
+
     if (primaryModifier && !input.alt) {
       const command =
         key === '+' || key === '='

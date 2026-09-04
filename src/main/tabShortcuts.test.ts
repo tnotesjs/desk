@@ -20,6 +20,42 @@ function input(overrides: Partial<Electron.Input> = {}): Electron.Input {
 }
 
 describe('tab shortcuts', () => {
+  it('maps unmodified primary+1…9 to one-based tab positions on each platform', () => {
+    for (const platform of ['darwin', 'win32', 'linux'] as const) {
+      const modifier = platform === 'darwin' ? { meta: true } : { control: true }
+      for (let number = 1; number <= 9; number += 1) {
+        const key = String(number)
+        expect(resolveTabShortcut(input({ key, ...modifier }), platform)).toEqual({
+          type: 'activate-tab-by-number',
+          number
+        })
+        for (const extra of [
+          { shift: true },
+          { alt: true },
+          { meta: true, control: true },
+          { isComposing: true },
+          { type: 'keyUp' as const }
+        ]) {
+          expect(resolveTabShortcut(input({ key, ...modifier, ...extra }), platform)).toBeNull()
+        }
+        expect(resolveTabShortcut(input({ key }), platform)).toBeNull()
+      }
+      expect(resolveTabShortcut(input({ key: '0', ...modifier }), platform)).toBe('reset-app-zoom')
+    }
+    expect(resolveTabShortcut(input({ key: '1', control: true }), 'darwin')).toBeNull()
+    expect(resolveTabShortcut(input({ key: '1', meta: true }), 'win32')).toBeNull()
+  })
+
+  it('cancels a pending chord when a numbered tab shortcut is used', () => {
+    const resolver = new TabShortcutResolver()
+    resolver.resolve(input({ key: 'k', meta: true }), 'darwin', 100)
+    expect(resolver.resolve(input({ key: '2', meta: true }), 'darwin', 200).command).toEqual({
+      type: 'activate-tab-by-number',
+      number: 2
+    })
+    expect(resolver.resolve(input({ key: 'u' }), 'darwin', 300).handled).toBe(false)
+  })
+
   it('handles app zoom before Electron page zoom, including shifted plus and numpad keys', () => {
     for (const platform of ['darwin', 'win32', 'linux'] as const) {
       const modifier = platform === 'darwin' ? { meta: true } : { control: true }
