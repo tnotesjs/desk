@@ -61,6 +61,36 @@
   fill: var(--accent-strong);
 }
 
+/* Crepe's table controls use its outline color for icons. Desk maps that token
+   to a subtle border, so keep controls on foreground colors in both themes. */
+.milkdown-markdown-editor :deep(.milkdown .milkdown-table-block .handle) {
+  color: var(--editor-text);
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-table-block .handle button) {
+  color: inherit;
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-table-block .handle svg) {
+  fill: currentColor;
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-table-block .cell-handle .button-group) {
+  background: var(--raised);
+  border: 1px solid var(--border);
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-table-block .handle button:hover),
+.milkdown-markdown-editor :deep(.milkdown .milkdown-table-block .handle button:focus-visible) {
+  color: var(--accent-strong);
+  background: var(--hover);
+}
+
+.milkdown-markdown-editor :deep(.milkdown .milkdown-table-block .handle button:focus-visible) {
+  outline: 1px solid var(--accent-strong);
+  outline-offset: 1px;
+}
+
 /* Keep Crepe's add action wired for the block menu, but show only the drag grip. */
 .milkdown-markdown-editor :deep(.milkdown .milkdown-block-handle .operation-item:first-child) {
   display: none;

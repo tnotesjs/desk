@@ -21,6 +21,9 @@ import {
 import { clearRawBlockSelectionState, createRawBlockSelectionPlugin } from './rawBlockInteractions'
 import { createReadonlyTransactionGuard } from './readonlyGuard'
 import { clearLineStylesPlugin } from './clearLineStyles'
+import { wrapInTaskList } from './taskList'
+import { insertDefaultTable } from './insertDefaultTable'
+import { formatIconSvg } from '../components/formatIcons'
 import {
   createCodeBlockCommand,
   toggleEmphasisCommand,
@@ -35,7 +38,7 @@ import {
   clearTextInCurrentBlockCommand,
   imageSchema
 } from '@milkdown/kit/preset/commonmark'
-import { insertTableCommand, toggleStrikethroughCommand } from '@milkdown/kit/preset/gfm'
+import { strikethroughKeymap, toggleStrikethroughCommand } from '@milkdown/kit/preset/gfm'
 import { $prose, $view, callCommand, insert, insertPos, replaceAll } from '@milkdown/kit/utils'
 import GithubSlugger from 'github-slugger'
 
@@ -82,6 +85,7 @@ const emit = defineEmits<{
   openLink: [url: string]
   openNote: [noteUuid: string]
   fatal: [message: string]
+  headingLevelChange: [level: number | null]
 }>()
 
 const host = ref<HTMLElement | null>(null)
@@ -111,6 +115,18 @@ function isEffectivelyReadOnly(): boolean {
 
 function editorView(): EditorView | null {
   return crepe?.editor.action((ctx) => ctx.get(editorViewCtx)) ?? null
+}
+
+function reportHeadingLevel(view: EditorView): void {
+  const node = view.state.selection.$from.parent
+  emit(
+    'headingLevelChange',
+    node.type.name === 'heading'
+      ? Number(node.attrs.level)
+      : node.type.name === 'paragraph'
+        ? 0
+        : null
+  )
 }
 
 function positionBlockActionMenu(target: BlockHandleClickTarget): BlockActionMenuState {
@@ -328,6 +344,15 @@ function setLinePrefix(prefix: string): void {
     command(wrapInBulletListCommand)
     return
   }
+  if (prefix === '- [ ] ') {
+    run((editor) =>
+      editor.editor.action((ctx) => {
+        const view = ctx.get(editorViewCtx)
+        wrapInTaskList(view.state, view.dispatch, view)
+      })
+    )
+    return
+  }
   if (prefix === '1. ') {
     command(wrapInOrderedListCommand)
     return
@@ -340,7 +365,7 @@ function insertCodeBlock(language = 'ts'): void {
 }
 
 function insertTable(): void {
-  command(insertTableCommand, { row: 3, col: 3 })
+  run((editor) => editor.editor.action((ctx) => insertDefaultTable(ctx)))
 }
 
 /**
@@ -659,7 +684,24 @@ onMounted(async () => {
         width: 4
       },
       [Crepe.Feature.BlockEdit]: {
+        textGroup: {
+          quote: { icon: formatIconSvg('quote') },
+          divider: { icon: formatIconSvg('divider') }
+        },
+        listGroup: {
+          bulletList: { icon: formatIconSvg('unordered-list') },
+          orderedList: { icon: formatIconSvg('ordered-list') },
+          taskList: { icon: formatIconSvg('checkbox') }
+        },
+        advancedGroup: {
+          codeBlock: { icon: formatIconSvg('code-block') },
+          table: { icon: formatIconSvg('table') }
+        },
         buildMenu: (builder) => {
+          const table = builder
+            .getGroup('advanced')
+            .group.items.find((item) => item.key === 'table')
+          if (table) table.onRun = (ctx) => insertDefaultTable(ctx, 'slash')
           buildTNotesSlashGroup(builder, {
             groupLabel: 'TNotes',
             onRun: (item) => {
@@ -738,15 +780,33 @@ onMounted(async () => {
     $prose(
       () =>
         new Plugin({
-          view: () => ({
-            update: (view, previousState) => {
-              if (!view.state.doc.eq(previousState.doc)) queueCurrentContentSync()
+          view: (view) => {
+            reportHeadingLevel(view)
+            return {
+              update: (view, previousState) => {
+                if (!view.state.doc.eq(previousState.doc)) queueCurrentContentSync()
+                if (
+                  !view.state.selection.eq(previousState.selection) ||
+                  !view.state.doc.eq(previousState.doc)
+                ) {
+                  reportHeadingLevel(view)
+                }
+              }
             }
-          })
+          }
         })
     )
   )
   editor.editor.config((ctx) => {
+    // Match the source editor and the shortcut shown in Desk's toolbar/settings.
+    // Keep Milkdown's original binding available for existing users as well.
+    ctx.update(strikethroughKeymap.key, (current) => ({
+      ...current,
+      ToggleStrikethrough: {
+        ...current.ToggleStrikethrough,
+        shortcuts: ['Mod-Shift-x', 'Mod-Alt-x']
+      }
+    }))
     ctx.update(blockConfig.key, (current) => ({
       ...current,
       filterNodes: (position, node) =>

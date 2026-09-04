@@ -13,6 +13,8 @@
  * 该清单同时被 0006（块级快捷输入）复用。
  */
 
+import { formatIconSvg } from '../components/formatIcons'
+
 export type SlashItemKind =
   'container' | 'code' | 'code-group' | 'swiper' | 'component' | 'mermaid' | 'mindmap'
 
@@ -170,10 +172,9 @@ function linearIcon(body: IconBody): string {
   return `<svg class="desk-tnotes-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`
 }
 
-const TNOTES_ICON_BODIES: Record<SlashItemKind, IconBody> = {
+const TNOTES_ICON_BODIES: Record<Exclude<SlashItemKind, 'code'>, IconBody> = {
   container:
     '<path d="M4 6.5 12 3l8 3.5v11L12 21l-8-3.5v-11Z"/><path d="m4 6.5 8 3.5 8-3.5M12 10v11"/>',
-  code: '<path d="m8 7-5 5 5 5M16 7l5 5-5 5M14 4l-4 16"/>',
   'code-group':
     '<rect x="4" y="5" width="13" height="14" rx="2"/><path d="M8 3h10a2 2 0 0 1 2 2v12M7.5 9h6M7.5 13h4"/>',
   swiper:
@@ -188,6 +189,7 @@ const TNOTES_ICON_BODIES: Record<SlashItemKind, IconBody> = {
 
 /** Shared local icon source for slash menus, block menus and tests. */
 export function menuIconFor(kind: SlashItemKind): string {
+  if (kind === 'code') return formatIconSvg('code-block')
   return linearIcon(TNOTES_ICON_BODIES[kind])
 }
 

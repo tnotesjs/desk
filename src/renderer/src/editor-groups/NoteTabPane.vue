@@ -3,6 +3,8 @@ import { computed, defineAsyncComponent, nextTick, onMounted, ref, watch } from 
 
 import UiTooltip from '../components/UiTooltip.vue'
 import PageWidthIcon from '../components/PageWidthIcon.vue'
+import HeadingMenu from './HeadingMenu.vue'
+import FormatIcon from './FormatIcon.vue'
 import MarkdownSourceEditor from '../markdown/MarkdownSourceEditor.vue'
 import { useEditorStore } from '../stores/editor'
 import { useWorkspaceStore } from '../stores/workspace'
@@ -14,6 +16,10 @@ interface MarkdownEditorHandle {
   wrapSelection(prefix: string, suffix: string, placeholder?: string): void
   prefixSelection(prefix: string): void
   setLinePrefix(prefix: string): void
+}
+
+interface VisualMarkdownEditorHandle extends MarkdownEditorHandle {
+  insertTable(): void
 }
 
 const MilkdownMarkdownEditor = defineAsyncComponent(
@@ -38,7 +44,7 @@ const key = computed(() => `${props.tab.knowledgeBaseId}:${props.tab.noteUuid}`)
 const session = computed(() =>
   workspace.getDocumentSession(props.tab.knowledgeBaseId, props.tab.noteUuid)
 )
-const milkdownMarkdownEditor = ref<MarkdownEditorHandle | null>(null)
+const milkdownMarkdownEditor = ref<VisualMarkdownEditorHandle | null>(null)
 const markdownSourceEditor = ref<MarkdownEditorHandle | null>(null)
 const milkdownFailed = ref(false)
 const milkdownMountKey = ref(0)
@@ -50,6 +56,7 @@ const titleInput = ref<HTMLInputElement | null>(null)
 const editingTitle = ref(false)
 const titleDraft = ref('')
 const renaming = ref(false)
+const headingLevel = ref<number | null>(null)
 
 watch(key, () => {
   editingTitle.value = false
@@ -256,30 +263,67 @@ function openLink(url: string): void {
         </div>
       </div>
     </div>
-    <div v-if="tab.viewMode === 'visual'" class="format-actions" aria-label="Markdown 格式工具栏">
+    <div
+      v-if="tab.viewMode === 'visual'"
+      class="format-actions"
+      aria-label="Markdown 格式工具栏"
+      @mousedown.prevent
+    >
       <UiTooltip label="粗体" shortcut="⌘ B">
         <button type="button" aria-label="粗体" @click="markdownEditor?.wrapSelection('**', '**')">
-          B
+          <FormatIcon name="bold" />
         </button>
       </UiTooltip>
       <UiTooltip label="斜体" shortcut="⌘ I">
         <button type="button" aria-label="斜体" @click="markdownEditor?.wrapSelection('*', '*')">
-          <em>I</em>
+          <FormatIcon name="italic" />
         </button>
       </UiTooltip>
-      <UiTooltip label="二级标题" shortcut="⌥ ⌘ 2">
-        <button type="button" aria-label="二级标题" @click="markdownEditor?.setLinePrefix('## ')">
-          H2
+      <UiTooltip label="删除线" shortcut="⇧ ⌘ X">
+        <button
+          type="button"
+          aria-label="删除线"
+          @mousedown.prevent
+          @click="markdownEditor?.wrapSelection('~~', '~~')"
+        >
+          <FormatIcon name="strikethrough" />
         </button>
       </UiTooltip>
+      <UiTooltip label="行内代码" shortcut="⌘ E">
+        <button
+          type="button"
+          aria-label="行内代码"
+          @mousedown.prevent
+          @click="markdownEditor?.wrapSelection('`', '`')"
+        >
+          <FormatIcon name="inline-code" />
+        </button>
+      </UiTooltip>
+      <HeadingMenu
+        :level="headingLevel"
+        :disabled="session.document.readOnly || milkdownFailed"
+        :active="active"
+        :platform="workspace.runtimePlatform"
+        @select="markdownEditor?.setLinePrefix($event === 0 ? '' : `${'#'.repeat($event)} `)"
+      />
       <UiTooltip label="引用" shortcut="⇧ ⌘ U">
         <button type="button" aria-label="引用" @click="markdownEditor?.setLinePrefix('> ')">
-          ❞
+          <FormatIcon name="quote" />
         </button>
       </UiTooltip>
       <UiTooltip label="无序列表" shortcut="⇧ ⌘ 8">
         <button type="button" aria-label="无序列表" @click="markdownEditor?.setLinePrefix('- ')">
-          ≡
+          <FormatIcon name="unordered-list" />
+        </button>
+      </UiTooltip>
+      <UiTooltip label="有序列表">
+        <button type="button" aria-label="有序列表" @click="markdownEditor?.setLinePrefix('1. ')">
+          <FormatIcon name="ordered-list" />
+        </button>
+      </UiTooltip>
+      <UiTooltip label="复选框">
+        <button type="button" aria-label="复选框" @click="markdownEditor?.setLinePrefix('- [ ] ')">
+          <FormatIcon name="checkbox" />
         </button>
       </UiTooltip>
       <UiTooltip label="链接">
@@ -288,21 +332,22 @@ function openLink(url: string): void {
           aria-label="链接"
           @click="markdownEditor?.wrapSelection('[', '](https://)', '链接')"
         >
-          ↗
+          <FormatIcon name="link" />
         </button>
       </UiTooltip>
       <UiTooltip label="代码块">
         <button type="button" aria-label="代码块" @click="insertTemplate('\n```ts\n\n```\n')">
-          { }
+          <FormatIcon name="code-block" />
+        </button>
+      </UiTooltip>
+      <UiTooltip label="分割线">
+        <button type="button" aria-label="分割线" @click="insertTemplate('\n---\n')">
+          <FormatIcon name="divider" />
         </button>
       </UiTooltip>
       <UiTooltip label="表格">
-        <button
-          type="button"
-          aria-label="表格"
-          @click="insertTemplate('\n| 列 1 | 列 2 |\n| --- | --- |\n| 内容 | 内容 |\n')"
-        >
-          ▦
+        <button type="button" aria-label="表格" @click="milkdownMarkdownEditor?.insertTable()">
+          <FormatIcon name="table" />
         </button>
       </UiTooltip>
     </div>
@@ -325,6 +370,7 @@ function openLink(url: string): void {
       @open-link="openLink"
       @open-note="workspace.openNoteByUuid(tab.knowledgeBaseId, $event)"
       @fatal="handleMilkdownFatal"
+      @heading-level-change="headingLevel = $event"
     />
     <div v-else-if="tab.viewMode !== 'source'" class="editor-fatal" role="alert">
       <strong>可视化编辑器加载失败</strong>
@@ -465,13 +511,15 @@ function openLink(url: string): void {
 
 .format-actions {
   flex: none;
-  min-height: 34px;
-  padding: 0 12px;
+  min-height: 40px;
+  padding: 3px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--editor-bg);
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 1px;
+  justify-content: flex-end;
+  gap: 2px;
 }
 
 .format-actions :deep(.ui-tooltip-host) {
@@ -479,10 +527,14 @@ function openLink(url: string): void {
 }
 
 .format-actions button {
-  min-width: 24px;
-  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 32px;
   border-radius: 4px;
   font-family: var(--font-mono);
+  font-size: 14px;
 }
 
 .format-actions button:hover {
